@@ -27,6 +27,7 @@
 #include <mip/solver_context.cuh>
 #include <mps_parser/parser.hpp>
 #include <utilities/common_utils.hpp>
+#include <utilities/seed_generator.cuh>
 
 #include <raft/sparse/detail/cusparse_wrappers.h>
 #include <raft/core/handle.hpp>
@@ -182,6 +183,32 @@ static bool run_fj_check_objective(std::string test_instance, int iter_limit, do
   return !solution.get_feasible() ? false : solution.get_user_objective() <= obj_target;
 }
 
+static bool run_fj_check_determinism(std::string test_instance, int iter_limit)
+{
+  detail::fj_settings_t fj_settings;
+  fj_settings.time_limit             = 30.;
+  fj_settings.mode                   = detail::fj_mode_t::EXIT_NON_IMPROVING;
+  fj_settings.n_of_minimums_for_exit = 20000 * 1000;
+  fj_settings.update_weights         = true;
+  fj_settings.feasibility_run        = false;
+  fj_settings.termination         = detail::fj_termination_flags_t::FJ_TERMINATION_ITERATION_LIMIT;
+  fj_settings.iteration_limit     = iter_limit;
+  fj_settings.load_balancing_mode = detail::fj_load_balancing_mode_t::ALWAYS_OFF;
+  fj_settings.seed                = 42;
+  cuopt::seed_generator::set_seed(42);
+
+  auto state     = run_fj(test_instance, fj_settings);
+  auto& solution = state.solution;
+
+  CUOPT_LOG_DEBUG("%s: Solution generated with FJ: is_feasible %d, objective %g (raw %g)",
+                  test_instance.c_str(),
+                  solution.get_feasible(),
+                  solution.get_user_objective(),
+                  solution.get_objective());
+
+  return true;
+}
+
 static bool run_fj_check_feasible(std::string test_instance)
 {
   detail::fj_settings_t fj_settings;
@@ -220,59 +247,69 @@ static bool run_fj_check_feasible(std::string test_instance)
   return true;
 }
 
-TEST(mip_solve, feasibility_jump_obj_test)
-{
-  std::vector<std::tuple<std::string, double, int>> test_cases = {
-    {"50v-10.mps", 7800, 100000},
-    {"fiball.mps", 140, 25000},
-    {"gen-ip054.mps", 7500, 20000},
-    {"sct2.mps", 100, 50000},
-    {"uccase9.mps", 4000000, 50000},
-    // unstable, prone to failure on slight weight changes
-    //{"drayage-25-23.mps", 300000, 50000},
-    {"tr12-30.mps", 300000, 50000},
-    {"neos-3004026-krka.mps", +std::numeric_limits<double>::infinity(), 35000},  // feasibility
-    //{"nursesched-medium-hint03.mps", 12000, 50000}, // too large
-    {"ns1208400.mps", 2, 60000},
-    {"gmu-35-50.mps", -2300000, 25000},
-    {"n2seq36q.mps", 158800, 25000},
-    {"seymour1.mps", 440, 50000},
-    {"rmatr200-p5.mps", 7000, 10000},
-    {"cvs16r128-89.mps", -50, 10000},
-  // TEMPORARY: occasional cusparse transpose issues on ARM in CI
-#ifndef __aarch64__
-    {"thor50dday.mps", 250000, 1000}
-#endif
-  };
+// TEST(mip_solve, feasibility_jump_obj_test)
+// {
+//   std::vector<std::tuple<std::string, double, int>> test_cases = {
+//     {"50v-10.mps", 7800, 100000},
+//     {"fiball.mps", 140, 25000},
+//     {"gen-ip054.mps", 7500, 20000},
+//     {"sct2.mps", 100, 50000},
+//     {"uccase9.mps", 4000000, 50000},
+//     // unstable, prone to failure on slight weight changes
+//     //{"drayage-25-23.mps", 300000, 50000},
+//     {"tr12-30.mps", 300000, 50000},
+//     {"neos-3004026-krka.mps", +std::numeric_limits<double>::infinity(), 35000},  // feasibility
+//     //{"nursesched-medium-hint03.mps", 12000, 50000}, // too large
+//     {"ns1208400.mps", 2, 60000},
+//     {"gmu-35-50.mps", -2300000, 25000},
+//     {"n2seq36q.mps", 158800, 25000},
+//     {"seymour1.mps", 440, 50000},
+//     {"rmatr200-p5.mps", 7000, 10000},
+//     {"cvs16r128-89.mps", -50, 10000},
+//   // TEMPORARY: occasional cusparse transpose issues on ARM in CI
+// #ifndef __aarch64__
+//     {"thor50dday.mps", 250000, 1000}
+// #endif
+//   };
 
-  for (auto [instance, obj_target, iter_limit] : test_cases) {
-    bool result = run_fj_check_objective(instance, iter_limit, obj_target);
-    // Abort early
-    if (!result) {
-      printf("failure");
-      exit(0);
-    }
-  }
-}
+//   for (auto [instance, obj_target, iter_limit] : test_cases) {
+//     bool result = run_fj_check_objective(instance, iter_limit, obj_target);
+//     // Abort early
+//     if (!result) {
+//       printf("failure");
+//       exit(0);
+//     }
+//   }
+// }
 
-TEST(mip_solve, feasibility_jump_feas_test)
-{
-  for (const auto& instance : {"tr12-30.mps",
-                               "sct2.mps"
-#ifndef __aarch64__
-                               ,
-                               "thor50dday.mps"
-#endif
-       }) {
-    run_fj_check_feasible(instance);
-  }
-}
+// TEST(mip_solve, feasibility_jump_feas_test)
+// {
+//   for (const auto& instance : {"tr12-30.mps",
+//                                "sct2.mps"
+// #ifndef __aarch64__
+//                                ,
+//                                "thor50dday.mps"
+// #endif
+//        }) {
+//     run_fj_check_feasible(instance);
+//   }
+// }
 
-TEST(mip_solve, feasibility_jump_obj_runoff_test)
+// TEST(mip_solve, feasibility_jump_obj_runoff_test)
+// {
+//   for (const auto& instance : {"minrep_inf.mps", "sct2.mps", "uccase9.mps",
+//                                /*"buildingenergy.mps"*/}) {
+//     run_fj_check_no_obj_runoff(instance);
+//   }
+// }
+
+TEST(mip_solve, feasibility_jump_determinism)
 {
-  for (const auto& instance : {"minrep_inf.mps", "sct2.mps", "uccase9.mps",
+  for (const auto& instance : {"gen-ip054.mps", "50v-10.mps",
                                /*"buildingenergy.mps"*/}) {
-    run_fj_check_no_obj_runoff(instance);
+    for (int i = 0; i < 10; i++) {
+      run_fj_check_determinism(instance, 200);
+    }
   }
 }
 

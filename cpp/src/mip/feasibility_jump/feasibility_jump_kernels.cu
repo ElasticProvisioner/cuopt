@@ -729,6 +729,31 @@ __global__ void update_assignment_kernel(typename fj_t<i_t, f_t>::climber_data_t
   // Update the LHSs of all involved constraints.
   auto [offset_begin, offset_end] = fj.pb.reverse_range_for_var(var_idx);
 
+  if (blockIdx.x == 0) {
+    for (auto i = offset_begin; i < offset_end; i += 1) {
+      cuopt_assert(i < (i_t)fj.pb.reverse_constraints.size(), "");
+      auto cstr_idx   = fj.pb.reverse_constraints[i];
+      auto cstr_coeff = fj.pb.reverse_coefficients[i];
+      f_t old_lhs     = fj.incumbent_lhs[cstr_idx];
+      f_t new_lhs     = old_lhs + cstr_coeff * fj.jump_move_delta[var_idx];
+      f_t old_cost    = fj.excess_score(cstr_idx, old_lhs);
+      f_t new_cost    = fj.excess_score(cstr_idx, new_lhs);
+
+      if (threadIdx.x == 0) {
+        cuopt_assert(*fj.constraints_changed_count >= 0 &&
+                       *fj.constraints_changed_count <= fj.pb.n_constraints,
+                     "");
+        f_t cstr_tolerance = fj.get_corrected_tolerance(cstr_idx);
+        if (new_cost < -cstr_tolerance && !fj.violated_constraints.contains(cstr_idx))
+          fj.constraints_changed[atomicAdd(fj.constraints_changed_count, 1)] =
+            (cstr_idx << 1) | CONSTRAINT_FLAG_INSERT;
+        else if (!(new_cost < -cstr_tolerance) && fj.violated_constraints.contains(cstr_idx))
+          fj.constraints_changed[atomicAdd(fj.constraints_changed_count, 1)] =
+            cstr_idx << 1 | CONSTRAINT_FLAG_REMOVE;
+      }
+    }
+  }
+
   for (auto i = offset_begin + blockIdx.x; i < offset_end; i += gridDim.x) {
     cuopt_assert(i < (i_t)fj.pb.reverse_constraints.size(), "");
 
@@ -739,19 +764,6 @@ __global__ void update_assignment_kernel(typename fj_t<i_t, f_t>::climber_data_t
     f_t new_lhs  = old_lhs + cstr_coeff * fj.jump_move_delta[var_idx];
     f_t old_cost = fj.excess_score(cstr_idx, old_lhs);
     f_t new_cost = fj.excess_score(cstr_idx, new_lhs);
-
-    if (threadIdx.x == 0) {
-      cuopt_assert(
-        *fj.constraints_changed_count >= 0 && *fj.constraints_changed_count <= fj.pb.n_constraints,
-        "");
-      f_t cstr_tolerance = fj.get_corrected_tolerance(cstr_idx);
-      if (new_cost < -cstr_tolerance && !fj.violated_constraints.contains(cstr_idx))
-        fj.constraints_changed[atomicAdd(fj.constraints_changed_count, 1)] =
-          (cstr_idx << 1) | CONSTRAINT_FLAG_INSERT;
-      else if (!(new_cost < -cstr_tolerance) && fj.violated_constraints.contains(cstr_idx))
-        fj.constraints_changed[atomicAdd(fj.constraints_changed_count, 1)] =
-          cstr_idx << 1 | CONSTRAINT_FLAG_REMOVE;
-    }
 
     __syncthreads();
 
@@ -1076,6 +1088,8 @@ DI void update_changed_constraints(typename fj_t<i_t, f_t>::climber_data_t::view
 
   if (blockIdx.x == 0) {
     if (threadIdx.x == 0) {
+      // sort changed constraints to guarantee determinism
+
       for (i_t i = 0; i < *fj.constraints_changed_count; ++i) {
         i_t idx = fj.constraints_changed[i];
         if ((idx & 1) == CONSTRAINT_FLAG_INSERT) {

@@ -625,11 +625,11 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
                                      bool use_graph)
 {
   raft::common::nvtx::range scope("run_step_device");
-  auto [grid_setval, blocks_setval]                 = setval_launch_dims;
-  auto [grid_resetmoves, blocks_resetmoves]         = resetmoves_launch_dims;
-  auto [grid_resetmoves_bin, blocks_resetmoves_bin] = resetmoves_bin_launch_dims;
-  auto [grid_update_weights, blocks_update_weights] = update_weights_launch_dims;
-  auto [grid_lift_move, blocks_lift_move]           = lift_move_launch_dims;
+  // auto [grid_setval, blocks_setval]                 = setval_launch_dims;
+  // auto [grid_resetmoves, blocks_resetmoves]         = resetmoves_launch_dims;
+  // auto [grid_resetmoves_bin, blocks_resetmoves_bin] = resetmoves_bin_launch_dims;
+  // auto [grid_update_weights, blocks_update_weights] = update_weights_launch_dims;
+  // auto [grid_lift_move, blocks_lift_move]           = lift_move_launch_dims;
 
   auto& data    = *climbers[climber_idx];
   auto v        = data.view();
@@ -699,16 +699,16 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
           if (is_binary_pb) {
             cudaLaunchCooperativeKernel(
               (void*)compute_mtm_moves_kernel<i_t, f_t, FJ_MTM_VIOLATED, true>,
-              grid_resetmoves_bin,
-              blocks_resetmoves_bin,
+              dim3(256),
+              dim3(256),
               reset_moves_args,
               0,
               climber_stream);
           } else {
             cudaLaunchCooperativeKernel(
               (void*)compute_mtm_moves_kernel<i_t, f_t, FJ_MTM_VIOLATED, false>,
-              grid_resetmoves,
-              blocks_resetmoves,
+              dim3(256),
+              dim3(256),
               reset_moves_args,
               0,
               climber_stream);
@@ -731,18 +731,18 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
         }
 #endif
 
-        cudaLaunchKernel((void*)update_lift_moves_kernel<i_t, f_t>,
-                         grid_lift_move,
-                         blocks_lift_move,
-                         kernel_args,
-                         0,
-                         climber_stream);
-        cudaLaunchKernel((void*)update_breakthrough_moves_kernel<i_t, f_t>,
-                         grid_lift_move,
-                         blocks_lift_move,
-                         kernel_args,
-                         0,
-                         climber_stream);
+        // cudaLaunchKernel((void*)update_lift_moves_kernel<i_t, f_t>,
+        //                  grid_lift_move,
+        //                  blocks_lift_move,
+        //                  kernel_args,
+        //                  0,
+        //                  climber_stream);
+        // cudaLaunchKernel((void*)update_breakthrough_moves_kernel<i_t, f_t>,
+        //                  grid_lift_move,
+        //                  blocks_lift_move,
+        //                  kernel_args,
+        //                  0,
+        //                  climber_stream);
       }
 
       // compaction kernel
@@ -755,32 +755,24 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
                                  pb_ptr->n_variables,
                                  climber_stream);
 
-      cudaLaunchKernel((void*)select_variable_kernel<i_t, f_t>,
-                       dim3(1),
-                       dim3(256),
-                       kernel_args,
-                       0,
-                       climber_stream);
+      cudaLaunchKernel(
+        (void*)select_variable_kernel<i_t, f_t>, dim3(1), dim3(1), kernel_args, 0, climber_stream);
 
       cudaLaunchCooperativeKernel((void*)handle_local_minimum_kernel<i_t, f_t>,
-                                  grid_update_weights,
-                                  blocks_update_weights,
+                                  dim3(256),
+                                  dim3(256),
                                   kernel_args,
                                   0,
                                   climber_stream);
       raft::copy(data.break_condition.data(), data.temp_break_condition.data(), 1, climber_stream);
       cudaLaunchKernel((void*)update_assignment_kernel<i_t, f_t>,
-                       grid_setval,
-                       blocks_setval,
+                       dim3(256),
+                       dim3(256),
                        update_assignment_args,
                        0,
                        climber_stream);
-      cudaLaunchKernel((void*)update_changed_constraints_kernel<i_t, f_t>,
-                       1,
-                       blocks_setval,
-                       kernel_args,
-                       0,
-                       climber_stream);
+      cudaLaunchKernel(
+        (void*)update_changed_constraints_kernel<i_t, f_t>, 1, 1, kernel_args, 0, climber_stream);
     }
 
     if (use_graph) {
