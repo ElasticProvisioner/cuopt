@@ -807,6 +807,7 @@ bool constraint_prop_t<i_t, f_t>::is_problem_ii(problem_t<i_t, f_t>& problem)
 {
   bounds_update.calculate_activity_on_problem_bounds(problem);
   bounds_update.calculate_infeasible_redundant_constraints(problem);
+  multi_probe.calculate_activity(problem, problem.handle_ptr);
   bool problem_ii = bounds_update.infeas_constraints_count > 0;
   return problem_ii;
 }

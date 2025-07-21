@@ -16,6 +16,7 @@
  */
 
 #include "../linear_programming/utilities/pdlp_test_utilities.cuh"
+#include "determinism_utils.cuh"
 #include "mip_utils.cuh"
 
 #include <cuopt/error.hpp>
@@ -71,18 +72,6 @@ static void setup_device_symbols(rmm::cuda_stream_view stream_view)
   detail::set_pdlp_hyper_parameters(stream_view);
 }
 
-__global__ void spin_kernel(volatile int* flag, unsigned long long timeout_clocks = 10000000)
-{
-  long long int start_clock, sample_clock;
-  start_clock = clock64();
-
-  while (!*flag) {
-    sample_clock = clock64();
-
-    if (sample_clock - start_clock > timeout_clocks) { break; }
-  }
-}
-
 struct fj_tweaks_t {
   double objective_weight = 0;
 };
@@ -135,22 +124,25 @@ static uint32_t run_fp(std::string test_instance,
   detail::mip_solver_t<int, double> solver(problem, settings, scaling, timer);
   problem.tolerances = settings.get_tolerances();
 
-  rmm::device_uvector<double> lp_optimal_solution(problem.n_variables,
-                                                  problem.handle_ptr->get_stream());
+  // only compute the LP optimal once
+  static rmm::device_uvector<double> lp_optimal_solution(0, problem.handle_ptr->get_stream());
 
-  detail::lp_state_t<int, double>& lp_state = problem.lp_state;
-  // resize because some constructor might be called before the presolve
-  lp_state.resize(problem, problem.handle_ptr->get_stream());
-  detail::relaxed_lp_settings_t lp_settings{};
-  lp_settings.time_limit            = std::numeric_limits<double>::max();
-  lp_settings.tolerance             = 1e-6;
-  lp_settings.return_first_feasible = false;
-  lp_settings.save_state            = false;
-  // lp_settings.iteration_limit       = 5;
-  auto lp_result =
-    detail::get_relaxed_lp_solution(problem, lp_optimal_solution, lp_state, lp_settings);
-  EXPECT_EQ(lp_result.get_termination_status(), pdlp_termination_status_t::Optimal);
-  clamp_within_var_bounds(lp_optimal_solution, &problem, problem.handle_ptr);
+  if (lp_optimal_solution.size() == 0) {
+    lp_optimal_solution.resize(problem.n_variables, problem.handle_ptr->get_stream());
+    detail::lp_state_t<int, double>& lp_state = problem.lp_state;
+    // resize because some constructor might be called before the presolve
+    lp_state.resize(problem, problem.handle_ptr->get_stream());
+    detail::relaxed_lp_settings_t lp_settings{};
+    lp_settings.time_limit            = std::numeric_limits<double>::max();
+    lp_settings.tolerance             = 1e-6;
+    lp_settings.return_first_feasible = false;
+    lp_settings.save_state            = false;
+    // lp_settings.iteration_limit       = 5;
+    auto lp_result =
+      detail::get_relaxed_lp_solution(problem, lp_optimal_solution, lp_state, lp_settings);
+    EXPECT_EQ(lp_result.get_termination_status(), pdlp_termination_status_t::Optimal);
+    clamp_within_var_bounds(lp_optimal_solution, &problem, problem.handle_ptr);
+  }
 
   // return detail::compute_hash(lp_optimal_solution);
 
@@ -159,6 +151,7 @@ static uint32_t run_fp(std::string test_instance,
   detail::solution_t<int, double> solution(problem);
 
   printf("Model fingerprint: 0x%x\n", problem.get_fingerprint());
+  printf("LP optimal hash: 0x%x\n", detail::compute_hash(lp_optimal_solution));
 
   local_search.fp.config.bounds_prop_timer_min          = std::numeric_limits<double>::max();
   local_search.fp.config.lp_run_time_after_feasible_min = std::numeric_limits<double>::max();
@@ -224,30 +217,14 @@ static uint32_t run_fp_check_determinism(std::string test_instance, int iter_lim
   //    if (abs(solution.get_user_objective() - first_val) > 1) exit(0);
 }
 
-void launch_spin_kernel_stream_thread(rmm::cuda_stream_view stream_view)
-{
-  rmm::device_scalar<int> flag(stream_view);
-  while (true) {
-    int blocks  = rand() % 64 + 1;
-    int threads = rand() % 1024 + 1;
-    spin_kernel<<<blocks, threads, 0, stream_view>>>(flag.data());
-    cudaStreamSynchronize(stream_view);
-    std::this_thread::sleep_for(std::chrono::milliseconds(rand() % 1000 + 1));
-  }
-}
-
-static void launch_spin_kernel_stream(rmm::cuda_stream_view stream_view)
-{
-  std::thread spin_thread(launch_spin_kernel_stream_thread, stream_view);
-  spin_thread.detach();
-}
-
 TEST(local_search, feasibility_pump_determinism)
 {
   cuopt::default_logger().set_pattern("[%n] [%-6l] %v");
 
-  rmm::cuda_stream spin_stream;
-  launch_spin_kernel_stream(spin_stream);
+  rmm::cuda_stream spin_stream_1;
+  rmm::cuda_stream spin_stream_2;
+  launch_spin_kernel_stream(spin_stream_1);
+  launch_spin_kernel_stream(spin_stream_2);
 
   for (const auto& instance : {
          //"thor50dday.mps",

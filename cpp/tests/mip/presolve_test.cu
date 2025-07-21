@@ -16,6 +16,7 @@
  */
 
 #include "../linear_programming/utilities/pdlp_test_utilities.cuh"
+#include "determinism_utils.cuh"
 #include "mip_utils.cuh"
 
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -183,9 +184,13 @@ uint32_t test_probing_cache_determinism(std::string path,
 
 TEST(presolve, probing_cache_deterministic)
 {
+  rmm::cuda_stream spin_stream_1;
+  launch_spin_kernel_stream(spin_stream_1);
+
   std::vector<std::string> test_instances = {"mip/50v-10-free-bound.mps",
                                              "mip/neos5-free-bound.mps",
                                              "mip/neos5.mps",
+                                             "mip/50v-10.mps",
                                              "mip/gen-ip054.mps",
                                              "mip/rmatr200-p5.mps"};
   for (const auto& test_instance : test_instances) {

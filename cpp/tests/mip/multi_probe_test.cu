@@ -16,6 +16,7 @@
  */
 
 #include "../linear_programming/utilities/pdlp_test_utilities.cuh"
+#include "determinism_utils.cuh"
 #include "mip_utils.cuh"
 
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -234,8 +235,15 @@ uint32_t test_multi_probe(std::string path, unsigned long seed = std::random_dev
 
 TEST(presolve, multi_probe_deterministic)
 {
+  rmm::cuda_stream spin_stream_1;
+  launch_spin_kernel_stream(spin_stream_1);
+
   std::vector<std::string> test_instances = {
-    "mip/50v-10-free-bound.mps", "mip/neos5-free-bound.mps", "mip/neos5.mps"};
+    "mip/50v-10-free-bound.mps",
+    "mip/neos5-free-bound.mps",
+    "mip/neos5.mps",
+    "mip/50v-10.mps",
+  };
   for (const auto& test_instance : test_instances) {
     std::cout << "Running: " << test_instance << std::endl;
     unsigned long seed = std::random_device{}();
