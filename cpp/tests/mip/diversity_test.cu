@@ -163,11 +163,11 @@ TEST_P(DiversityTestParams, initial_population_deterministic)
   std::cout << "Running: " << test_instance << std::endl;
   int seed =
     std::getenv("CUOPT_SEED") ? std::stoi(std::getenv("CUOPT_SEED")) : std::random_device{}();
-  cuopt::seed_generator::set_seed(seed);
   std::cerr << "Tested with seed " << seed << "\n";
   auto path          = make_path_absolute(test_instance);
   uint32_t gold_hash = 0;
-  for (int i = 0; i < 2; ++i) {
+  for (int i = 0; i < 10; ++i) {
+    cuopt::seed_generator::set_seed(seed);
     std::cout << "Running " << test_instance << " " << i << std::endl;
     auto hash = test_initial_population_determinism(path, seed);
     if (i == 0) {
@@ -181,14 +181,13 @@ TEST_P(DiversityTestParams, initial_population_deterministic)
 
 INSTANTIATE_TEST_SUITE_P(DiversityTest,
                          DiversityTestParams,
-                         testing::Values(
-                           // std::make_tuple("mip/sct2.mps"),
-                           //               std::make_tuple("mip/thor50dday.mps"),
-                           //               std::make_tuple("mip/uccase9.mps"),
-                           //               std::make_tuple("mip/neos5-free-bound.mps"),
-                           //               std::make_tuple("mip/neos5.mps"),
-                           //               std::make_tuple("mip/50v-10.mps"),
-                           //               std::make_tuple("mip/rmatr200-p5.mps")
-                           std::make_tuple("mip/gen-ip054.mps")));
+                         testing::Values(std::make_tuple("mip/sct2.mps"),
+                                         // std::make_tuple("mip/thor50dday.mps"),
+                                         // std::make_tuple("mip/uccase9.mps"),
+                                         std::make_tuple("mip/neos5-free-bound.mps"),
+                                         std::make_tuple("mip/neos5.mps"),
+                                         std::make_tuple("mip/50v-10.mps"),
+                                         std::make_tuple("mip/rmatr200-p5.mps"),
+                                         std::make_tuple("mip/gen-ip054.mps")));
 
 }  // namespace cuopt::linear_programming::test

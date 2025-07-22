@@ -40,7 +40,19 @@ class seed_generator {
     set_seed(seed1 + ((seed0 + seed1) * (seed0 + seed1 + 1) / 2), seeds...);
   }
 
+#if 0
+  static int64_t get_seed(const char* caller = __builtin_FUNCTION(),
+  const char* file   = __builtin_FILE(),
+  int line           = __builtin_LINE()) { 
+
+      printf("&&&&&&& SEED CALLED BY %s:%d: %s() ***\n",
+             file,
+             line,
+             caller);
+    return seed_++; }
+#else
   static int64_t get_seed() { return seed_++; }
+#endif
 
  public:
   seed_generator(seed_generator const&) = delete;
