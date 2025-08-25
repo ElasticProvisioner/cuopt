@@ -19,6 +19,8 @@
 #include <linear_programming/utilities/ping_pong_graph.cuh>
 #include <linear_programming/utils.cuh>
 #include <mip/mip_constants.hpp>
+#include <utilities/copy_helpers.hpp>
+#include <utilities/cuda_helpers.cuh>
 
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -121,6 +123,10 @@ template <typename i_t, typename f_t>
 void pdhg_solver_t<i_t, f_t>::compute_At_y()
 {
   // A_t @ y
+
+  // cusparse flags a false positive here on the destination tmp buffer, silence it
+  cuopt::mark_span_as_initialized(make_span(current_saddle_point_state_.get_current_AtY()),
+                                  handle_ptr_->get_stream());
 
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
                                                        CUSPARSE_OPERATION_NON_TRANSPOSE,

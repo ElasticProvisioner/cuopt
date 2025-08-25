@@ -506,6 +506,9 @@ void fj_t<i_t, f_t>::climber_init(i_t climber_idx, const rmm::cuda_stream_view& 
 
   view = climber->view();
 
+  cuopt::mark_span_as_initialized(view.row_size_bin_prefix_sum, climber_stream);
+  cuopt::mark_span_as_initialized(view.row_size_nonbin_prefix_sum, climber_stream);
+
   if (pb_ptr->related_variables.size() > 0) {
     // for each variable, compute the number of nnzs that would be examined during a FJ move update
     // pass to help determine whether to run load balancing or not

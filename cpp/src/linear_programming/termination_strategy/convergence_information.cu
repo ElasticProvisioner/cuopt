@@ -19,6 +19,8 @@
 #include <linear_programming/termination_strategy/convergence_information.hpp>
 #include <linear_programming/utils.cuh>
 #include <mip/mip_constants.hpp>
+#include <utilities/copy_helpers.hpp>
+#include <utilities/cuda_helpers.cuh>
 
 #include <cuopt/linear_programming/pdlp/solver_settings.hpp>
 
@@ -223,6 +225,8 @@ void convergence_information_t<i_t, f_t>::compute_primal_residual(
   cusparse_view_t<i_t, f_t>& cusparse_view, rmm::device_uvector<f_t>& tmp_dual)
 {
   raft::common::nvtx::range fun_scope("compute_primal_residual");
+  // cusparse flags a false positive here on the destination tmp buffer, silence it
+  cuopt::mark_span_as_initialized(make_span(tmp_dual), handle_ptr_->get_stream());
 
   // primal_product
   RAFT_CUSPARSE_TRY(

@@ -860,7 +860,7 @@ void mps_parser_t<i_t, f_t>::parse_bounds(std::string_view line)
     c_values.emplace_back(f_t(0));
     variable_lower_bounds.emplace_back(0);
     variable_upper_bounds.emplace_back(+std::numeric_limits<f_t>::infinity());
-    var_types.resize(var_types.size() + 1);
+    var_types.emplace_back('C');
     itr = var_names_map.find(std::string(var_name));
   }
   i_t var_id = itr->second;

@@ -19,6 +19,8 @@
 #include <linear_programming/pdlp_constants.hpp>
 #include <linear_programming/step_size_strategy/adaptive_step_size_strategy.hpp>
 #include <mip/mip_constants.hpp>
+#include <utilities/copy_helpers.hpp>
+#include <utilities/cuda_helpers.cuh>
 #include <utilities/unique_pinned_ptr.hpp>
 
 #include <raft/sparse/detail/cusparse_macros.h>
@@ -274,6 +276,10 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   // first A @ y SpMV in the compute_next_primal of next PDHG step
 
   // Compute A_t @ (y' - y) = A_t @ y' - 1 * current_AtY
+
+  // cusparse flags a false positive here on the destination tmp buffer, silence it
+  cuopt::mark_span_as_initialized(make_span(current_saddle_point_state.get_next_AtY()),
+                                  handle_ptr_->get_stream());
 
   // First compute Ay' to be reused as Ay in next PDHG iteration (if found step size if valid)
   RAFT_CUSPARSE_TRY(

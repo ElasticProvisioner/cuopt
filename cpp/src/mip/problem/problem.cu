@@ -21,6 +21,7 @@
 #include "problem_kernels.cuh"
 
 #include <utilities/copy_helpers.hpp>
+#include <utilities/cuda_helpers.cuh>
 #include <utilities/macros.cuh>
 
 #include <linear_programming/utils.cuh>
@@ -328,6 +329,10 @@ void problem_t<i_t, f_t>::compute_transpose_of_problem()
                                       n_variables,
                                       nnz,
                                       handle_ptr->get_stream());
+  // cuSparse causes false positives
+  cuopt::mark_span_as_initialized(make_span(reverse_offsets), handle_ptr->get_stream());
+  cuopt::mark_span_as_initialized(make_span(reverse_constraints), handle_ptr->get_stream());
+  cuopt::mark_span_as_initialized(make_span(reverse_coefficients), handle_ptr->get_stream());
 }
 
 template <typename i_t, typename f_t>

@@ -20,10 +20,16 @@
 #include <utilities/macros.cuh>
 
 #include <thrust/host_vector.h>
+#include <raft/common/nvtx.hpp>
 #include <raft/core/device_span.hpp>
 #include <raft/util/cuda_utils.cuh>
 #include <raft/util/cudart_utils.hpp>
 #include <rmm/device_uvector.hpp>
+
+#if CUDART_VERSION >= 12080
+#include <nvtx3/nvToolsExtMem.h>
+#include <nvtx3/nvToolsExtMemCudaRt.h>
+#endif
 
 namespace cuopt {
 
@@ -206,6 +212,45 @@ DI void sorted_insert(T* array, T item, int curr_size, int max_size)
     }
   }
   array[0] = item;
+}
+
+static inline void mark_memory_as_initialized(const void* ptr, size_t size, cudaStream_t stream = 0)
+{
+#if CUDART_VERSION >= 12080
+
+  if (size == 0 || ptr == nullptr) return;
+
+#if defined(CUDA_API_PER_THREAD_DEFAULT_STREAM)
+  constexpr auto PerThreadDefaultStream = true;
+#else
+  constexpr auto PerThreadDefaultStream = false;
+#endif
+
+  nvtxMemVirtualRangeDesc_t nvtxRangeDesc = {};
+  nvtxRangeDesc.size                      = size;
+  nvtxRangeDesc.ptr                       = ptr;
+
+  nvtxMemMarkInitializedBatch_t nvtxRegionsDesc = {};
+  nvtxRegionsDesc.extCompatID                   = NVTX_EXT_COMPATID_MEM;
+  nvtxRegionsDesc.structSize                    = sizeof(nvtxRegionsDesc);
+  nvtxRegionsDesc.regionType                    = NVTX_MEM_TYPE_VIRTUAL_ADDRESS;
+  nvtxRegionsDesc.regionDescCount               = 1;
+  nvtxRegionsDesc.regionDescElementSize         = sizeof(nvtxRangeDesc);
+  nvtxRegionsDesc.regionDescElements            = &nvtxRangeDesc;
+
+  nvtxMemCudaMarkInitialized(
+    raft::common::nvtx::detail::domain_store<raft::common::nvtx::domain::app>::value(),
+    stream,
+    PerThreadDefaultStream,
+    &nvtxRegionsDesc);
+#endif
+}
+
+template <typename T>
+static inline void mark_span_as_initialized(const raft::device_span<T> span,
+                                            rmm::cuda_stream_view stream)
+{
+  mark_memory_as_initialized(span.data(), span.size() * sizeof(T), stream.value());
 }
 
 }  // namespace cuopt

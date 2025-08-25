@@ -22,6 +22,8 @@
 #include <linear_programming/pdlp.cuh>
 #include <linear_programming/utils.cuh>
 #include <mip/mip_constants.hpp>
+#include <utilities/copy_helpers.hpp>
+#include <utilities/cuda_helpers.cuh>
 #include "cuopt/linear_programming/pdlp/solver_solution.hpp"
 
 #include <raft/common/nvtx.hpp>
@@ -1048,6 +1050,9 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
                             primal_size_h_,
                             clamp<f_t>(),
                             stream_view_);
+    // Triggers a false positive in compute-sanitizer otherwise (lack of initialization doesn't
+    // matter here)
+    cuopt::mark_span_as_initialized(make_span(unscaled_primal_avg_solution_), stream_view_);
     raft::linalg::ternaryOp(unscaled_primal_avg_solution_.data(),
                             unscaled_primal_avg_solution_.data(),
                             op_problem_scaled_.variable_lower_bounds.data(),

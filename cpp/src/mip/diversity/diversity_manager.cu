@@ -450,6 +450,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
     lp_settings.return_first_feasible = false;
     lp_settings.save_state            = true;
     lp_settings.concurrent_halt       = &global_concurrent_halt;
+    lp_settings.has_initial_primal    = false;
     rmm::device_uvector<f_t> lp_optimal_solution_copy(lp_optimal_solution.size(),
                                                       problem_ptr->handle_ptr->get_stream());
     auto lp_result =
