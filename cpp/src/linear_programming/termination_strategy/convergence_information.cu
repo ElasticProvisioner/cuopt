@@ -225,21 +225,18 @@ void convergence_information_t<i_t, f_t>::compute_primal_residual(
   cusparse_view_t<i_t, f_t>& cusparse_view, rmm::device_uvector<f_t>& tmp_dual)
 {
   raft::common::nvtx::range fun_scope("compute_primal_residual");
-  // cusparse flags a false positive here on the destination tmp buffer, silence it
-  cuopt::mark_span_as_initialized(make_span(tmp_dual), handle_ptr_->get_stream());
 
   // primal_product
-  RAFT_CUSPARSE_TRY(
-    raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                       reusable_device_scalar_value_1_.data(),
-                                       cusparse_view.A,
-                                       cusparse_view.primal_solution,
-                                       reusable_device_scalar_value_0_.data(),
-                                       cusparse_view.tmp_dual,
-                                       CUSPARSE_SPMV_CSR_ALG2,
-                                       (f_t*)cusparse_view.buffer_non_transpose.data(),
-                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_1_.data(),
+                                         cusparse_view.A,
+                                         cusparse_view.primal_solution,
+                                         reusable_device_scalar_value_0_.data(),
+                                         cusparse_view.tmp_dual,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view.buffer_non_transpose.data(),
+                                         stream_view_));
 
   // The constraint bound violations for the first part of the residual
   raft::linalg::ternaryOp<f_t, violation<f_t>>(primal_residual_.data(),
@@ -302,16 +299,16 @@ void convergence_information_t<i_t, f_t>::compute_dual_residual(
   raft::copy(
     tmp_primal.data(), problem_ptr->objective_coefficients.data(), primal_size_h_, stream_view_);
 
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                                       reusable_device_scalar_value_neg_1_.data(),
-                                                       cusparse_view.A_T,
-                                                       cusparse_view.dual_solution,
-                                                       reusable_device_scalar_value_1_.data(),
-                                                       cusparse_view.tmp_primal,
-                                                       CUSPARSE_SPMV_CSR_ALG2,
-                                                       (f_t*)cusparse_view.buffer_transpose.data(),
-                                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_neg_1_.data(),
+                                         cusparse_view.A_T,
+                                         cusparse_view.dual_solution,
+                                         reusable_device_scalar_value_1_.data(),
+                                         cusparse_view.tmp_primal,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view.buffer_transpose.data(),
+                                         stream_view_));
 
   compute_reduced_cost_from_primal_gradient(tmp_primal, primal_solution);
 

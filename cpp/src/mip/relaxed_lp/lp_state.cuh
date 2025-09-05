@@ -67,6 +67,7 @@ class lp_state_t {
                    prev_primal.data() + prev_primal_size,
                    prev_primal.data() + problem.n_variables,
                    0);
+      clamp_within_var_bounds(prev_primal, &problem, problem.handle_ptr);
     }
     if (prev_dual_size < problem.n_constraints) {
       thrust::fill(problem.handle_ptr->get_thrust_policy(),

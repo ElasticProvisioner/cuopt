@@ -103,4 +103,17 @@ class cusparse_view_t {
   const rmm::device_uvector<i_t>& A_offsets_;
   const rmm::device_uvector<i_t>& A_indices_;
 };
+
+template <typename T>
+cusparseStatus_t cusparsespmv_wrapper(cusparseHandle_t handle,
+                                      cusparseOperation_t opA,
+                                      const T* alpha,
+                                      const cusparseSpMatDescr_t matA,
+                                      const cusparseDnVecDescr_t vecX,
+                                      const T* beta,
+                                      const cusparseDnVecDescr_t vecY,
+                                      cusparseSpMVAlg_t alg,
+                                      T* externalBuffer,
+                                      cudaStream_t stream);
+
 }  // namespace cuopt::linear_programming::detail

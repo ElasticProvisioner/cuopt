@@ -248,8 +248,6 @@ void update_from_csr(problem_t<i_t, f_t>& pb)
   //  create renumbering maps
   rmm::device_uvector<i_t> cnst_renum_ids(pb.n_constraints, handle_ptr->get_stream());
   rmm::device_uvector<i_t> var_renum_ids(pb.n_variables, handle_ptr->get_stream());
-  thrust::sequence(handle_ptr->get_thrust_policy(), cnst_renum_ids.begin(), cnst_renum_ids.end());
-  thrust::sequence(handle_ptr->get_thrust_policy(), var_renum_ids.begin(), var_renum_ids.end());
   cuopt_assert(cnst_map.size() == pb.n_constraints, "cnst_map size mismatch");
   cuopt_assert(var_map.size() == pb.n_variables, "var_map size mismatch");
   thrust::inclusive_scan(

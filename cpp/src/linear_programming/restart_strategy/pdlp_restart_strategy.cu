@@ -1731,16 +1731,16 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_primal_gradient(
              primal_size_h_,
              stream_view_);
 
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                                       reusable_device_scalar_value_neg_1_.data(),
-                                                       cusparse_view.A_T,
-                                                       cusparse_view.dual_solution,
-                                                       reusable_device_scalar_value_1_.data(),
-                                                       cusparse_view.primal_gradient,
-                                                       CUSPARSE_SPMV_CSR_ALG2,
-                                                       (f_t*)cusparse_view.buffer_transpose.data(),
-                                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_neg_1_.data(),
+                                         cusparse_view.A_T,
+                                         cusparse_view.dual_solution,
+                                         reusable_device_scalar_value_1_.data(),
+                                         cusparse_view.primal_gradient,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view.buffer_transpose.data(),
+                                         stream_view_));
 }
 
 template <typename i_t, typename f_t>
@@ -1798,17 +1798,16 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_dual_gradient(
   // is changed with the introduction of constraint upper and lower bounds
 
   // gradient constains primal_product
-  RAFT_CUSPARSE_TRY(
-    raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                       reusable_device_scalar_value_1_.data(),
-                                       cusparse_view.A,
-                                       cusparse_view.primal_solution,
-                                       reusable_device_scalar_value_0_.data(),
-                                       cusparse_view.dual_gradient,
-                                       CUSPARSE_SPMV_CSR_ALG2,
-                                       (f_t*)cusparse_view.buffer_non_transpose.data(),
-                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_1_.data(),
+                                         cusparse_view.A,
+                                         cusparse_view.primal_solution,
+                                         reusable_device_scalar_value_0_.data(),
+                                         cusparse_view.dual_gradient,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view.buffer_non_transpose.data(),
+                                         stream_view_));
 
   // tmp_dual will contain the subgradient
   i_t number_of_blocks = dual_size_h_ / block_size;
@@ -1856,16 +1855,16 @@ void pdlp_restart_strategy_t<i_t, f_t>::compute_lagrangian_value(
                                                   stream_view_));
 
   // third term, let beta be 0 to not add what is in tmp_primal, compute it and compute dot
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                                       reusable_device_scalar_value_1_.data(),
-                                                       cusparse_view.A_T,
-                                                       cusparse_view.dual_solution,
-                                                       reusable_device_scalar_value_0_.data(),
-                                                       cusparse_view.tmp_primal,
-                                                       CUSPARSE_SPMV_CSR_ALG2,
-                                                       (f_t*)cusparse_view.buffer_transpose.data(),
-                                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_1_.data(),
+                                         cusparse_view.A_T,
+                                         cusparse_view.dual_solution,
+                                         reusable_device_scalar_value_0_.data(),
+                                         cusparse_view.tmp_primal,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view.buffer_transpose.data(),
+                                         stream_view_));
 
   RAFT_CUBLAS_TRY(raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
                                                   primal_size_h_,

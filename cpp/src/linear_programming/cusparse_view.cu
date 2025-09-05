@@ -20,6 +20,7 @@
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/utils.cuh>
 #include <mip/mip_constants.hpp>
+#include <utilities/cuda_helpers.cuh>
 
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -541,12 +542,54 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     A_indices_(dummy_int)
 {
 }
+template <typename T>
+cusparseStatus_t cusparsespmv_wrapper(cusparseHandle_t handle,
+                                      cusparseOperation_t opA,
+                                      const T* alpha,
+                                      const cusparseSpMatDescr_t matA,
+                                      const cusparseDnVecDescr_t vecX,
+                                      const T* beta,
+                                      const cusparseDnVecDescr_t vecY,
+                                      cusparseSpMVAlg_t alg,
+                                      T* externalBuffer,
+                                      cudaStream_t stream)
+{
+  void* dest_ptr;
+  int64_t dest_size;
+  cudaDataType valtype;
+  RAFT_CUSPARSE_TRY(cusparseDnVecGet(vecY, &dest_size, &dest_ptr, &valtype));
+  // cusparse flags a false positive here on the destination tmp buffer, silence it
+  cuopt::mark_memory_as_initialized(dest_ptr, dest_size, stream);
+
+  return raft::sparse::detail::cusparsespmv(
+    handle, opA, alpha, matA, vecX, beta, vecY, alg, externalBuffer, stream);
+}
 
 #if MIP_INSTANTIATE_FLOAT
 template class cusparse_view_t<int, float>;
+template cusparseStatus_t cusparsespmv_wrapper<float>(cusparseHandle_t handle,
+                                                      cusparseOperation_t opA,
+                                                      const float* alpha,
+                                                      const cusparseSpMatDescr_t matA,
+                                                      const cusparseDnVecDescr_t vecX,
+                                                      const float* beta,
+                                                      const cusparseDnVecDescr_t vecY,
+                                                      cusparseSpMVAlg_t alg,
+                                                      float* externalBuffer,
+                                                      cudaStream_t stream);
 #endif
 #if MIP_INSTANTIATE_DOUBLE
 template class cusparse_view_t<int, double>;
+template cusparseStatus_t cusparsespmv_wrapper<double>(cusparseHandle_t handle,
+                                                       cusparseOperation_t opA,
+                                                       const double* alpha,
+                                                       const cusparseSpMatDescr_t matA,
+                                                       const cusparseDnVecDescr_t vecX,
+                                                       const double* beta,
+                                                       const cusparseDnVecDescr_t vecY,
+                                                       cusparseSpMVAlg_t alg,
+                                                       double* externalBuffer,
+                                                       cudaStream_t stream);
 #endif
 
 }  // namespace cuopt::linear_programming::detail

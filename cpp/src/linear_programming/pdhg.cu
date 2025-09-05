@@ -87,17 +87,16 @@ void pdhg_solver_t<i_t, f_t>::compute_next_dual_solution(rmm::device_scalar<f_t>
   // Done in previous function
 
   // K(x'+delta_x)
-  RAFT_CUSPARSE_TRY(
-    raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                       reusable_device_scalar_value_1_.data(),  // 1
-                                       cusparse_view_.A,
-                                       cusparse_view_.tmp_primal,
-                                       reusable_device_scalar_value_0_.data(),  // 1
-                                       cusparse_view_.dual_gradient,
-                                       CUSPARSE_SPMV_CSR_ALG2,
-                                       (f_t*)cusparse_view_.buffer_non_transpose.data(),
-                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_1_.data(),  // 1
+                                         cusparse_view_.A,
+                                         cusparse_view_.tmp_primal,
+                                         reusable_device_scalar_value_0_.data(),  // 1
+                                         cusparse_view_.dual_gradient,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view_.buffer_non_transpose.data(),
+                                         stream_view_));
 
   // y - (sigma*dual_gradient)
   // max(min(0, sigma*constraint_upper+primal_product), sigma*constraint_lower+primal_product)
@@ -124,20 +123,16 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
 {
   // A_t @ y
 
-  // cusparse flags a false positive here on the destination tmp buffer, silence it
-  cuopt::mark_span_as_initialized(make_span(current_saddle_point_state_.get_current_AtY()),
-                                  handle_ptr_->get_stream());
-
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                                       reusable_device_scalar_value_1_.data(),
-                                                       cusparse_view_.A_T,
-                                                       cusparse_view_.dual_solution,
-                                                       reusable_device_scalar_value_0_.data(),
-                                                       cusparse_view_.current_AtY,
-                                                       CUSPARSE_SPMV_CSR_ALG2,
-                                                       (f_t*)cusparse_view_.buffer_transpose.data(),
-                                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_1_.data(),
+                                         cusparse_view_.A_T,
+                                         cusparse_view_.dual_solution,
+                                         reusable_device_scalar_value_0_.data(),
+                                         cusparse_view_.current_AtY,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view_.buffer_transpose.data(),
+                                         stream_view_));
 }
 
 template <typename i_t, typename f_t>

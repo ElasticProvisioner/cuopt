@@ -277,22 +277,17 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
 
   // Compute A_t @ (y' - y) = A_t @ y' - 1 * current_AtY
 
-  // cusparse flags a false positive here on the destination tmp buffer, silence it
-  cuopt::mark_span_as_initialized(make_span(current_saddle_point_state.get_next_AtY()),
-                                  handle_ptr_->get_stream());
-
   // First compute Ay' to be reused as Ay in next PDHG iteration (if found step size if valid)
-  RAFT_CUSPARSE_TRY(
-    raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                       reusable_device_scalar_value_1_.data(),  // alpha
-                                       cusparse_view.A_T,
-                                       cusparse_view.potential_next_dual_solution,
-                                       reusable_device_scalar_value_0_.data(),  // beta
-                                       cusparse_view.next_AtY,
-                                       CUSPARSE_SPMV_CSR_ALG2,
-                                       (f_t*)cusparse_view.buffer_transpose.data(),
-                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_1_.data(),  // alpha
+                                         cusparse_view.A_T,
+                                         cusparse_view.potential_next_dual_solution,
+                                         reusable_device_scalar_value_0_.data(),  // beta
+                                         cusparse_view.next_AtY,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view.buffer_transpose.data(),
+                                         stream_view_));
 
   // Compute Ay' - Ay = next_Aty - current_Aty
   cub::DeviceTransform::Transform(

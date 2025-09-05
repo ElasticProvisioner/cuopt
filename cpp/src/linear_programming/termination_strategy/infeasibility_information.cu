@@ -226,17 +226,16 @@ template <typename i_t, typename f_t>
 void infeasibility_information_t<i_t, f_t>::compute_homogenous_primal_residual(
   cusparse_view_t<i_t, f_t>& cusparse_view, rmm::device_uvector<f_t>& tmp_dual)
 {
-  RAFT_CUSPARSE_TRY(
-    raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                       reusable_device_scalar_value_1_.data(),
-                                       cusparse_view.A,
-                                       cusparse_view.primal_solution,
-                                       reusable_device_scalar_value_0_.data(),
-                                       cusparse_view.tmp_dual,
-                                       CUSPARSE_SPMV_CSR_ALG2,
-                                       (f_t*)cusparse_view.buffer_non_transpose.data(),
-                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_1_.data(),
+                                         cusparse_view.A,
+                                         cusparse_view.primal_solution,
+                                         reusable_device_scalar_value_0_.data(),
+                                         cusparse_view.tmp_dual,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view.buffer_non_transpose.data(),
+                                         stream_view_));
 
   raft::linalg::ternaryOp(homogenous_primal_residual_.data(),
                           tmp_dual.data(),
@@ -299,16 +298,16 @@ void infeasibility_information_t<i_t, f_t>::compute_homogenous_dual_residual(
 
   // need to recompute the primal gradient since c is the all zero vector in the homogenous case
   // this means that the primal gradient is computed as -A^T*y
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                                       reusable_device_scalar_value_neg_1_.data(),
-                                                       cusparse_view.A_T,
-                                                       cusparse_view.dual_solution,
-                                                       reusable_device_scalar_value_0_.data(),
-                                                       cusparse_view.tmp_primal,
-                                                       CUSPARSE_SPMV_CSR_ALG2,
-                                                       (f_t*)cusparse_view.buffer_transpose.data(),
-                                                       stream_view_));
+  RAFT_CUSPARSE_TRY(cusparsespmv_wrapper(handle_ptr_->get_cusparse_handle(),
+                                         CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                         reusable_device_scalar_value_neg_1_.data(),
+                                         cusparse_view.A_T,
+                                         cusparse_view.dual_solution,
+                                         reusable_device_scalar_value_0_.data(),
+                                         cusparse_view.tmp_primal,
+                                         CUSPARSE_SPMV_CSR_ALG2,
+                                         (f_t*)cusparse_view.buffer_transpose.data(),
+                                         stream_view_));
 
   compute_reduced_cost_from_primal_gradient(tmp_primal,
                                             primal_ray);  // primal gradient is now in temp
