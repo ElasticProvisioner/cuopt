@@ -845,6 +845,10 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
         return optimization_problem_solution_t<i_t, f_t>(
           pdlp_termination_status_t::PrimalInfeasible, op_problem.get_handle_ptr()->get_stream());
       }
+      if (settings.user_problem_file != "") {
+        CUOPT_LOG_INFO("Writing presolved problem to file: %s", settings.user_problem_file.c_str());
+        reduced_problem.write_to_mps(settings.user_problem_file);
+      }
       problem       = detail::problem_t<i_t, f_t>(reduced_problem);
       presolve_time = lp_timer.elapsed_time();
       CUOPT_LOG_INFO("Papilo presolve time: %f", presolve_time);
@@ -860,7 +864,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
                    problem.presolve_data.objective_offset,
                    problem.presolve_data.objective_scaling_factor);
 
-    if (settings.user_problem_file != "") {
+    if (settings.user_problem_file != "" && !run_presolve) {
       CUOPT_LOG_INFO("Writing user problem to file: %s", settings.user_problem_file.c_str());
       op_problem.write_to_mps(settings.user_problem_file);
     }

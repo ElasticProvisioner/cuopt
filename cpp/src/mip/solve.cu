@@ -219,11 +219,16 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
                                         op_problem.get_handle_ptr()->get_stream());
       }
 
+      if (settings.user_problem_file != "") {
+        CUOPT_LOG_INFO("Writing presolved problem to file: %s", settings.user_problem_file.c_str());
+        reduced_op_problem.write_to_mps(settings.user_problem_file);
+      }
+
       problem       = detail::problem_t<i_t, f_t>(reduced_op_problem);
       presolve_time = timer.elapsed_time();
       CUOPT_LOG_INFO("Papilo presolve time: %f", presolve_time);
     }
-    if (settings.user_problem_file != "") {
+    if (settings.user_problem_file != "" && !run_presolve) {
       CUOPT_LOG_INFO("Writing user problem to file: %s", settings.user_problem_file.c_str());
       op_problem.write_to_mps(settings.user_problem_file);
     }
