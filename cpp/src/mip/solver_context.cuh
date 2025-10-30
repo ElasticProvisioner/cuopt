@@ -20,6 +20,8 @@
 #include <linear_programming/initial_scaling_strategy/initial_scaling.cuh>
 #include <mip/problem/problem.cuh>
 #include <mip/relaxed_lp/lp_state.cuh>
+
+#include <utilities/models/fj_predictor/header.h>
 #include <utilities/work_unit_predictor.hpp>
 
 #pragma once
@@ -27,7 +29,7 @@
 namespace cuopt::linear_programming::detail {
 
 struct mip_solver_work_unit_predictors_t {
-  work_unit_predictor_t fj_predictor{"fj"};
+  work_unit_predictor_t<fj_predictor> fj_predictor{};
 };
 
 // Aggregate structure containing the global context of the solving process for convenience:

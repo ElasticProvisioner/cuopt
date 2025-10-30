@@ -24,17 +24,12 @@
 
 namespace cuopt {
 
+template <typename model_t>
 class work_unit_predictor_t {
  public:
-  work_unit_predictor_t(const std::string& model_name);
-  ~work_unit_predictor_t();
-  float predict_scalar(const std::vector<float>& features, bool verbose = false) const;
-  float predict_scalar(const std::map<std::string, float>& features, bool verbose = false) const;
+  float predict_scalar(const std::map<std::string, float>& features) const;
 
  private:
-  std::string model_name;
-  void* raw_handle{nullptr};  // void* to avoid including xgboost in every MIP translation unit
-  bool is_valid{false};
   mutable std::unordered_map<uint32_t, float> prediction_cache;
 };
 

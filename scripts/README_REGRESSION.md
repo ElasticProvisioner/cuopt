@@ -185,7 +185,11 @@ python train_regressor.py data.pkl --regressor lightgbm --treelite-compile 8 -o 
 
 ### Optimization Impact
 
-All TL2cgen exports include both branch annotation and quantization automatically:
+All TL2cgen exports include the following optimizations automatically:
+
+1. **Branch Annotation**: Uses training data statistics to add branch prediction hints
+2. **Quantization**: Reduces memory footprint by converting floating-point to integers
+3. **Missing Data Removal**: Removes unnecessary missing data checks (assumes all features provided)
 
 | Configuration | Speed | Memory | Accuracy |
 |---------------|-------|--------|----------|
@@ -209,21 +213,80 @@ models/
     └── *.cpp / *.h                 # Other C++ source files (quantized + annotated)
 ```
 
-**Namespace Wrapping**: All generated files are automatically wrapped in a C++ namespace with the model name (derived from the input pickle file basename) to avoid naming conflicts when using multiple models in the same project. For example, if the input is `my_dataset.pkl`:
-- All functions are in `namespace my_dataset { ... }`
+**Class Wrapping**: All generated files are automatically wrapped in a C++ class with the model name (derived from the input pickle file basename) to avoid naming conflicts when using multiple models in the same project. For example, if the input is `my_dataset.pkl`:
+- All functions and data are in `class my_dataset { public: ... };`
+- All class members are `static` - no instantiation required
 - Access functions as `my_dataset::predict()`, `my_dataset::get_num_features()`, etc.
 - All `.c` files are renamed to `.cpp` for C++ compilation
+- Header includes `#pragma once` for include guards
 
 The generated `header.h` includes:
-- `namespace <model> { ... }` wrapping all declarations
-- `#define NUM_FEATURES <count>` - Number of features
-- `extern const char* feature_names[]` - Feature names declaration
-- Function declarations (e.g., `predict()`, `get_num_features()`) within the namespace
+- `#pragma once` at the top
+- `#include` statements (outside the class)
+- `class <model> { public: ... };` wrapping all declarations
+- `static constexpr int NUM_FEATURES` - Number of features
+- `static const char* feature_names[]` - Feature names declaration
+- Function declarations (e.g., `predict()`, `get_num_features()`) as public static members
 
 The generated `main.cpp` includes:
-- `namespace <model> { ... }` wrapping all implementations
-- `const char* feature_names[]` - Feature names array definition
-- Function implementations within the namespace
+- `#include` statements at the top
+- Macro definitions (`LIKELY`, `UNLIKELY`, `N_TARGET`, `MAX_N_CLASS`) - moved from header for implementation-only use
+- Function implementations with `<model>::function_name` qualification
+- `const char* <model>::feature_names[]` - Feature names array definition (at the end of file)
+
+### Example Generated Code Structure
+
+**header.h:**
+
+```cpp
+#pragma once
+
+#include <stdint.h>
+
+class my_dataset {
+public:
+    static float predict(float* data, int pred_margin);
+    static int get_num_feature();
+    // ... other function declarations ...
+
+    static constexpr int NUM_FEATURES = 42;
+    static const char* feature_names[NUM_FEATURES];
+};
+```
+
+**main.cpp:**
+
+```cpp
+#include "header.h"
+
+#define LIKELY(x)   __builtin_expect(!!(x), 1)
+#define N_TARGET 1
+
+float my_dataset::predict(float* data, int pred_margin) {
+    // implementation
+}
+
+int my_dataset::get_num_feature() {
+    return NUM_FEATURES;
+}
+
+// Feature names array
+const char* my_dataset::feature_names[my_dataset::NUM_FEATURES] = {
+    "n_variables",
+    "n_constraints",
+    // ...
+};
+```
+
+**Usage:**
+
+```cpp
+#include "xgboost_c_code/header.h"
+
+// Call static methods directly - no instantiation needed
+float result = my_dataset::predict(features, 0);
+int num = my_dataset::get_num_feature();
+```
 
 ## Feature Selection Examples
 

@@ -179,8 +179,8 @@ static bool run_fj_check_determinism(std::string test_instance, int iter_limit)
   detail::fj_settings_t fj_settings;
   fj_settings.time_limit             = std::numeric_limits<double>::max();
   fj_settings.mode                   = detail::fj_mode_t::EXIT_NON_IMPROVING;
-  fj_settings.n_of_minimums_for_exit = 5000;
-  fj_settings.work_unit_limit        = 0.15;  // run for 0.5wu (~0.5s)
+  fj_settings.n_of_minimums_for_exit = 5000 * 1000;
+  fj_settings.work_unit_limit        = 0.5;  // run for 0.5wu (~0.5s)
   fj_settings.update_weights         = true;
   fj_settings.feasibility_run        = false;
   // fj_settings.iteration_limit        = iter_limit;

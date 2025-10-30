@@ -73,7 +73,11 @@ FEATURES_TO_EXCLUDE = [
     'avg_var_degree',
     'equality_ratio',
     'integer_ratio',
-    'binary_ratio'
+    'binary_ratio',
+    'max_related_vars',
+    'problem_size_score',
+    'structural_complexity',
+    'tight_constraint_ratio'
 ]
 
 # Alternatively, specify ONLY the features you want to use
@@ -639,7 +643,7 @@ def compile_model_treelite(model, regressor_type: str, output_dir: str,
         quantize_path = os.path.join(source_dir, 'quantize.c')
         recipe_path = os.path.join(source_dir, 'recipe.json')
 
-        # Rename all .c files to .cpp and wrap in namespace
+        # Rename all .c files to .cpp and wrap in class
         if model_name:
             try:
                 import glob
@@ -652,12 +656,49 @@ def compile_model_treelite(model, regressor_type: str, output_dir: str,
                     with open(c_file, 'r') as f:
                         content = f.read()
 
-                    # Wrap in namespace
-                    namespaced_content = f'namespace {model_name} {{\n\n{content}\n\n}}  // namespace {model_name}\n'
+                    # Split content into includes and rest
+                    lines = content.split('\n')
+                    include_lines = []
+                    code_lines = []
+                    in_includes = True
+
+                    for line in lines:
+                        if in_includes and (line.strip().startswith('#include') or line.strip().startswith('#') or line.strip() == ''):
+                            include_lines.append(line)
+                        else:
+                            in_includes = False
+                            code_lines.append(line)
+
+                    # Prefix function definitions with ClassName:: (for .cpp files, not class wrapping)
+                    import re
+                    processed_lines = []
+                    for line in code_lines:
+                        # Detect function definitions (return_type function_name(...))
+                        if line and not line.strip().startswith('//') and not line.strip().startswith('/*'):
+                            # Check if it's a function definition
+                            # Pattern: type name(...) or type* name(...) etc.
+                            func_pattern = r'^(\s*)((?:const\s+)?(?:unsigned\s+)?(?:struct\s+)?[\w_]+(?:\s*\*)*\s+)([\w_]+)(\s*\()'
+                            match = re.match(func_pattern, line)
+                            if match and '::' not in line:  # Don't add if already qualified
+                                indent = match.group(1)
+                                return_type = match.group(2)
+                                func_name = match.group(3)
+                                rest = line[match.end(3):]
+                                # Prefix function name with class name
+                                line = f'{indent}{return_type}{model_name}::{func_name}{rest}'
+                        processed_lines.append(line)
+                    code_lines = processed_lines
+
+                    # Don't wrap in class for .cpp files - just output the definitions
+                    includes_str = '\n'.join(include_lines)
+                    code_str = '\n'.join(code_lines)
+
+                    # For .cpp files, no class wrapper needed
+                    cpp_content = f'{includes_str}\n\n{code_str}\n'
 
                     # Write to .cpp file
                     with open(cpp_file, 'w') as f:
-                        f.write(namespaced_content)
+                        f.write(cpp_content)
 
                     # Remove original .c file
                     os.remove(c_file)
@@ -666,52 +707,161 @@ def compile_model_treelite(model, regressor_type: str, output_dir: str,
                 main_path = main_path[:-2] + '.cpp'
                 quantize_path = quantize_path[:-2] + '.cpp'
 
-                print(f"  Renamed {len(c_files)} .c files to .cpp and wrapped in namespace '{model_name}'")
+                print(f"  Renamed {len(c_files)} .c files to .cpp")
             except Exception as e:
                 print(f"  Warning: Failed to rename .c files: {e}")
 
-        # Wrap header.h content in namespace
+        # Optimize main.cpp by removing unnecessary missing data checks
+        # Since all features are always provided, replace !(data[X].missing != -1) with false
+        if os.path.exists(main_path):
+            try:
+                with open(main_path, 'r') as f:
+                    content = f.read()
+
+                # Replace pattern !(data[N].missing != -1) with false
+                import re
+                original_content = content
+                content = re.sub(r'!\(data\[\d+\]\.missing != -1\)', 'false', content)
+
+                if content != original_content:
+                    with open(main_path, 'w') as f:
+                        f.write(content)
+                    print(f"  Optimized main.cpp by removing unnecessary missing data checks")
+            except Exception as e:
+                print(f"  Warning: Failed to optimize main.cpp: {e}")
+
+        # Wrap header.h content in class with #pragma once
+        defines_to_move = []
         if model_name and os.path.exists(header_path):
             try:
                 with open(header_path, 'r') as f:
                     content = f.read()
 
-                # Wrap in namespace
-                namespaced_content = f'namespace {model_name} {{\n\n{content}\n\n}}  // namespace {model_name}\n'
+                # Split content into includes, defines to move, and rest
+                lines = content.split('\n')
+                include_lines = []
+                code_lines = []
+                in_includes = True
+                i = 0
+
+                while i < len(lines):
+                    line = lines[i]
+
+                    if in_includes and (line.strip().startswith('#include') or line.strip() == ''):
+                        include_lines.append(line)
+                        i += 1
+                    # Detect macros to move to main.cpp
+                    elif line.strip().startswith('#if defined(__clang__)') or line.strip().startswith('#define N_TARGET') or line.strip().startswith('#define MAX_N_CLASS'):
+                        in_includes = False
+                        # Capture the entire #if block or single #define
+                        if line.strip().startswith('#if defined(__clang__)'):
+                            # Capture the entire #if...#endif block
+                            macro_block = []
+                            macro_block.append(line)
+                            i += 1
+                            while i < len(lines) and not lines[i].strip().startswith('#endif'):
+                                macro_block.append(lines[i])
+                                i += 1
+                            if i < len(lines):
+                                macro_block.append(lines[i])  # Include #endif
+                                i += 1
+                            defines_to_move.append('\n'.join(macro_block))
+                        else:
+                            # Single #define line
+                            defines_to_move.append(line)
+                            i += 1
+                    else:
+                        in_includes = False
+                        code_lines.append(line)
+                        i += 1
+
+                # Add static keyword to function declarations
+                import re
+                processed_lines = []
+                for line in code_lines:
+                    # Detect function declarations/definitions (return_type function_name(...))
+                    # Match lines that look like function declarations but don't already have static
+                    if line and not line.strip().startswith('//') and not line.strip().startswith('/*'):
+                        # Check if it's a function declaration/definition
+                        # Pattern: type name(...) or type* name(...) or type name[...](...) etc.
+                        func_pattern = r'^(\s*)((?:const\s+)?(?:unsigned\s+)?(?:struct\s+)?[\w_]+(?:\s*\*)*\s+)([\w_]+)\s*\('
+                        match = re.match(func_pattern, line)
+                        if match and 'static' not in line:
+                            indent = match.group(1)
+                            return_type = match.group(2)
+                            # Add static keyword
+                            line = f'{indent}static {return_type}{line[len(indent)+len(return_type):]}'
+                    processed_lines.append(line)
+                code_lines = processed_lines
+
+                # Wrap code in class declaration
+                includes_str = '\n'.join(include_lines)
+                code_str = '\n'.join(code_lines)
+
+                wrapped_content = f'#pragma once\n\n{includes_str}\n\nclass {model_name} {{\npublic:\n{code_str}\n}};  // class {model_name}\n'
 
                 with open(header_path, 'w') as f:
-                    f.write(namespaced_content)
+                    f.write(wrapped_content)
 
-                print(f"  Wrapped header.h in namespace '{model_name}'")
+                print(f"  Wrapped header.h in class '{model_name}' with #pragma once")
             except Exception as e:
                 print(f"  Warning: Failed to wrap header.h: {e}")
+
+        # Add defines to main.cpp (moved from header.h)
+        if defines_to_move and os.path.exists(main_path):
+            try:
+                with open(main_path, 'r') as f:
+                    content = f.read()
+
+                # Insert defines after includes (look for where code starts - typically after blank line after includes)
+                defines_str = '\n'.join(defines_to_move)
+
+                # Find the first non-include, non-blank line to insert before
+                lines = content.split('\n')
+                insert_pos = 0
+                for i, line in enumerate(lines):
+                    if line.strip() and not line.strip().startswith('#include'):
+                        insert_pos = i
+                        break
+
+                # Insert defines at the position
+                lines.insert(insert_pos, defines_str)
+                lines.insert(insert_pos + 1, '')  # Add blank line after defines
+
+                content = '\n'.join(lines)
+                with open(main_path, 'w') as f:
+                    f.write(content)
+                print(f"  Moved {len(defines_to_move)} macro definition(s) from header.h to main.cpp")
+            except Exception as e:
+                print(f"  Warning: Failed to add defines to main.cpp: {e}")
 
         # Add feature names to header and implementation
         if feature_names and os.path.exists(header_path) and os.path.exists(main_path):
             try:
-                # Append to header.h (inside namespace)
+                # Append to header.h (inside class)
                 with open(header_path, 'r') as f:
                     content = f.read()
 
-                # Insert before closing namespace
-                insertion = f'\n// Feature names\n#define NUM_FEATURES {len(feature_names)}\nextern const char* feature_names[NUM_FEATURES];\n'
-                content = content.replace(f'}}  // namespace {model_name}\n', f'{insertion}\n}}  // namespace {model_name}\n')
+                # Insert before closing class
+                insertion = f'\n    // Feature names\n    static constexpr int NUM_FEATURES = {len(feature_names)};\n    static const char* feature_names[NUM_FEATURES];\n'
+                content = content.replace(f'}};  // class {model_name}\n', f'{insertion}}};  // class {model_name}\n')
 
                 with open(header_path, 'w') as f:
                     f.write(content)
 
-                # Append to main.cpp (inside namespace)
+                # Append to main.cpp (at the end of the file, outside any class)
                 with open(main_path, 'r') as f:
                     content = f.read()
 
-                # Insert before closing namespace
-                feature_array = f'\n// Feature names array\nconst char* feature_names[NUM_FEATURES] = {{\n'
+                # Append feature array definition at the end of the file
+                feature_array = f'\n// Feature names array\nconst char* {model_name}::feature_names[{model_name}::NUM_FEATURES] = {{\n'
                 for i, name in enumerate(feature_names):
                     comma = ',' if i < len(feature_names) - 1 else ''
                     feature_array += f'    "{name}"{comma}\n'
                 feature_array += '};\n'
 
-                content = content.replace(f'}}  // namespace {model_name}\n', f'{feature_array}\n}}  // namespace {model_name}\n')
+                # Append to end of file
+                content = content.rstrip() + '\n' + feature_array
 
                 with open(main_path, 'w') as f:
                     f.write(content)

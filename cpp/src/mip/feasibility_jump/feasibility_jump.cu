@@ -910,7 +910,7 @@ std::map<std::string, float> fj_t<i_t, f_t>::get_feature_vector(i_t climber_idx)
   features["unbalancedness"] = (float)pb_ptr->unbalancedness;
 
   // Algorithm settings
-  features["target_time"]            = (float)settings.work_unit_limit;
+  features["time"]                   = (float)settings.work_unit_limit;
   features["n_of_minimums_for_exit"] = (float)settings.n_of_minimums_for_exit;
   features["feasibility_run"]        = (float)settings.feasibility_run;
 
@@ -954,10 +954,10 @@ std::map<std::string, float> fj_t<i_t, f_t>::get_feature_vector(i_t climber_idx)
     }
     features["avg_related_vars_per_var"] =
       pb_ptr->n_variables > 0 ? (float)total_related / pb_ptr->n_variables : 0.0f;
-    features["max_related_vars"] = (float)max_related;
+    // features["max_related_vars"] = (float)max_related;
   } else {
     features["avg_related_vars_per_var"] = 0.0f;
-    features["max_related_vars"]         = 0.0f;
+    // features["max_related_vars"]         = 0.0f;
   }
 
   // Constraint characteristics
@@ -1281,18 +1281,9 @@ i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
 
   // if work_limit is set: compute an estimate of the number of iterations required
   if (settings.work_unit_limit != std::numeric_limits<double>::infinity()) {
-    auto features = std::vector<float>{
-      (float)settings.work_unit_limit,
-      (float)settings.n_of_minimums_for_exit,
-      (float)pb_ptr->n_variables,
-      (float)pb_ptr->n_constraints,
-      (float)pb_ptr->coefficients.size(),
-      (float)pb_ptr->sparsity,
-      (float)pb_ptr->nnz_stddev,
-      (float)pb_ptr->unbalancedness,
-    };
-    float iter_prediction = std::max(
-      (f_t)0.0, (f_t)ceil(context.work_unit_predictors.fj_predictor.predict_scalar(features)));
+    std::map<std::string, float> features_map = get_feature_vector(0);
+    float iter_prediction                     = std::max(
+      (f_t)0.0, (f_t)ceil(context.work_unit_predictors.fj_predictor.predict_scalar(features_map)));
     CUOPT_LOG_DEBUG("FJ determ: Estimated number of iterations for %f WU: %f",
                     settings.work_unit_limit,
                     iter_prediction);
