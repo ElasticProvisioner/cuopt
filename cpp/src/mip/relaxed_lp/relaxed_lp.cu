@@ -54,6 +54,28 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   raft::common::nvtx::range fun_scope("get_relaxed_lp_solution");
   auto function_start_time = std::chrono::high_resolution_clock::now();
 
+  // === PDLP PREDICTOR FEATURES - START ===
+  CUOPT_LOG_INFO("PDLP_FEATURES: n_variables=%d n_constraints=%d nnz=%lu",
+                 op_problem.n_variables,
+                 op_problem.n_constraints,
+                 op_problem.coefficients.size());
+
+  CUOPT_LOG_INFO("PDLP_FEATURES: sparsity=%.6f nnz_stddev=%.6f unbalancedness=%.6f",
+                 op_problem.sparsity,
+                 op_problem.nnz_stddev,
+                 op_problem.unbalancedness);
+
+  CUOPT_LOG_INFO("PDLP_FEATURES: has_warm_start=%d time_limit=%.6f iteration_limit=%d",
+                 settings.has_initial_primal,
+                 settings.time_limit,
+                 settings.iteration_limit);
+
+  CUOPT_LOG_INFO("PDLP_FEATURES: tolerance=%.10f check_infeasibility=%d return_first_feasible=%d",
+                 settings.tolerance,
+                 settings.check_infeasibility,
+                 settings.return_first_feasible);
+  // === PDLP PREDICTOR FEATURES - END ===
+
   pdlp_solver_settings_t<i_t, f_t> pdlp_settings{};
   pdlp_settings.detect_infeasibility = settings.check_infeasibility;
   pdlp_settings.set_optimality_tolerance(settings.tolerance);
@@ -135,6 +157,23 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   CUOPT_LOG_DEBUG("get_relaxed_lp_solution took %lld ms for %d iterations",
                   elapsed_ms,
                   solver_response.get_additional_termination_information().number_of_steps_taken);
+
+  // === PDLP PREDICTOR RESULTS - START ===
+  auto term_info = solver_response.get_additional_termination_information();
+  CUOPT_LOG_INFO("PDLP_RESULT: iterations=%d time_ms=%lld termination=%d",
+                 term_info.number_of_steps_taken,
+                 elapsed_ms,
+                 (int)solver_response.get_termination_status());
+
+  CUOPT_LOG_INFO("PDLP_RESULT: primal_objective=%.10f dual_objective=%.10f gap=%.10f",
+                 term_info.primal_objective,
+                 term_info.dual_objective,
+                 term_info.gap);
+
+  CUOPT_LOG_INFO("PDLP_RESULT: l2_primal_residual=%.10f l2_dual_residual=%.10f",
+                 term_info.l2_primal_residual,
+                 term_info.l2_dual_residual);
+  // === PDLP PREDICTOR RESULTS - END ===
 
   return solver_response;
 }

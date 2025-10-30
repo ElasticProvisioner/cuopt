@@ -500,6 +500,51 @@ template <typename i_t, typename f_t>
 bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& solution)
 {
   raft::common::nvtx::range fun_scope("run_single_fp_descent");
+
+  // === FP PREDICTOR FEATURES - START ===
+  f_t start_time    = timer.remaining_time();
+  i_t fp_iterations = 0;
+
+  // Problem structure features
+  CUOPT_LOG_INFO("FP_FEATURES: n_variables=%d n_constraints=%d n_integer_vars=%d n_binary_vars=%d",
+                 solution.problem_ptr->n_variables,
+                 solution.problem_ptr->n_constraints,
+                 solution.problem_ptr->n_integer_vars,
+                 solution.problem_ptr->n_binary_vars);
+
+  CUOPT_LOG_INFO("FP_FEATURES: nnz=%lu sparsity=%.6f nnz_stddev=%.6f unbalancedness=%.6f",
+                 solution.problem_ptr->coefficients.size(),
+                 solution.problem_ptr->sparsity,
+                 solution.problem_ptr->nnz_stddev,
+                 solution.problem_ptr->unbalancedness);
+
+  // Initial solution features
+  solution.compute_feasibility();
+  i_t initial_n_integers        = solution.compute_number_of_integers();
+  f_t initial_ratio_of_integers = solution.problem_ptr->n_integer_vars > 0
+                                    ? (f_t)initial_n_integers / solution.problem_ptr->n_integer_vars
+                                    : 0.0;
+
+  CUOPT_LOG_INFO("FP_FEATURES: initial_feasibility=%d initial_excess=%.6f initial_objective=%.6f",
+                 solution.get_feasible(),
+                 solution.get_total_excess(),
+                 solution.get_objective());
+
+  CUOPT_LOG_INFO("FP_FEATURES: initial_ratio_of_integers=%.6f initial_n_integers=%d",
+                 initial_ratio_of_integers,
+                 initial_n_integers);
+
+  // Algorithm configuration features
+  CUOPT_LOG_INFO("FP_FEATURES: alpha=%.6f check_distance_cycle=%d cycle_detection_length=%d",
+                 config.alpha,
+                 config.check_distance_cycle,
+                 cycle_queue.cycle_detection_length);
+
+  CUOPT_LOG_INFO("FP_FEATURES: has_cutting_plane=%d time_budget=%.6f",
+                 solution.problem_ptr->cutting_plane_added,
+                 timer.remaining_time());
+  // === FP PREDICTOR FEATURES - END ===
+
   // start by doing nearest rounding
   solution.round_nearest();
   raft::copy(last_rounding.data(),
@@ -509,8 +554,13 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
 
   // CUOPT_LOG_DEBUG("FP: starting FP descent, sol hash 0x%x", solution.get_hash());
   while (true) {
+    fp_iterations++;
     if (timer.check_time_limit()) {
       CUOPT_LOG_DEBUG("FP time limit reached!");
+      f_t time_taken = start_time - timer.remaining_time();
+      CUOPT_LOG_INFO("FP_RESULT: iterations=%d time_taken=%.6f termination=TIME_LIMIT",
+                     fp_iterations,
+                     time_taken);
       round(solution);
       return false;
     }
@@ -534,12 +584,22 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
         if (is_feasible) {
           bool res = solution.compute_feasibility();
           cuopt_assert(res, "Feasibility issue");
+          f_t time_taken = start_time - timer.remaining_time();
+          CUOPT_LOG_INFO(
+            "FP_RESULT: iterations=%d time_taken=%.6f termination=FEASIBLE_DISTANCE_CYCLE",
+            fp_iterations,
+            time_taken);
           return true;
         }
         cuopt::default_logger().flush();
         f_t remaining_time_end_fp = timer.remaining_time();
         total_fp_time_until_cycle = fp_fj_cycle_time_begin - remaining_time_end_fp;
         // CUOPT_LOG_DEBUG("total_fp_time_until_cycle: %f", total_fp_time_until_cycle);
+        f_t time_taken = start_time - timer.remaining_time();
+        CUOPT_LOG_INFO(
+          "FP_RESULT: iterations=%d time_taken=%.6f termination=INFEASIBLE_DISTANCE_CYCLE",
+          fp_iterations,
+          time_taken);
         return false;
       }
     }
@@ -547,6 +607,11 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
     if (n_integers == solution.problem_ptr->n_integer_vars) {
       if (is_feasible) {
         CUOPT_LOG_DEBUG("Feasible solution found after LP with relative tolerance");
+        f_t time_taken = start_time - timer.remaining_time();
+        CUOPT_LOG_INFO(
+          "FP_RESULT: iterations=%d time_taken=%.6f termination=FEASIBLE_LP_PROJECTION",
+          fp_iterations,
+          time_taken);
         return true;
       }
       // if the solution is almost on polytope
@@ -567,6 +632,11 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
         n_integers  = solution.compute_number_of_integers();
         if (is_feasible && n_integers == solution.problem_ptr->n_integer_vars) {
           CUOPT_LOG_DEBUG("Feasible solution verified with LP!");
+          f_t time_taken = start_time - timer.remaining_time();
+          CUOPT_LOG_INFO(
+            "FP_RESULT: iterations=%d time_taken=%.6f termination=FEASIBLE_LP_VERIFIED",
+            fp_iterations,
+            time_taken);
           return true;
         }
       }
@@ -581,11 +651,19 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
     }
     if (timer.check_time_limit()) {
       CUOPT_LOG_DEBUG("FP time limit reached!");
+      f_t time_taken = start_time - timer.remaining_time();
+      CUOPT_LOG_INFO("FP_RESULT: iterations=%d time_taken=%.6f termination=TIME_LIMIT_AFTER_ROUND",
+                     fp_iterations,
+                     time_taken);
       return false;
     }
     if (is_feasible) {
       bool res = solution.compute_feasibility();
       cuopt_assert(res, "Feasibility issue");
+      f_t time_taken = start_time - timer.remaining_time();
+      CUOPT_LOG_INFO("FP_RESULT: iterations=%d time_taken=%.6f termination=FEASIBLE_AFTER_ROUND",
+                     fp_iterations,
+                     time_taken);
       return true;
     }
     // do the cycle check if alpha diff is small enough
@@ -603,6 +681,10 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
         remaining_time_end_fp,
         fp_fj_cycle_time_begin,
         total_fp_time_until_cycle);
+      f_t time_taken = start_time - timer.remaining_time();
+      CUOPT_LOG_INFO("FP_RESULT: iterations=%d time_taken=%.6f termination=ASSIGNMENT_CYCLE",
+                     fp_iterations,
+                     time_taken);
       return false;
     }
     cycle_queue.n_iterations_without_cycle++;

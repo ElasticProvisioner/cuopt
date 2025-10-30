@@ -1109,11 +1109,44 @@ bool constraint_prop_t<i_t, f_t>::apply_round(
   std::optional<std::reference_wrapper<probing_config_t<i_t, f_t>>> probing_config)
 {
   raft::common::nvtx::range fun_scope("constraint prop round");
+
+  // === CONSTRAINT PROP PREDICTOR FEATURES - START ===
+  auto cp_start_time = std::chrono::high_resolution_clock::now();
+
+  CUOPT_LOG_INFO("CP_FEATURES: n_variables=%d n_constraints=%d n_integer_vars=%d",
+                 sol.problem_ptr->n_variables,
+                 sol.problem_ptr->n_constraints,
+                 sol.problem_ptr->n_integer_vars);
+
+  CUOPT_LOG_INFO("CP_FEATURES: nnz=%lu sparsity=%.6f",
+                 sol.problem_ptr->coefficients.size(),
+                 sol.problem_ptr->sparsity);
+
+  sol.compute_feasibility();
+  i_t n_unset_integers = sol.problem_ptr->n_integer_vars - sol.compute_number_of_integers();
+
+  CUOPT_LOG_INFO("CP_FEATURES: n_unset_vars=%d initial_excess=%.6f time_budget=%.6f",
+                 n_unset_integers,
+                 sol.get_total_excess(),
+                 max_time_for_bounds_prop);
+
+  CUOPT_LOG_INFO("CP_FEATURES: round_all_vars=%d lp_run_time_after_feasible=%.6f",
+                 round_all_vars,
+                 lp_run_time_after_feasible);
+  // === CONSTRAINT PROP PREDICTOR FEATURES - END ===
+
   max_timer = timer_t{max_time_for_bounds_prop};
   if (this->context.settings.deterministic) {
     max_timer = timer_t(std::numeric_limits<double>::infinity());
   }
-  if (check_brute_force_rounding(sol)) { return true; }
+  if (check_brute_force_rounding(sol)) {
+    auto cp_end_time = std::chrono::high_resolution_clock::now();
+    auto cp_elapsed_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(cp_end_time - cp_start_time).count();
+    CUOPT_LOG_INFO("CP_RESULT: time_ms=%lld termination=BRUTE_FORCE_SUCCESS iterations=0",
+                   cp_elapsed_ms);
+    return true;
+  }
   recovery_mode      = false;
   rounding_ii        = false;
   n_iter_in_recovery = 0;
@@ -1138,11 +1171,25 @@ bool constraint_prop_t<i_t, f_t>::apply_round(
   //   repair_stats.total_time_spent_on_repair,
   //   repair_stats.total_time_spent_bounds_prop_after_repair,
   //   repair_stats.total_time_spent_on_bounds_prop);
+  // === CONSTRAINT PROP PREDICTOR RESULTS - START ===
+  auto cp_end_time = std::chrono::high_resolution_clock::now();
+  auto cp_elapsed_ms =
+    std::chrono::duration_cast<std::chrono::milliseconds>(cp_end_time - cp_start_time).count();
+  // === CONSTRAINT PROP PREDICTOR RESULTS - END ===
+
   if (!sol_found) {
     sol.compute_feasibility();
+    CUOPT_LOG_INFO("CP_RESULT: time_ms=%lld termination=FAILED iterations=%d",
+                   cp_elapsed_ms,
+                   0);  // TODO: track actual iterations
     return false;
   }
-  return sol.compute_feasibility();
+  bool result = sol.compute_feasibility();
+  CUOPT_LOG_INFO("CP_RESULT: time_ms=%lld termination=%s iterations=%d",
+                 cp_elapsed_ms,
+                 result ? "SUCCESS" : "FAILED",
+                 0);  // TODO: track actual iterations
+  return result;
 }
 
 template <typename i_t, typename f_t>
