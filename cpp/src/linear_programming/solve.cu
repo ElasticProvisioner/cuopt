@@ -123,7 +123,7 @@ static void set_Stable2()
   pdlp_hyper_params::major_iteration                                            = 40;
   pdlp_hyper_params::min_iteration_restart                                      = 10;
   pdlp_hyper_params::restart_strategy                                           = 1;
-  pdlp_hyper_params::never_restart_to_average                                   = false;
+  pdlp_hyper_params::never_restart_to_average                                   = true;
   pdlp_hyper_params::host_default_reduction_exponent                            = 0.3;
   pdlp_hyper_params::host_default_growth_exponent                               = 0.6;
   pdlp_hyper_params::host_default_primal_weight_update_smoothing                = 0.5;

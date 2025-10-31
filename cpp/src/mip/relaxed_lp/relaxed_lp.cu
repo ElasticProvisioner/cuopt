@@ -164,15 +164,6 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
                  term_info.number_of_steps_taken,
                  elapsed_ms,
                  (int)solver_response.get_termination_status());
-
-  CUOPT_LOG_INFO("PDLP_RESULT: primal_objective=%.10f dual_objective=%.10f gap=%.10f",
-                 term_info.primal_objective,
-                 term_info.dual_objective,
-                 term_info.gap);
-
-  CUOPT_LOG_INFO("PDLP_RESULT: l2_primal_residual=%.10f l2_dual_residual=%.10f",
-                 term_info.l2_primal_residual,
-                 term_info.l2_dual_residual);
   // === PDLP PREDICTOR RESULTS - END ===
 
   return solver_response;

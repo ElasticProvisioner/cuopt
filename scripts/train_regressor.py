@@ -19,7 +19,7 @@
 Train regression models to predict algorithm iterations from log features.
 
 Usage:
-    python train_regressor.py <input.pkl> --regressor <type> [options]
+    python train_regressor.py <input.feather> --regressor <type> [options]
 """
 
 import argparse
@@ -77,7 +77,19 @@ FEATURES_TO_EXCLUDE = [
     'max_related_vars',
     'problem_size_score',
     'structural_complexity',
-    'tight_constraint_ratio'
+    'tight_constraint_ratio',
+    'tolerance',
+    'time_limit',
+    'tolerance',
+    'primal_objective',
+    'dual_objective',
+    'gap',
+    'l2_primal_residual',
+    'l2_dual_residual',
+    'detect_infeasibility',
+    'iteration_limit',
+    'termination',
+    'check_infeasibility'
 ]
 
 # Alternatively, specify ONLY the features you want to use
@@ -91,24 +103,33 @@ FEATURES_TO_INCLUDE_ONLY = [
 # ============================================================================
 
 
-def load_data(pkl_path: str) -> pd.DataFrame:
-    """Load pickle file and convert to DataFrame."""
-    with open(pkl_path, 'rb') as f:
-        data = pickle.load(f)
+def load_data(data_path: str, target_col: str = 'iter') -> pd.DataFrame:
+    """Load data file (supports .feather and legacy .pkl formats)."""
+    ext = os.path.splitext(data_path)[1].lower()
 
-    if not isinstance(data, list):
-        raise ValueError(f"Expected list of dictionaries, got {type(data)}")
+    if ext == '.feather':
+        # Fast Apache Arrow format
+        df = pd.read_feather(data_path)
+    elif ext == '.pkl':
+        # Legacy pickle support
+        with open(data_path, 'rb') as f:
+            data = pickle.load(f)
 
-    if len(data) == 0:
-        raise ValueError("Empty dataset")
+        if not isinstance(data, list):
+            raise ValueError(f"Expected list of dictionaries, got {type(data)}")
 
-    df = pd.DataFrame(data)
+        if len(data) == 0:
+            raise ValueError("Empty dataset")
+
+        df = pd.DataFrame(data)
+    else:
+        raise ValueError(f"Unsupported file format: {ext}. Use .feather (recommended) or .pkl")
 
     # Validate required columns
     if 'file' not in df.columns:
         raise ValueError("Missing required 'file' column in data")
-    if 'iter' not in df.columns:
-        raise ValueError("Missing required 'iter' column in data")
+    if target_col not in df.columns:
+        raise ValueError(f"Missing target column '{target_col}' in data. Available columns: {list(df.columns)}")
 
     return df
 
@@ -151,45 +172,170 @@ def split_by_files(df: pd.DataFrame, test_size: float = 0.2,
     print(f"  Train entries: {len(train_df)} ({len(train_files)} files)")
     print(f"  Test entries: {len(test_df)} ({len(test_files)} files)")
 
-    # Check distribution similarity
-    train_target_mean = train_df['iter'].mean()
-    test_target_mean = test_df['iter'].mean()
-    train_target_std = train_df['iter'].std()
-    test_target_std = test_df['iter'].std()
+    # Check distribution similarity (use stratify_by column if provided, otherwise first numeric column)
+    target_col = stratify_by if stratify_by else df.select_dtypes(include=[np.number]).columns[0]
+    if target_col in train_df.columns and target_col in test_df.columns:
+        train_target_mean = train_df[target_col].mean()
+        test_target_mean = test_df[target_col].mean()
+        train_target_std = train_df[target_col].std()
+        test_target_std = test_df[target_col].std()
 
-    print(f"\nTarget ('iter') Distribution:")
-    print(f"  Train: mean={train_target_mean:.2f}, std={train_target_std:.2f}")
-    print(f"  Test:  mean={test_target_mean:.2f}, std={test_target_std:.2f}")
+        print(f"\nTarget ('{target_col}') Distribution:")
+        print(f"  Train: mean={train_target_mean:.2f}, std={train_target_std:.2f}")
+        print(f"  Test:  mean={test_target_mean:.2f}, std={test_target_std:.2f}")
 
-    mean_diff_pct = abs(train_target_mean - test_target_mean) / train_target_mean * 100
-    if mean_diff_pct > 10:
-        print(f"  ⚠️  Warning: Train/test target means differ by {mean_diff_pct:.1f}%")
-        print(f"      Consider using stratified split or different random seed")
+        mean_diff_pct = abs(train_target_mean - test_target_mean) / train_target_mean * 100 if train_target_mean != 0 else 0
+        if mean_diff_pct > 10:
+            print(f"  ⚠️  Warning: Train/test target means differ by {mean_diff_pct:.1f}%")
+            print(f"      Consider using stratified split or different random seed")
 
     return train_df, test_df
 
 
-def list_available_features(df: pd.DataFrame) -> List[str]:
+def list_available_features(df: pd.DataFrame, target_col: str = 'iter') -> List[str]:
     """
     List all available numeric features in the dataset.
     Helper function to see what features can be selected/excluded.
     """
-    X = df.drop(columns=['iter', 'file'], errors='ignore')
+    # Drop target and metadata columns
+    cols_to_drop = [target_col, 'file', 'iter', 'iterations']  # Drop common target column names
+    X = df.drop(columns=[c for c in cols_to_drop if c in df.columns], errors='ignore')
     X = X.select_dtypes(include=[np.number])
     return sorted(X.columns.tolist())
 
 
-def prepare_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List[str]]:
+def validate_data_quality(df: pd.DataFrame, target_col: str = 'iter', verbose: bool = True) -> Tuple[bool, Dict[str, Any]]:
+    """
+    Validate data quality and report issues.
+
+    Returns
+    -------
+        (is_valid, report_dict)
+    """
+    report = {
+        'target_issues': [],
+        'feature_issues': [],
+        'rows_with_issues': [],
+        'is_valid': True
+    }
+
+    # Check target variable
+    if target_col not in df.columns:
+        report['is_valid'] = False
+        report['target_issues'].append(f"Missing '{target_col}' column")
+        return False, report
+
+    y = df[target_col]
+
+    # Check for NaN in target
+    nan_count = y.isna().sum()
+    if nan_count > 0:
+        report['is_valid'] = False
+        report['target_issues'].append(f"Target has {nan_count} NaN values ({nan_count/len(y)*100:.1f}%)")
+        report['rows_with_issues'].extend(df[y.isna()].index.tolist())
+
+    # Check for inf in target
+    inf_count = np.isinf(y).sum()
+    if inf_count > 0:
+        report['is_valid'] = False
+        report['target_issues'].append(f"Target has {inf_count} infinite values ({inf_count/len(y)*100:.1f}%)")
+        report['rows_with_issues'].extend(df[np.isinf(y)].index.tolist())
+
+    # Check for extreme values in target
+    if not y.isna().all() and not np.isinf(y).all():
+        y_clean = y[~(y.isna() | np.isinf(y))]
+        if len(y_clean) > 0:
+            y_max = y_clean.max()
+            y_min = y_clean.min()
+            if y_max > 1e10:
+                report['target_issues'].append(f"Target has very large values (max={y_max:.2e})")
+            if y_min < -1e10:
+                report['target_issues'].append(f"Target has very large negative values (min={y_min:.2e})")
+
+    # Check features
+    X = df.drop(columns=[target_col, 'file'], errors='ignore')
+    X_numeric = X.select_dtypes(include=[np.number])
+
+    for col in X_numeric.columns:
+        col_data = X_numeric[col]
+
+        # Check for NaN
+        nan_count = col_data.isna().sum()
+        if nan_count > 0:
+            pct = nan_count / len(col_data) * 100
+            if pct > 10:  # Only report if > 10% are NaN
+                report['feature_issues'].append(f"{col}: {nan_count} NaN ({pct:.1f}%)")
+
+        # Check for inf
+        inf_count = np.isinf(col_data).sum()
+        if inf_count > 0:
+            report['is_valid'] = False
+            pct = inf_count / len(col_data) * 100
+            report['feature_issues'].append(f"{col}: {inf_count} infinite ({pct:.1f}%)")
+            report['rows_with_issues'].extend(df[np.isinf(col_data)].index.tolist())
+
+    # Deduplicate row indices
+    report['rows_with_issues'] = sorted(list(set(report['rows_with_issues'])))
+
+    # Print report if verbose
+    if verbose and (report['target_issues'] or report['feature_issues']):
+        print("\n" + "="*70)
+        print("DATA QUALITY ISSUES DETECTED")
+        print("="*70)
+
+        if report['target_issues']:
+            print("\nTarget Variable Issues:")
+            for issue in report['target_issues']:
+                print(f"  ❌ {issue}")
+
+        if report['feature_issues']:
+            print(f"\nFeature Issues ({len(report['feature_issues'])} features affected):")
+            for issue in report['feature_issues'][:10]:  # Show first 10
+                print(f"  ⚠️  {issue}")
+            if len(report['feature_issues']) > 10:
+                print(f"  ... and {len(report['feature_issues']) - 10} more features")
+
+        if report['rows_with_issues']:
+            print(f"\nAffected Rows: {len(report['rows_with_issues'])} total")
+            if len(report['rows_with_issues']) <= 10:
+                print(f"  Row indices: {report['rows_with_issues']}")
+            else:
+                print(f"  First 10: {report['rows_with_issues'][:10]}")
+
+            # Show sample problematic rows with filenames
+            if 'file' in df.columns:
+                print(f"\n  Sample problematic entries:")
+                sample_indices = report['rows_with_issues'][:5]
+                for idx in sample_indices:
+                    if idx < len(df):
+                        filename = df.iloc[idx].get('file', 'unknown')
+                        iter_val = df.iloc[idx].get('iter', 'N/A')
+                        print(f"    Row {idx}: file={filename}, iter={iter_val}")
+
+        print("\nSuggested Actions:")
+        if not report['is_valid']:
+            print("  1. Remove rows with invalid data: --drop-invalid-rows")
+            print("  2. Check your log files for data collection issues")
+            print("  3. Verify algorithm didn't produce invalid results")
+        else:
+            print("  Data is valid but has some NaN values in features (will be handled)")
+
+        print("="*70 + "\n")
+
+    return report['is_valid'], report
+
+
+def prepare_features(df: pd.DataFrame, target_col: str = 'iter') -> Tuple[pd.DataFrame, pd.Series, List[str]]:
     """
     Prepare features and target from DataFrame.
-    Excludes 'file' and 'iter' from features.
+    Excludes 'file' and target column from features.
     Applies feature selection based on FEATURES_TO_EXCLUDE and FEATURES_TO_INCLUDE_ONLY.
     """
     # Separate target
-    y = df['iter'].copy()
+    y = df[target_col].copy()
 
     # Drop non-feature columns
-    X = df.drop(columns=['iter', 'file'])
+    X = df.drop(columns=[target_col, 'file'])
 
     # Ensure all features are numeric
     non_numeric = X.select_dtypes(exclude=[np.number]).columns.tolist()
@@ -954,13 +1100,26 @@ Available regressors:
   random_forest     - Random Forest Regressor
   gradient_boosting - Gradient Boosting Regressor
 
-Example:
+Examples:
+  # Train a model (default target: iter)
+  python train_regressor.py data.feather --regressor xgboost --seed 42
+  python train_regressor.py data.feather --regressor lightgbm --seed 42
+
+  # Train to predict time instead of iterations
+  python train_regressor.py data.feather --regressor xgboost --target time_ms --seed 42
+
+  # Check data quality before training
+  python train_regressor.py data.feather --regressor xgboost --check-data
+
+  # Train with automatic removal of invalid rows
+  python train_regressor.py data.feather --regressor xgboost --drop-invalid-rows --seed 42
+
+  # Legacy pickle format
   python train_regressor.py data.pkl --regressor xgboost --seed 42
-  python train_regressor.py data.pkl --regressor lightgbm --seed 42
         """
     )
 
-    parser.add_argument('input_pkl', help='Input pickle file with log data')
+    parser.add_argument('input_pkl', help='Input data file (.feather or .pkl) with log data')
     parser.add_argument(
         '--regressor', '-r',
         required=True,
@@ -1013,7 +1172,7 @@ Example:
     parser.add_argument(
         '--early-stopping',
         type=int,
-        default=20,
+        default=0,
         metavar='N',
         help='Enable early stopping for tree models (default: 20 rounds, use 0 to disable)'
     )
@@ -1023,6 +1182,22 @@ Example:
         default=1,
         metavar='THREADS',
         help='Export XGBoost/LightGBM model as optimized C source code with TL2cgen (includes branch annotation and quantization)'
+    )
+    parser.add_argument(
+        '--drop-invalid-rows',
+        action='store_true',
+        help='Drop rows with NaN or infinite values in target variable (instead of failing)'
+    )
+    parser.add_argument(
+        '--check-data',
+        action='store_true',
+        help='Run data quality checks and exit (no training)'
+    )
+    parser.add_argument(
+        '--target',
+        type=str,
+        default='iter',
+        help='Target column to predict (default: iter). Examples: iter, time_ms, iterations'
     )
 
     args = parser.parse_args()
@@ -1034,37 +1209,93 @@ Example:
 
     # Load data
     print(f"\nLoading data from: {args.input_pkl}")
-    df = load_data(args.input_pkl)
+    print(f"Target column: '{args.target}'")
+    df = load_data(args.input_pkl, target_col=args.target)
     print(f"Loaded {len(df)} entries with {len(df.columns)} columns")
+
+    # Report file format
+    ext = os.path.splitext(args.input_pkl)[1].lower()
+    if ext == '.feather':
+        print(f"  Format: Apache Arrow/Feather (fast I/O)")
+    elif ext == '.pkl':
+        print(f"  Format: Pickle (legacy)")
 
     # Extract model name from input file (for prefixing generated C functions)
     model_name = os.path.splitext(os.path.basename(args.input_pkl))[0]
 
+    # Validate data quality
+    print("\nValidating data quality...")
+    is_valid, report = validate_data_quality(df, target_col=args.target, verbose=True)
+
+    # If just checking data, exit here
+    if args.check_data:
+        if is_valid:
+            print("\n✅ Data quality check passed! Ready for training.")
+            return 0
+        else:
+            print("\n❌ Data quality check failed! Fix issues before training.")
+            return 1
+
+    # Handle invalid data
+    if not is_valid:
+        if args.drop_invalid_rows:
+            print(f"\nDropping {len(report['rows_with_issues'])} rows with invalid data...")
+            df_clean = df.drop(index=report['rows_with_issues'])
+            df = df_clean.reset_index(drop=True)
+            print(f"  Remaining: {len(df)} entries")
+
+            # Re-validate
+            is_valid_after, _ = validate_data_quality(df, verbose=False)
+            if not is_valid_after:
+                print("❌ Error: Data still invalid after dropping rows. Check your data.")
+                return 1
+            print("  ✅ Data is now valid")
+        else:
+            print("\n❌ Training aborted due to invalid data.")
+            print("   Use --drop-invalid-rows to automatically remove invalid rows, or")
+            print("   Use --check-data to just run validation without training")
+            return 1
+
     # If listing features, do that and exit
     if args.list_features:
-        features = list_available_features(df)
+        features = list_available_features(df, target_col=args.target)
+
+        # Also list potential target columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        potential_targets = [col for col in numeric_cols if col not in features]
+
         print(f"\n{'='*70}")
         print(f"Available features in dataset ({len(features)} total):")
         print(f"{'='*70}")
         for i, feat in enumerate(features, 1):
             print(f"  {i:3d}. {feat}")
+
+        if potential_targets:
+            print(f"\n{'='*70}")
+            print(f"Potential target columns ({len(potential_targets)} total):")
+            print(f"{'='*70}")
+            for i, col in enumerate(potential_targets, 1):
+                marker = " (current)" if col == args.target else ""
+                print(f"  {i:3d}. {col}{marker}")
+
         print(f"\nTo exclude features, edit FEATURES_TO_EXCLUDE in the script:")
         print(f"  {__file__}")
         print(f"\nTo use only specific features, edit FEATURES_TO_INCLUDE_ONLY")
+        print(f"\nTo change target column, use: --target <column_name>")
         return
 
     # Split data by files
-    stratify_by = 'iter' if args.stratify_split else None
+    stratify_by = args.target if args.stratify_split else None
     train_df, test_df = split_by_files(df, test_size=args.test_size,
                                        random_state=args.seed,
                                        stratify_by=stratify_by)
 
     # Prepare features
-    X_train, y_train, feature_names = prepare_features(train_df)
-    X_test, y_test, _ = prepare_features(test_df)
+    X_train, y_train, feature_names = prepare_features(train_df, target_col=args.target)
+    X_test, y_test, _ = prepare_features(test_df, target_col=args.target)
 
     print(f"\nFeatures: {len(feature_names)}")
-    print(f"Target: iter (predicting number of iterations)")
+    print(f"Target: {args.target} (prediction target)")
 
     # Create model
     print(f"\nTraining {args.regressor} regressor...")
