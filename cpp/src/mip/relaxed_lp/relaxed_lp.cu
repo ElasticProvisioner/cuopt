@@ -54,27 +54,28 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   raft::common::nvtx::range fun_scope("get_relaxed_lp_solution");
   auto function_start_time = std::chrono::high_resolution_clock::now();
 
-  // === PDLP PREDICTOR FEATURES - START ===
-  CUOPT_LOG_INFO("PDLP_FEATURES: n_variables=%d n_constraints=%d nnz=%lu",
-                 op_problem.n_variables,
-                 op_problem.n_constraints,
-                 op_problem.coefficients.size());
+  // // === PDLP PREDICTOR FEATURES - START ===
+  // CUOPT_LOG_INFO("PDLP_FEATURES: n_variables=%d n_constraints=%d nnz=%lu",
+  //                op_problem.n_variables,
+  //                op_problem.n_constraints,
+  //                op_problem.coefficients.size());
 
-  CUOPT_LOG_INFO("PDLP_FEATURES: sparsity=%.6f nnz_stddev=%.6f unbalancedness=%.6f",
-                 op_problem.sparsity,
-                 op_problem.nnz_stddev,
-                 op_problem.unbalancedness);
+  // CUOPT_LOG_INFO("PDLP_FEATURES: sparsity=%.6f nnz_stddev=%.6f unbalancedness=%.6f",
+  //                op_problem.sparsity,
+  //                op_problem.nnz_stddev,
+  //                op_problem.unbalancedness);
 
-  CUOPT_LOG_INFO("PDLP_FEATURES: has_warm_start=%d time_limit=%.6f iteration_limit=%d",
-                 settings.has_initial_primal,
-                 settings.time_limit,
-                 settings.iteration_limit);
+  // CUOPT_LOG_INFO("PDLP_FEATURES: has_warm_start=%d time_limit=%.6f iteration_limit=%d",
+  //                settings.has_initial_primal,
+  //                settings.time_limit,
+  //                settings.iteration_limit);
 
-  CUOPT_LOG_INFO("PDLP_FEATURES: tolerance=%.10f check_infeasibility=%d return_first_feasible=%d",
-                 settings.tolerance,
-                 settings.check_infeasibility,
-                 settings.return_first_feasible);
-  // === PDLP PREDICTOR FEATURES - END ===
+  // CUOPT_LOG_INFO("PDLP_FEATURES: tolerance=%.10f check_infeasibility=%d
+  // return_first_feasible=%d",
+  //                settings.tolerance,
+  //                settings.check_infeasibility,
+  //                settings.return_first_feasible);
+  // // === PDLP PREDICTOR FEATURES - END ===
 
   pdlp_solver_settings_t<i_t, f_t> pdlp_settings{};
   pdlp_settings.detect_infeasibility = settings.check_infeasibility;
@@ -86,10 +87,24 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   pdlp_settings.tolerances.relative_dual_tolerance   = settings.tolerance / tolerance_divisor;
   pdlp_settings.time_limit                           = settings.time_limit;
   pdlp_settings.iteration_limit                      = settings.iteration_limit;
-  pdlp_settings.concurrent_halt                      = settings.concurrent_halt;
-  pdlp_settings.per_constraint_residual              = settings.per_constraint_residual;
-  pdlp_settings.first_primal_feasible                = settings.return_first_feasible;
-  pdlp_settings.pdlp_solver_mode                     = pdlp_solver_mode_t::Stable2;
+  if (settings.work_limit != std::numeric_limits<double>::infinity()) {
+    // try to estimate the iteration count based on the requested work limit
+    int estim_iters = 0;
+    do {
+      // TODO: use an actual predictor model here
+      double estim_ms = 313 + 200 * op_problem.n_variables - 400 * op_problem.n_constraints +
+                        600 * op_problem.coefficients.size() + 7100 * estim_iters;
+      estim_ms = std::max(0.0, estim_ms);
+      if (estim_ms > settings.work_limit) { break; }
+      estim_iters += 100;
+    } while (true);
+    CUOPT_LOG_DEBUG("estimated iterations %d for work limit %f", estim_iters, settings.work_limit);
+    pdlp_settings.iteration_limit = estim_iters;
+  }
+  pdlp_settings.concurrent_halt         = settings.concurrent_halt;
+  pdlp_settings.per_constraint_residual = settings.per_constraint_residual;
+  pdlp_settings.first_primal_feasible   = settings.return_first_feasible;
+  pdlp_settings.pdlp_solver_mode        = pdlp_solver_mode_t::Stable2;
   set_pdlp_solver_mode(pdlp_settings);
   // TODO: set Stable3 here?
   pdlp_solver_t<i_t, f_t> lp_solver(op_problem, pdlp_settings);
@@ -158,13 +173,13 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
                   elapsed_ms,
                   solver_response.get_additional_termination_information().number_of_steps_taken);
 
-  // === PDLP PREDICTOR RESULTS - START ===
-  auto term_info = solver_response.get_additional_termination_information();
-  CUOPT_LOG_INFO("PDLP_RESULT: iterations=%d time_ms=%lld termination=%d",
-                 term_info.number_of_steps_taken,
-                 elapsed_ms,
-                 (int)solver_response.get_termination_status());
-  // === PDLP PREDICTOR RESULTS - END ===
+  // // === PDLP PREDICTOR RESULTS - START ===
+  // auto term_info = solver_response.get_additional_termination_information();
+  // CUOPT_LOG_INFO("PDLP_RESULT: iterations=%d time_ms=%lld termination=%d",
+  //                term_info.number_of_steps_taken,
+  //                elapsed_ms,
+  //                (int)solver_response.get_termination_status());
+  // // === PDLP PREDICTOR RESULTS - END ===
 
   return solver_response;
 }

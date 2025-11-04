@@ -535,12 +535,20 @@ def get_feature_importance(model, feature_names: List[str],
                 print(f"  {i:3d}. {feature_names[idx]:40s}: {importances[idx]:.6f}")
 
         elif regressor_type == 'linear':
-            # Linear regression coefficients
-            coefs = np.abs(model.coef_)
-            indices = np.argsort(coefs)[::-1]
+            # Linear regression coefficients and intercept
+            print(f"\nIntercept: {model.intercept_:.6f}\n")
+            print(f"Coefficients:")
 
+            # Print each feature with its coefficient
+            for i, (feature_name, coef) in enumerate(zip(feature_names, model.coef_), 1):
+                print(f"  {i:3d}. {feature_name:40s}: {coef:.6f}")
+
+            # Also show sorted by absolute value for importance ranking
+            print(f"\nRanked by absolute magnitude:")
+            coefs_abs = np.abs(model.coef_)
+            indices = np.argsort(coefs_abs)[::-1]
             for i, idx in enumerate(indices, 1):
-                print(f"  {i:3d}. {feature_names[idx]:40s}: {coefs[idx]:.6f}")
+                print(f"  {i:3d}. {feature_names[idx]:40s}: {model.coef_[idx]:.6f} (|{coefs_abs[idx]:.6f}|)")
 
         elif regressor_type.startswith('poly'):
             # For polynomial, get feature names and coefficients from the Ridge step
