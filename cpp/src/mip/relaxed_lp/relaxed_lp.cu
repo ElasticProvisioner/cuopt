@@ -89,13 +89,13 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   pdlp_settings.iteration_limit                      = settings.iteration_limit;
   if (settings.work_limit != std::numeric_limits<double>::infinity()) {
     // try to estimate the iteration count based on the requested work limit
-    int estim_iters = 0;
+    int estim_iters = 100;
     do {
       // TODO: use an actual predictor model here
       double estim_ms = 313 + 200 * op_problem.n_variables - 400 * op_problem.n_constraints +
                         600 * op_problem.coefficients.size() + 7100 * estim_iters;
       estim_ms = std::max(0.0, estim_ms);
-      if (estim_ms > settings.work_limit) { break; }
+      if (estim_ms > settings.work_limit * 1000) { break; }
       estim_iters += 100;
     } while (true);
     CUOPT_LOG_DEBUG("estimated iterations %d for work limit %f", estim_iters, settings.work_limit);
@@ -110,12 +110,12 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   pdlp_solver_t<i_t, f_t> lp_solver(op_problem, pdlp_settings);
   if (settings.has_initial_primal) {
     i_t prev_size = lp_state.prev_dual.size();
-    CUOPT_LOG_DEBUG(
-      "setting initial primal solution of size %d dual size %d problem vars %d cstrs %d",
-      assignment.size(),
-      lp_state.prev_dual.size(),
-      op_problem.n_variables,
-      op_problem.n_constraints);
+    // CUOPT_LOG_DEBUG(
+    //   "setting initial primal solution of size %d dual size %d problem vars %d cstrs %d",
+    //   assignment.size(),
+    //   lp_state.prev_dual.size(),
+    //   op_problem.n_variables,
+    //   op_problem.n_constraints);
     lp_state.resize(op_problem, op_problem.handle_ptr->get_stream());
     clamp_within_var_bounds(assignment, &op_problem, op_problem.handle_ptr);
     // The previous dual sometimes contain invalid values w.r.t current problem

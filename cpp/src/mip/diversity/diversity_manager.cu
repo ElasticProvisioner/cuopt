@@ -57,7 +57,7 @@ diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t
     lp_dual_optimal_solution(context.problem_ptr->n_constraints,
                              context.problem_ptr->handle_ptr->get_stream()),
     ls(context, lp_optimal_solution),
-    timer(context.settings.deterministic, diversity_config.default_time_limit),
+    timer(context.gpu_heur_loop, diversity_config.default_time_limit),
     bound_prop_recombiner(context,
                           context.problem_ptr->n_variables,
                           ls.constraint_prop,
@@ -112,6 +112,8 @@ diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t
       }
     }
   }
+
+  context.gpu_heur_loop.deterministic = context.settings.deterministic;
 }
 
 // this function is to specialize the local search with config from diversity manager
@@ -189,7 +191,7 @@ bool diversity_manager_t<i_t, f_t>::run_presolve(f_t time_limit)
 {
   raft::common::nvtx::range fun_scope("run_presolve");
   CUOPT_LOG_INFO("Running presolve!");
-  work_limit_timer_t presolve_timer(context.settings.deterministic, time_limit);
+  work_limit_timer_t presolve_timer(context.gpu_heur_loop, time_limit);
   auto term_crit = ls.constraint_prop.bounds_update.solve(*problem_ptr);
   presolve_timer.record_work(0);
   if (ls.constraint_prop.bounds_update.infeas_constraints_count > 0) {
@@ -232,7 +234,7 @@ void diversity_manager_t<i_t, f_t>::generate_quick_feasible_solution()
   // min 1 second, max 10 seconds
   const f_t generate_fast_solution_time =
     std::min(diversity_config.max_fast_sol_time, std::max(1., timer.remaining_time() / 20.));
-  work_limit_timer_t sol_timer(context.settings.deterministic, generate_fast_solution_time);
+  work_limit_timer_t sol_timer(context.gpu_heur_loop, generate_fast_solution_time);
   // do very short LP run to get somewhere close to the optimal point
   ls.generate_fast_solution(solution, sol_timer);
   sol_timer.record_work(0);
@@ -336,7 +338,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
     std::min(diversity_config.max_time_on_lp, time_limit * diversity_config.time_ratio_on_init_lp);
   // to automatically compute the solving time on scope exit
   auto timer_raii_guard =
-    cuopt::scope_guard([&]() { stats.total_solve_time = timer.elapsed_time(); });
+    cuopt::scope_guard([&]() { stats.total_solve_time = timer.timer.elapsed_time(); });
   // after every change to the problem, we should resize all the relevant vars
   // we need to encapsulate that to prevent repetitions
   recombine_stats.reset();
@@ -366,7 +368,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   const f_t max_time_on_probing         = diversity_config.max_time_on_probing;
   f_t time_for_probing_cache =
     std::min(max_time_on_probing, time_limit * time_ratio_of_probing_cache);
-  work_limit_timer_t probing_timer{context.settings.deterministic, time_for_probing_cache};
+  work_limit_timer_t probing_timer{context.gpu_heur_loop, time_for_probing_cache};
   if (check_b_b_preemption()) { return population.best_feasible(); }
   if (!diversity_config.fj_only_run) {
     compute_probing_cache(ls.constraint_prop.bounds_update, *problem_ptr, probing_timer);

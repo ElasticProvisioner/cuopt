@@ -784,8 +784,7 @@ bool constraint_prop_t<i_t, f_t>::run_repair_procedure(problem_t<i_t, f_t>& prob
   i_t n_of_repairs_needed_for_feasible = 0;
   i_t iter_limit                       = std::numeric_limits<i_t>::max();
   if (this->context.settings.deterministic) {
-    timer =
-      work_limit_timer_t(context.settings.deterministic, std::numeric_limits<f_t>::infinity());
+    timer      = work_limit_timer_t(context.gpu_heur_loop, std::numeric_limits<f_t>::infinity());
     iter_limit = 100;
   }
   do {
@@ -875,8 +874,7 @@ bool constraint_prop_t<i_t, f_t>::find_integer(
 
   // CHANGE
   if (this->context.settings.deterministic) {
-    timer =
-      work_limit_timer_t(context.settings.deterministic, std::numeric_limits<f_t>::infinity());
+    timer = work_limit_timer_t(context.gpu_heur_loop, std::numeric_limits<f_t>::infinity());
   }
 
   lb_restore.resize(sol.problem_ptr->n_variables, sol.handle_ptr->get_stream());
@@ -928,9 +926,9 @@ bool constraint_prop_t<i_t, f_t>::find_integer(
     set_bounds_on_fixed_vars(sol);
   }
 
-  CUOPT_LOG_DEBUG("Bounds propagation rounding: unset vars %lu", unset_integer_vars.size());
+  // CUOPT_LOG_DEBUG("Bounds propagation rounding: unset vars %lu", unset_integer_vars.size());
   if (unset_integer_vars.size() == 0) {
-    CUOPT_LOG_DEBUG("No integer variables provided in the bounds prop rounding");
+    // CUOPT_LOG_DEBUG("No integer variables provided in the bounds prop rounding");
     expand_device_copy(orig_sol.assignment, sol.assignment, sol.handle_ptr->get_stream());
     cuopt_func_call(orig_sol.test_variable_bounds());
     return orig_sol.compute_feasibility();
@@ -1015,7 +1013,7 @@ bool constraint_prop_t<i_t, f_t>::find_integer(
     if (!(n_failed_repair_iterations >= max_n_failed_repair_iterations) && rounding_ii &&
         !timeout_happened) {
       // timer_t repair_timer{std::min(timer.remaining_time() / 5, timer.elapsed_time() / 3)};
-      work_limit_timer_t repair_timer(context.settings.deterministic, timer.remaining_time() / 5);
+      work_limit_timer_t repair_timer(context.gpu_heur_loop, timer.remaining_time() / 5);
       save_bounds(sol);
       // update bounds and run repair procedure
       bool bounds_repaired =
@@ -1070,10 +1068,10 @@ bool constraint_prop_t<i_t, f_t>::find_integer(
     // which is the unchanged problem bounds
     multi_probe.update_host_bounds(sol.handle_ptr, make_span(sol.problem_ptr->variable_bounds));
   }
-  CUOPT_LOG_DEBUG(
-    "Bounds propagation rounding end: ii constraint count first buffer %d, second buffer %d",
-    multi_probe.infeas_constraints_count_0,
-    multi_probe.infeas_constraints_count_1);
+  // CUOPT_LOG_DEBUG(
+  //   "Bounds propagation rounding end: ii constraint count first buffer %d, second buffer %d",
+  //   multi_probe.infeas_constraints_count_0,
+  //   multi_probe.infeas_constraints_count_1);
   cuopt_assert(sol.test_number_all_integer(), "All integers must be rounded");
   expand_device_copy(orig_sol.assignment, sol.assignment, sol.handle_ptr->get_stream());
   cuopt_func_call(orig_sol.test_variable_bounds());
@@ -1136,10 +1134,9 @@ bool constraint_prop_t<i_t, f_t>::apply_round(
   //                lp_run_time_after_feasible);
   // === CONSTRAINT PROP PREDICTOR FEATURES - END ===
 
-  max_timer = work_limit_timer_t{context.settings.deterministic, max_time_for_bounds_prop};
+  max_timer = work_limit_timer_t{context.gpu_heur_loop, max_time_for_bounds_prop};
   if (this->context.settings.deterministic) {
-    max_timer =
-      work_limit_timer_t(context.settings.deterministic, std::numeric_limits<double>::infinity());
+    max_timer = work_limit_timer_t(context.gpu_heur_loop, std::numeric_limits<double>::infinity());
   }
   if (check_brute_force_rounding(sol)) {
     auto cp_end_time = std::chrono::high_resolution_clock::now();

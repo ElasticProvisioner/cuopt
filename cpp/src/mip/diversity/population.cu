@@ -54,7 +54,7 @@ population_t<i_t, f_t>::population_t(std::string const& name_,
     rng(cuopt::seed_generator::get_seed()),
     early_exit_primal_generation(false),
     population_hash_map(*problem_ptr),
-    timer(context.settings.deterministic, 0)
+    timer(context.gpu_heur_loop, 0)
 {
   best_feasible_objective = std::numeric_limits<f_t>::max();
 }

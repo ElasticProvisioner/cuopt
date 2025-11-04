@@ -53,7 +53,7 @@ template <typename i_t, typename f_t>
 mip_solver_t<i_t, f_t>::mip_solver_t(const problem_t<i_t, f_t>& op_problem,
                                      const mip_solver_settings_t<i_t, f_t>& solver_settings,
                                      pdlp_initial_scaling_strategy_t<i_t, f_t>& scaling,
-                                     work_limit_timer_t timer)
+                                     timer_t timer)
   : op_problem_(op_problem),
     solver_settings_(solver_settings),
     context(op_problem.handle_ptr,
@@ -112,7 +112,7 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
   }
 
   diversity_manager_t<i_t, f_t> dm(context);
-  dm.timer              = timer_;
+  dm.timer              = work_limit_timer_t(context.gpu_heur_loop, timer_.remaining_time());
   bool presolve_success = dm.run_presolve(timer_.remaining_time());
   if (!presolve_success) {
     CUOPT_LOG_INFO("Problem proven infeasible in presolve");

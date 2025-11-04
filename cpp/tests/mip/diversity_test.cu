@@ -105,12 +105,13 @@ static uint32_t test_full_run_determinism(std::string path,
   settings.work_limit      = 10;  // about 10 seconds of runtime
   settings.deterministic   = true;
   settings.heuristics_only = true;
-  auto timer               = cuopt::work_limit_timer_t(settings.deterministic, 3000);
+  auto timer               = cuopt::timer_t(3000);
   detail::mip_solver_t<int, double> solver(problem, settings, scaling, timer);
   problem.tolerances = settings.get_tolerances();
 
   detail::diversity_manager_t<int, double> diversity_manager(solver.context);
-  diversity_manager.timer = work_limit_timer_t(settings.deterministic, 60000);
+  work_limit_context_t work_limit_context;
+  diversity_manager.timer = work_limit_timer_t(work_limit_context, 60000);
   diversity_manager.run_solver();
 
   std::vector<uint32_t> hashes;
@@ -159,12 +160,13 @@ static uint32_t test_initial_solution_determinism(std::string path,
   settings.time_limit      = 3000.;
   settings.deterministic   = true;
   settings.heuristics_only = true;
-  auto timer               = cuopt::work_limit_timer_t(settings.deterministic, 3000);
+  auto timer               = cuopt::timer_t(3000);
   detail::mip_solver_t<int, double> solver(problem, settings, scaling, timer);
   problem.tolerances = settings.get_tolerances();
 
   detail::diversity_manager_t<int, double> diversity_manager(solver.context);
-  diversity_manager.timer = work_limit_timer_t(settings.deterministic, 60000);
+  work_limit_context_t work_limit_context;
+  diversity_manager.timer = work_limit_timer_t(work_limit_context, 60000);
   diversity_manager.diversity_config.initial_solution_only = true;
   diversity_manager.run_solver();
 
@@ -214,12 +216,13 @@ static uint32_t test_recombiners_determinism(std::string path,
   settings.time_limit      = 3000.;
   settings.deterministic   = true;
   settings.heuristics_only = true;
-  auto timer               = cuopt::work_limit_timer_t(settings.deterministic, 3000);
+  auto timer               = cuopt::timer_t(3000);
   detail::mip_solver_t<int, double> solver(problem, settings, scaling, timer);
   problem.tolerances = settings.get_tolerances();
 
   detail::diversity_manager_t<int, double> diversity_manager(solver.context);
-  diversity_manager.timer                    = work_limit_timer_t(settings.deterministic, 60000);
+  work_limit_context_t work_limit_context;
+  diversity_manager.timer                    = work_limit_timer_t(work_limit_context, 60000);
   diversity_manager.diversity_config.dry_run = true;
   diversity_manager.run_solver();
 

@@ -1084,7 +1084,7 @@ i_t fj_t<i_t, f_t>::host_loop(solution_t<i_t, f_t>& solution, i_t climber_idx)
 
   data.incumbent_quality.set_value_async(obj, handle_ptr->get_stream());
 
-  timer_t timer(settings.time_limit);
+  work_limit_timer_t timer(context.gpu_heur_loop, settings.time_limit);
   i_t steps;
   bool limit_reached = false;
   for (steps = 0; steps < std::numeric_limits<i_t>::max(); steps += iterations_per_graph) {
@@ -1269,7 +1269,7 @@ template <typename i_t, typename f_t>
 i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
 {
   raft::common::nvtx::range scope("fj_solve");
-  timer_t timer(settings.time_limit);
+  work_limit_timer_t timer(context.gpu_heur_loop, settings.time_limit);
   handle_ptr = const_cast<raft::handle_t*>(solution.handle_ptr);
   pb_ptr     = solution.problem_ptr;
   if (settings.mode != fj_mode_t::ROUNDING) {
@@ -1279,6 +1279,7 @@ i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
   pb_ptr->check_problem_representation(true);
   resize_vectors(solution.handle_ptr);
 
+  if (context.settings.deterministic) { settings.work_limit = settings.time_limit; }
   // if work_limit is set: compute an estimate of the number of iterations required
   if (settings.work_limit != std::numeric_limits<double>::infinity()) {
     std::map<std::string, float> features_map = get_feature_vector(0);
@@ -1287,6 +1288,7 @@ i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
     CUOPT_LOG_DEBUG("FJ determ: Estimated number of iterations for %f WU: %f",
                     settings.work_limit,
                     iter_prediction);
+    if (settings.work_limit == 0) iter_prediction = 0;
     settings.iteration_limit = std::min(settings.iteration_limit, (i_t)iter_prediction);
   }
 
@@ -1376,19 +1378,54 @@ i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
 
   cuopt_func_call(solution.test_variable_bounds());
 
-  // Print compact feature vector summary
-  char logbuf[4096];
-  int offset = 0;
-  offset += snprintf(logbuf + offset,
-                     sizeof(logbuf) - offset,
-                     "FJ: iter=%d time=%g",
-                     iterations,
-                     timer.elapsed_time());
-  for (const auto& [name, value] : feature_vector) {
-    offset += snprintf(logbuf + offset, sizeof(logbuf) - offset, " %s=%g", name.c_str(), value);
-    if (offset >= (int)(sizeof(logbuf) - 32)) break;
+  double work_to_record = settings.work_limit;
+
+  if (iterations < settings.iteration_limit) {
+    CUOPT_LOG_DEBUG(
+      "FJ early exit at %d iterations (limit: %d)", iterations, settings.iteration_limit);
+    // Compute the work unit corresponding to the number of iterations elapsed
+    // by incrementally guessing work units until the model predicts >= actual iterations
+    if (context.settings.deterministic && iterations > 0) {
+      double guessed_work         = 0.0;
+      const double work_increment = 0.1;
+      const double max_work       = settings.work_limit * 2.0;  // Safety limit
+      float predicted_iters       = 0.0f;
+
+      // Make a copy of the feature vector and modify the time/work_limit field
+      std::map<std::string, float> features_for_prediction = feature_vector;
+
+      while (guessed_work <= max_work) {
+        features_for_prediction["time"] = (float)guessed_work;
+        predicted_iters                 = std::max(
+          0.0f,
+          (float)ceil(
+            context.work_unit_predictors.fj_predictor.predict_scalar(features_for_prediction)));
+
+        if (predicted_iters >= (float)iterations) {
+          work_to_record = guessed_work;
+          break;
+        }
+
+        guessed_work += work_increment;
+      }
+    }
   }
-  CUOPT_LOG_INFO("%s", logbuf);
+
+  timer.record_work(work_to_record);
+
+  // // Print compact feature vector summary
+  // char logbuf[4096];
+  // int offset = 0;
+  // offset += snprintf(logbuf + offset,
+  //                    sizeof(logbuf) - offset,
+  //                    "FJ: iter=%d time=%g",
+  //                    iterations,
+  //                    timer.elapsed_time());
+  // for (const auto& [name, value] : feature_vector) {
+  //   offset += snprintf(logbuf + offset, sizeof(logbuf) - offset, " %s=%g", name.c_str(), value);
+  //   if (offset >= (int)(sizeof(logbuf) - 32)) break;
+  // }
+  // CUOPT_LOG_INFO("%s", logbuf);
 
   return is_new_feasible;
 }

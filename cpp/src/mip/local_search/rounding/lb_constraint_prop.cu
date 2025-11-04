@@ -718,7 +718,7 @@ bool lb_constraint_prop_t<i_t, f_t>::apply_round(
 
   // this is second timer that can continue but without recovery mode
   const f_t max_time_for_bounds_prop = 5.;
-  max_timer = work_limit_timer_t{context.settings.deterministic, max_time_for_bounds_prop};
+  max_timer = work_limit_timer_t{context.gpu_heur_loop, max_time_for_bounds_prop};
   if (check_brute_force_rounding(sol)) { return true; }
   recovery_mode      = false;
   rounding_ii        = false;

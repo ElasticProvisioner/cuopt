@@ -22,6 +22,7 @@
 #include <mip/relaxed_lp/lp_state.cuh>
 
 #include <utilities/models/fj_predictor/header.h>
+#include <utilities/work_limit_timer.hpp>
 #include <utilities/work_unit_predictor.hpp>
 
 #pragma once
@@ -43,8 +44,9 @@ struct mip_solver_context_t {
     : handle_ptr(handle_ptr_), problem_ptr(problem_ptr_), settings(settings_), scaling(scaling)
   {
     cuopt_assert(problem_ptr != nullptr, "problem_ptr is nullptr");
-    stats.solution_bound = problem_ptr->maximize ? std::numeric_limits<f_t>::infinity()
-                                                 : -std::numeric_limits<f_t>::infinity();
+    stats.solution_bound        = problem_ptr->maximize ? std::numeric_limits<f_t>::infinity()
+                                                        : -std::numeric_limits<f_t>::infinity();
+    gpu_heur_loop.deterministic = settings.deterministic;
   }
 
   raft::handle_t const* const handle_ptr;
@@ -54,6 +56,9 @@ struct mip_solver_context_t {
   solver_stats_t<i_t, f_t> stats;
   // TODO: ensure thread local (or use locks...?)
   mip_solver_work_unit_predictors_t work_unit_predictors;
+  // Work limit context for tracking work units in deterministic mode (shared across all timers in
+  // GPU heuristic loop)
+  cuopt::work_limit_context_t gpu_heur_loop;
 };
 
 }  // namespace cuopt::linear_programming::detail

@@ -22,13 +22,37 @@
 
 namespace cuopt {
 
+// Context for tracking global work units across multiple timers in deterministic mode
+// This allows different subsystems to have independent work unit tracking
+struct work_limit_context_t {
+  double global_work_units_elapsed{0.0};
+  bool deterministic{false};
+
+  void record_work(double work)
+  {
+    if (deterministic) global_work_units_elapsed += work;
+  }
+};
+
 // In determinism mode, relies on a work limit accumulator; otherwise rely on a timer
 // in non-determinism mode: 1s = 1wu
+// In deterministic mode, all timers share a global work units counter (via work_limit_context_t),
+// and each timer records the snapshot at construction time to determine when its own limit is
+// reached.
 class work_limit_timer_t {
  public:
-  work_limit_timer_t() : deterministic(false), work_limit(0), timer(0) {}
-  work_limit_timer_t(bool deterministic, double work_limit_)
-    : deterministic(deterministic), work_limit(work_limit_), timer(work_limit_)
+  work_limit_timer_t()
+    : deterministic(false), work_limit(0), timer(0), work_context(nullptr), work_units_at_start(0)
+  {
+  }
+
+  // Constructor taking work limit context reference (for deterministic mode)
+  work_limit_timer_t(work_limit_context_t& context, double work_limit_)
+    : deterministic(context.deterministic),
+      work_limit(work_limit_),
+      timer(work_limit_),
+      work_context(&context),
+      work_units_at_start(context.deterministic ? context.global_work_units_elapsed : 0)
   {
   }
 
@@ -37,19 +61,25 @@ class work_limit_timer_t {
                    int line           = __builtin_LINE()) const noexcept
   {
     if (deterministic) {
-      bool finished_now = work_total >= work_limit;
+      if (!work_context) { return false; }
+      // Check if global work has exceeded our budget (snapshot + limit)
+      double elapsed_since_start = work_context->global_work_units_elapsed - work_units_at_start;
+      bool finished_now          = elapsed_since_start >= work_limit;
       if (finished_now && !finished) {
         finished                   = true;
         double actual_elapsed_time = timer.elapsed_time();
         // 10% timing error
-        if (abs(actual_elapsed_time - work_limit) / work_limit > 0.10) {
+        if (work_limit > 0 && abs(actual_elapsed_time - work_limit) / work_limit > 0.10) {
           CUOPT_LOG_ERROR(
-            "%s:%d: %s(): Work limit timer finished with a large discrepancy: %fs for %fwu",
+            "%s:%d: %s(): Work limit timer finished with a large discrepancy: %fs for %fwu "
+            "(global: %f, start: %f)",
             file,
             line,
             caller,
             actual_elapsed_time,
-            work_limit);
+            work_limit,
+            work_context->global_work_units_elapsed,
+            work_units_at_start);
         }
       }
       return finished;
@@ -58,16 +88,30 @@ class work_limit_timer_t {
     }
   }
 
-  // in determinism mode, add the work units to the work limit accumulator
-  void record_work(double work_units)
+  // in determinism mode, add the work units to the global work limit accumulator
+  void record_work(double work_units,
+                   const char* caller = __builtin_FUNCTION(),
+                   const char* file   = __builtin_FILE(),
+                   int line           = __builtin_LINE())
   {
-    if (deterministic) { work_total += work_units; }
+    if (deterministic && work_context) {
+      work_context->global_work_units_elapsed += work_units;
+      CUOPT_LOG_DEBUG("%s:%d: %s(): Recorded %f work units in %fs, total %f",
+                      file,
+                      line,
+                      caller,
+                      work_units,
+                      timer.elapsed_time(),
+                      work_context->global_work_units_elapsed);
+    }
   }
 
   double remaining_units() const noexcept
   {
     if (deterministic) {
-      return work_limit - work_total;
+      if (!work_context) { return work_limit; }
+      double elapsed_since_start = work_context->global_work_units_elapsed - work_units_at_start;
+      return work_limit - elapsed_since_start;
     } else {
       return timer.remaining_time();
     }
@@ -78,7 +122,7 @@ class work_limit_timer_t {
   double elapsed_time() const noexcept
   {
     if (deterministic) {
-      return work_total;
+      return work_context->global_work_units_elapsed - work_units_at_start;
     } else {
       return timer.elapsed_time();
     }
@@ -94,7 +138,9 @@ class work_limit_timer_t {
   bool check_half_time() const noexcept
   {
     if (deterministic) {
-      return work_total >= work_limit / 2;
+      if (!work_context) { return false; }
+      double elapsed_since_start = work_context->global_work_units_elapsed - work_units_at_start;
+      return elapsed_since_start >= work_limit / 2;
     } else {
       return timer.check_half_time();
     }
@@ -128,9 +174,12 @@ class work_limit_timer_t {
   }
 
   timer_t timer;
-  double work_total{};
   double work_limit{};
   mutable bool finished{false};
   bool deterministic{false};
+  // Pointer to work limit context (shared across all timers in deterministic mode)
+  work_limit_context_t* work_context{nullptr};
+  // Snapshot of global work units when this timer was created
+  double work_units_at_start{0};
 };
 }  // namespace cuopt
