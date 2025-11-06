@@ -155,6 +155,7 @@ void diversity_manager_t<i_t, f_t>::add_user_given_solutions(
     if (problem_ptr->pre_process_assignment(init_sol_assignment)) {
       relaxed_lp_settings_t lp_settings;
       lp_settings.time_limit            = std::min(60., timer.remaining_time() / 2);
+      lp_settings.work_limit            = lp_settings.time_limit;
       lp_settings.tolerance             = problem_ptr->tolerances.absolute_tolerance;
       lp_settings.save_state            = false;
       lp_settings.return_first_feasible = true;
@@ -327,15 +328,17 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   raft::common::nvtx::range fun_scope("run_solver");
 
   diversity_config.fj_only_run = false;
-  if (context.settings.deterministic) {
-    remaining_work_limit = context.settings.work_limit;
-    CUOPT_LOG_INFO("Deterministic mode, remaining work limit: %f", remaining_work_limit);
-  }
 
   population.timer     = timer;
   const f_t time_limit = timer.remaining_time();
   const f_t lp_time_limit =
     std::min(diversity_config.max_time_on_lp, time_limit * diversity_config.time_ratio_on_init_lp);
+
+  if (context.settings.deterministic) {
+    remaining_work_limit = context.settings.work_limit;
+    CUOPT_LOG_INFO("Deterministic mode, remaining work limit: %f", time_limit);
+  }
+
   // to automatically compute the solving time on scope exit
   auto timer_raii_guard =
     cuopt::scope_guard([&]() { stats.total_solve_time = timer.timer.elapsed_time(); });
@@ -385,6 +388,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   } else if (!diversity_config.fj_only_run || true) {
     relaxed_lp_settings_t lp_settings;
     lp_settings.time_limit            = lp_time_limit;
+    lp_settings.work_limit            = lp_time_limit;
     lp_settings.tolerance             = context.settings.tolerances.absolute_tolerance;
     lp_settings.return_first_feasible = false;
     lp_settings.save_state            = true;
@@ -676,6 +680,7 @@ diversity_manager_t<i_t, f_t>::recombine_and_local_search(solution_t<i_t, f_t>& 
   lp_run_time     = std::min(lp_run_time, timer.remaining_time());
   relaxed_lp_settings_t lp_settings;
   lp_settings.time_limit              = lp_run_time;
+  lp_settings.work_limit              = lp_settings.time_limit;
   lp_settings.tolerance               = context.settings.tolerances.absolute_tolerance;
   lp_settings.return_first_feasible   = false;
   lp_settings.save_state              = true;

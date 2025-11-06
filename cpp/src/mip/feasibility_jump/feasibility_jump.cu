@@ -669,10 +669,14 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
   auto [grid_update_weights, blocks_update_weights] = update_weights_launch_dims;
   auto [grid_lift_move, blocks_lift_move]           = lift_move_launch_dims;
 
+  // use_graph = false;
+
   auto& data    = *climbers[climber_idx];
   auto v        = data.view();
   settings.seed = cuopt::seed_generator::get_seed();
-  // ensure an updated copy of the settings is used device-side
+  // settings.iteration_limit = 10000;
+  // CUOPT_LOG_DEBUG("FJ: settings seed %d", settings.seed);
+  //  ensure an updated copy of the settings is used device-side
   raft::copy(v.settings, &settings, 1, climber_stream);
 
   bool is_binary_pb = pb_ptr->n_variables == thrust::count(handle_ptr->get_thrust_policy(),
@@ -804,6 +808,7 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
                        0,
                        climber_stream);
 
+      (void)grid_update_weights;
       cudaLaunchCooperativeKernel((void*)handle_local_minimum_kernel<i_t, f_t>,
                                   grid_update_weights,
                                   blocks_update_weights,
@@ -837,7 +842,12 @@ void fj_t<i_t, f_t>::run_step_device(const rmm::cuda_stream_view& climber_stream
                        0,
                        climber_stream);
 
+      // TODO: figure out why the ordering of the violated constraints is ruined
       // data.violated_constraints.sort(climber_stream);
+      // printf("[%d] iter: Violated constraints hash: %x\n", data.iterations.value(climber_stream),
+      // compute_hash(
+      //     make_span(data.violated_constraints.contents, 0,
+      //     data.violated_constraints.set_size.value(climber_stream)), climber_stream));
 
       // {
       //   printf("Violated constraints hash: %x, size: %d\n", compute_hash(
@@ -1099,7 +1109,7 @@ i_t fj_t<i_t, f_t>::host_loop(solution_t<i_t, f_t>& solution, i_t climber_idx)
       CUOPT_LOG_TRACE(
         "FJ "
         "step %d viol %.2g [%d], obj %.8g, best %.8g, mins %d, maxw %g, "
-        "objw %g",
+        "objw %g, sol hash %x, delta hash %x",
         steps,
         data.violation_score.value(climber_stream),
         data.violated_constraints.set_size.value(climber_stream),
@@ -1107,7 +1117,9 @@ i_t fj_t<i_t, f_t>::host_loop(solution_t<i_t, f_t>& solution, i_t climber_idx)
         data.best_objective.value(climber_stream),
         data.local_minimums_reached.value(climber_stream),
         max_cstr_weight.value(climber_stream),
-        objective_weight.value(climber_stream));
+        objective_weight.value(climber_stream),
+        solution.get_hash(),
+        detail::compute_hash(data.jump_move_delta, climber_stream));
     }
 
     if (!limit_reached) { run_step_device(climber_stream, climber_idx); }
@@ -1279,6 +1291,18 @@ i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
   pb_ptr->check_problem_representation(true);
   resize_vectors(solution.handle_ptr);
 
+  CUOPT_LOG_DEBUG("FJ: work_limit %f time_limit %f sol hash %x pb hash %x",
+                  settings.work_limit,
+                  settings.time_limit,
+                  solution.get_hash(),
+                  pb_ptr->get_fingerprint());
+  CUOPT_LOG_DEBUG("FJ: weights hash %x, left weights hash %x, right weights hash %x",
+                  detail::compute_hash(cstr_weights),
+                  detail::compute_hash(cstr_left_weights),
+                  detail::compute_hash(cstr_right_weights));
+
+  settings.load_balancing_mode = fj_load_balancing_mode_t::ALWAYS_OFF;
+
   if (context.settings.deterministic) { settings.work_limit = settings.time_limit; }
   // if work_limit is set: compute an estimate of the number of iterations required
   if (settings.work_limit != std::numeric_limits<double>::infinity()) {
@@ -1412,6 +1436,8 @@ i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
   }
 
   timer.record_work(work_to_record);
+
+  CUOPT_LOG_DEBUG("FJ sol hash %x", solution.get_hash());
 
   // // Print compact feature vector summary
   // char logbuf[4096];

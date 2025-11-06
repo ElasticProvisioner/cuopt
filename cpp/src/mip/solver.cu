@@ -112,8 +112,8 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
   }
 
   diversity_manager_t<i_t, f_t> dm(context);
-  dm.timer              = work_limit_timer_t(context.gpu_heur_loop, timer_.remaining_time());
-  bool presolve_success = dm.run_presolve(timer_.remaining_time());
+  dm.timer              = work_limit_timer_t(context.gpu_heur_loop, timer_.get_time_limit());
+  bool presolve_success = dm.run_presolve(timer_.get_time_limit());
   if (!presolve_success) {
     CUOPT_LOG_INFO("Problem proven infeasible in presolve");
     solution_t<i_t, f_t> sol(*context.problem_ptr);

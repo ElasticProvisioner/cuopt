@@ -200,7 +200,15 @@ i_t bounds_repair_t<i_t, f_t>::compute_best_shift(problem_t<i_t, f_t>& problem,
       }
     });
   handle_ptr->sync_stream();
-  return candidates.n_candidates.value(handle_ptr->get_stream());
+  i_t n_candidates = candidates.n_candidates.value(handle_ptr->get_stream());
+
+  // Sort by variable index to ensure deterministic ordering
+  thrust::sort_by_key(handle_ptr->get_thrust_policy(),
+                      candidates.variable_index.begin(),
+                      candidates.variable_index.begin() + n_candidates,
+                      candidates.bound_shift.begin());
+
+  return n_candidates;
 }
 
 template <typename i_t, typename f_t>

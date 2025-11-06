@@ -395,10 +395,11 @@ std::pair<i_t, bool> population_t<i_t, f_t>::add_solution(solution_t<i_t, f_t>&&
   population_hash_map.insert(sol);
   double sol_cost   = sol.get_quality(weights);
   bool best_updated = false;
-  CUOPT_LOG_DEBUG("Adding solution with quality %f and objective %f n_integers %d!",
+  CUOPT_LOG_DEBUG("Adding solution with quality %f and objective %f n_integers %d, hash %x!",
                   sol_cost,
                   sol.get_user_objective(),
-                  sol.n_assigned_integers);
+                  sol.n_assigned_integers,
+                  sol.get_hash());
   // We store the best feasible found so far at index 0.
   if (sol.get_feasible() &&
       (solutions[0].first == false || sol_cost + OBJECTIVE_EPSILON < indices[0].second)) {
@@ -809,23 +810,29 @@ bool population_t<i_t, f_t>::test_invariant()
 template <typename i_t, typename f_t>
 void population_t<i_t, f_t>::print()
 {
+  std::vector<uint32_t> hashes;
+  for (auto& index : indices)
+    hashes.push_back(solutions[index.first].second.get_hash());
+  uint32_t final_hash = compute_hash(hashes);
   CUOPT_LOG_DEBUG(" -------------- ");
-  CUOPT_LOG_DEBUG("%s infeas weight %f threshold %d/%d:",
+  CUOPT_LOG_DEBUG("%s infeas weight %f threshold %d/%d (hash %x):",
                   name.c_str(),
                   infeasibility_importance,
                   var_threshold,
-                  problem_ptr->n_integer_vars);
+                  problem_ptr->n_integer_vars,
+                  final_hash);
   i_t i = 0;
   for (auto& index : indices) {
     if (index.first == 0 && solutions[0].first) {
       CUOPT_LOG_DEBUG(" Best feasible: %f", solutions[index.first].second.get_user_objective());
     }
-    CUOPT_LOG_DEBUG("%d :  %f\t%f\t%f\t%d",
+    CUOPT_LOG_DEBUG("%d :  %f\t%f\t%f\t%d (hash %x)",
                     i,
                     index.second,
                     solutions[index.first].second.get_total_excess(),
                     solutions[index.first].second.get_user_objective(),
-                    solutions[index.first].second.get_feasible());
+                    solutions[index.first].second.get_feasible(),
+                    solutions[index.first].second.get_hash());
     i++;
   }
   CUOPT_LOG_DEBUG(" -------------- ");

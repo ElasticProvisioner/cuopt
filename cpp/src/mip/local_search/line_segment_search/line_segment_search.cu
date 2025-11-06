@@ -179,6 +179,7 @@ bool line_segment_search_t<i_t, f_t>::search_line_segment(
       fj.settings.update_weights  = false;
       fj.settings.feasibility_run = is_feasibility_run;
       fj.settings.time_limit      = std::min(0.1, timer.remaining_time());
+      fj.settings.work_limit      = fj.settings.time_limit;
       is_feasible                 = fj.solve(solution);
     }
     cuopt_func_call(solution.test_number_all_integer());
@@ -221,13 +222,7 @@ bool line_segment_search_t<i_t, f_t>::search_line_segment(
     fj.settings.update_weights         = false;
     fj.settings.feasibility_run        = is_feasibility_run;
     fj.settings.time_limit             = std::min(1., timer.remaining_time());
-    if (context.settings.deterministic) {
-      // fj.settings.time_limit = timer.remaining_time();
-      fj.settings.time_limit =
-        std::numeric_limits<double>::max();  // TODO should be global time limit
-      fj.settings.iteration_limit = 500;
-    }
-    is_feasible = fj.solve(solution);
+    is_feasible                        = fj.solve(solution);
     if (is_feasibility_run) {
       if (is_feasible) {
         CUOPT_LOG_DEBUG("Line segment found feasible");

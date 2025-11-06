@@ -560,7 +560,7 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
              solution.assignment.size(),
              solution.handle_ptr->get_stream());
 
-  // CUOPT_LOG_DEBUG("FP: starting FP descent, sol hash 0x%x", solution.get_hash());
+  CUOPT_LOG_DEBUG("FP: starting FP descent, sol hash 0x%x", solution.get_hash());
   while (true) {
     fp_iterations++;
     if (timer.check_time_limit()) {
@@ -577,7 +577,9 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
     f_t ratio_of_assigned_integers =
       f_t(solution.n_assigned_integers) / solution.problem_ptr->n_integer_vars;
     bool is_feasible = linear_project_onto_polytope(solution, ratio_of_assigned_integers);
-    i_t n_integers   = solution.compute_number_of_integers();
+    CUOPT_LOG_DEBUG(
+      "FP: after fp projection, iter %d sol hash 0x%x", fp_iterations, solution.get_hash());
+    i_t n_integers = solution.compute_number_of_integers();
     // CUOPT_LOG_DEBUG("after fp projection n_integers %d total n_integes %d",
     //                 n_integers,
     //                 solution.problem_ptr->n_integer_vars);
@@ -628,9 +630,11 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
         const f_t lp_verify_time_limit = 5.;
         relaxed_lp_settings_t lp_settings;
         lp_settings.time_limit            = lp_verify_time_limit;
+        lp_settings.work_limit            = lp_settings.time_limit;
         lp_settings.tolerance             = solution.problem_ptr->tolerances.absolute_tolerance;
         lp_settings.return_first_feasible = true;
         lp_settings.save_state            = true;
+        CUOPT_LOG_DEBUG("FP LP verify, sol hash 0x%x", solution.get_hash());
         run_lp_with_vars_fixed(*solution.problem_ptr,
                                solution,
                                solution.problem_ptr->integer_indices,

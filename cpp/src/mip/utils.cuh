@@ -39,6 +39,52 @@ constexpr int default_int_upper     = std::numeric_limits<int>::max();
 constexpr int default_int_lower     = std::numeric_limits<int>::min();
 constexpr double zero_bound         = 0.;
 
+template <typename i_t>
+inline uint32_t compute_hash(std::vector<i_t> h_contents)
+{
+  // FNV-1a hash
+
+  uint32_t hash = 2166136261u;  // FNV-1a 32-bit offset basis
+  std::vector<uint8_t> byte_contents(h_contents.size() * sizeof(i_t));
+  std::memcpy(byte_contents.data(), h_contents.data(), h_contents.size() * sizeof(i_t));
+  for (size_t i = 0; i < byte_contents.size(); ++i) {
+    hash ^= byte_contents[i];
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+template <typename i_t>
+HDI uint32_t compute_hash(const i_t val)
+{
+  uint32_t hash = 2166136261u;
+  uint8_t byte_contents[sizeof(i_t)];
+  std::memcpy(byte_contents, &val, sizeof(i_t));
+  for (size_t i = 0; i < sizeof(i_t); ++i) {
+    hash ^= byte_contents[i];
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+template <typename i_t>
+inline uint32_t compute_hash(raft::device_span<i_t> values,
+                             rmm::cuda_stream_view stream = rmm::cuda_stream_default)
+{
+  auto h_contents = cuopt::host_copy(values, stream);
+  RAFT_CHECK_CUDA(stream);
+  return compute_hash(h_contents);
+}
+
+template <typename i_t>
+inline uint32_t compute_hash(const rmm::device_uvector<i_t>& values,
+                             rmm::cuda_stream_view stream = rmm::cuda_stream_default)
+{
+  auto h_contents = cuopt::host_copy(values, stream);
+  RAFT_CHECK_CUDA(stream);
+  return compute_hash(h_contents);
+}
+
 template <typename i_t, typename f_t>
 HDI f_t get_cstr_tolerance(f_t combined_bound, f_t abs_tol, f_t rel_tol)
 {
@@ -229,6 +275,9 @@ f_t compute_objective_from_vec(const rmm::device_uvector<f_t>& assignment,
                                            assignment.end(),
                                            objective_coefficients.begin(),
                                            0.);
+  // CUOPT_LOG_DEBUG("compute_objective_from_vec: input %x coefs %x obj %x",
+  // detail::compute_hash(assignment), detail::compute_hash(objective_coefficients),
+  // detail::compute_hash(computed_obj));
   return computed_obj;
 }
 
@@ -367,39 +416,6 @@ bool has_variable_bounds_violation(const raft::handle_t* handle_ptr,
                           return !problem_view.check_variable_within_bounds(idx,
                                                                             assignment_span[idx]);
                         });
-}
-
-template <typename i_t>
-inline uint32_t compute_hash(std::vector<i_t> h_contents)
-{
-  // FNV-1a hash
-
-  uint32_t hash = 2166136261u;  // FNV-1a 32-bit offset basis
-  std::vector<uint8_t> byte_contents(h_contents.size() * sizeof(i_t));
-  std::memcpy(byte_contents.data(), h_contents.data(), h_contents.size() * sizeof(i_t));
-  for (size_t i = 0; i < byte_contents.size(); ++i) {
-    hash ^= byte_contents[i];
-    hash *= 16777619u;
-  }
-  return hash;
-}
-
-template <typename i_t>
-inline uint32_t compute_hash(raft::device_span<i_t> values,
-                             rmm::cuda_stream_view stream = rmm::cuda_stream_default)
-{
-  auto h_contents = cuopt::host_copy(values, stream);
-  RAFT_CHECK_CUDA(stream);
-  return compute_hash(h_contents);
-}
-
-template <typename i_t>
-inline uint32_t compute_hash(const rmm::device_uvector<i_t>& values,
-                             rmm::cuda_stream_view stream = rmm::cuda_stream_default)
-{
-  auto h_contents = cuopt::host_copy(values, stream);
-  RAFT_CHECK_CUDA(stream);
-  return compute_hash(h_contents);
 }
 
 }  // namespace cuopt::linear_programming::detail

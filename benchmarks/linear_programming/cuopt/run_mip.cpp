@@ -417,7 +417,6 @@ int main(int argc, char* argv[])
   if (program.is_used("--initial-solution-path")) {
     initial_solution_file = program.get<std::string>("--initial-solution-path");
   }
-
   if (run_dir) {
     std::queue<std::string> task_queue;
     std::queue<int> gpu_queue;

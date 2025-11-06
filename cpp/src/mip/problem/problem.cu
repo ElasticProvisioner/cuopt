@@ -1714,6 +1714,8 @@ uint32_t problem_t<i_t, f_t>::get_fingerprint() const
     detail::compute_hash(constraint_lower_bounds, handle_ptr->get_stream()),
     detail::compute_hash(constraint_upper_bounds, handle_ptr->get_stream()),
     detail::compute_hash(variable_types, handle_ptr->get_stream()),
+    detail::compute_hash(presolve_data.objective_offset),
+    detail::compute_hash(presolve_data.objective_scaling_factor),
   };
   return detail::compute_hash(hashes);
 }
