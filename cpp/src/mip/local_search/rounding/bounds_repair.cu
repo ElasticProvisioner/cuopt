@@ -101,7 +101,7 @@ f_t bounds_repair_t<i_t, f_t>::get_ii_violation(problem_t<i_t, f_t>& problem)
                               violated_constraints.data(),
                               cuda::std::identity{});
   h_n_violated_cstr = iter - violated_constraints.data();
-  // Use deterministic reduction instead of non-deterministic atomicAdd
+  // Use deterministic reduction instead of non-deterministic atomicAdd1
   f_t total_violation = thrust::transform_reduce(
     handle_ptr->get_thrust_policy(),
     thrust::make_counting_iterator(0),
