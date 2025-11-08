@@ -990,11 +990,14 @@ __device__ void compute_mtm_moves(typename fj_t<i_t, f_t>::climber_data_t::view_
   if (*fj.selected_var == std::numeric_limits<i_t>::max()) full_refresh = true;
 
   // always do a full sweep when looking for satisfied mtm moves
-  if constexpr (move_type == MTMMoveType::FJ_MTM_SATISFIED) full_refresh = true;
-
-  // only update related variables
   i_t split_begin, split_end;
-  if (full_refresh) {
+  if constexpr (move_type == MTMMoveType::FJ_MTM_SATISFIED) {
+    full_refresh = true;
+    split_begin  = 0;
+    split_end    = fj.objective_vars.size();
+  }
+  // only update related variables
+  else if (full_refresh) {
     split_begin = 0;
     split_end   = fj.pb.n_variables;
   }
@@ -1016,9 +1019,15 @@ __device__ void compute_mtm_moves(typename fj_t<i_t, f_t>::climber_data_t::view_
   if (FIRST_THREAD) *fj.relvar_count_last_update = split_end - split_begin;
 
   for (i_t i = blockIdx.x + split_begin; i < split_end; i += gridDim.x) {
-    i_t var_idx = full_refresh                          ? i
-                  : fj.pb.related_variables.size() == 0 ? i
-                                                        : fj.pb.related_variables[i];
+    // if sat MTM mode, go over objective variables only
+    i_t var_idx;
+    if constexpr (move_type == MTMMoveType::FJ_MTM_SATISFIED) {
+      var_idx = fj.objective_vars[i];
+    } else {
+      var_idx = full_refresh                          ? i
+                : fj.pb.related_variables.size() == 0 ? i
+                                                      : fj.pb.related_variables[i];
+    }
 
     // skip if we couldnt precompute a related var table and
     // this variable isnt in the dynamic related variable table
@@ -1042,11 +1051,6 @@ __device__ void compute_mtm_moves(typename fj_t<i_t, f_t>::climber_data_t::view_
 
     cuopt_assert(var_idx >= 0 && var_idx < fj.pb.n_variables, "");
     update_jump_value<i_t, f_t, move_type, TPB, is_binary_pb>(fj, var_idx);
-    // if (move_type == MTMMoveType::FJ_MTM_SATISFIED && threadIdx.x == 0) {
-    //   printf("iter[%d] block[%d] var %d score {%d,%d}, delta %g\n", *fj.iterations, blockIdx.x,
-    //   var_idx, fj.jump_move_scores[var_idx].base, fj.jump_move_scores[var_idx].bonus,
-    //   fj.jump_move_delta[var_idx]);
-    // }
   }
 }
 
@@ -1324,11 +1328,9 @@ DI thrust::tuple<i_t, f_t, typename fj_t<i_t, f_t>::move_score_t> best_sat_cstr_
   typename fj_t<i_t, f_t>::climber_data_t::view_t fj)
 {
   // compute all MTM moves within satisfied constraints
-  // TODO: only compute such moves over the objective variables. that way, the grid sync can be
-  // eliminated
   compute_mtm_moves<i_t, f_t, MTMMoveType::FJ_MTM_SATISFIED, false, TPB>(fj, true);
-  // TODO: could probably be eliminated
-  cg::this_grid().sync();
+  // NOTE: grid sync not required since each block only reduces over variables that it updated in
+  // compute_mtm_moves
   return gridwide_reduce_best_move<i_t, f_t, TPB, /*WeakTabu=*/false, /*recompute_score=*/false>(
     fj, fj.objective_vars.begin(), fj.objective_vars.end(), [fj] __device__(i_t var_idx) {
       return fj.jump_move_delta[var_idx];
