@@ -885,7 +885,7 @@ void problem_t<i_t, f_t>::compute_related_variables(double time_limit)
 
   i_t output_offset      = 0;
   i_t related_var_offset = 0;
-  auto start_time        = std::chrono::high_resolution_clock::now();
+  // auto start_time        = std::chrono::high_resolution_clock::now();
   for (i_t i = 0;; ++i) {
     i_t slice_size = std::min(max_slice_size, n_variables - i * max_slice_size);
     if (slice_size <= 0) break;
@@ -914,12 +914,13 @@ void problem_t<i_t, f_t>::compute_related_variables(double time_limit)
     i_t related_var_base = related_variables.size();
     related_variables.resize(related_variables.size() + array_size, handle_ptr->get_stream());
 
-    auto current_time = std::chrono::high_resolution_clock::now();
+    // auto current_time = std::chrono::high_resolution_clock::now();
     // if the related variable array would wind up being too large for available memory, abort
     // TODO this used to be 1e9
-    if (related_variables.size() > 1e9 * size_factor ||
-        std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count() >
-          time_limit) {
+    if (related_variables.size() > 1e9 * size_factor) {
+      //  ||
+      //     std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time).count() >
+      //       time_limit) {
       CUOPT_LOG_DEBUG(
         "Computing the related variable array would use too much memory or time, aborting\n");
       related_variables.resize(0, handle_ptr->get_stream());
@@ -1287,9 +1288,13 @@ problem_t<i_t, f_t> problem_t<i_t, f_t>::get_problem_after_fixing_vars(
   //   total_time_taken);
   // if the fixing is greater than 150, mark this as expensive.
   // this way we can avoid frequent fixings for this problem
-  constexpr double expensive_time_threshold = 150;
-  if (time_taken > expensive_time_threshold) { expensive_to_fix_vars = true; }
-  CUOPT_LOG_DEBUG("Model fingerprint after fixing: 0x%x", problem.get_fingerprint());
+
+  // TODO: CHANGE
+  // constexpr double expensive_time_threshold = 150;
+  // if (time_taken > expensive_time_threshold) { expensive_to_fix_vars = true; }
+  CUOPT_LOG_DEBUG("Model fingerprint after fixing: 0x%x, expensive? %d",
+                  problem.get_fingerprint(),
+                  expensive_to_fix_vars);
   return problem;
 }
 

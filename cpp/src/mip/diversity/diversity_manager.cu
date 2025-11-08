@@ -743,6 +743,11 @@ std::pair<solution_t<i_t, f_t>, bool> diversity_manager_t<i_t, f_t>::recombine(
   }
   mab_recombiner.set_last_chosen_option(selected_index);
   recombine_stats.add_attempt((recombiner_enum_t)recombiner);
+  CUOPT_LOG_DEBUG("Recombining sol %x and %x with recombiner %d, weights %x",
+                  a.get_hash(),
+                  b.get_hash(),
+                  recombiner,
+                  population.weights.get_hash());
   // Refactored code using a switch statement
   switch (recombiner) {
     case recombiner_enum_t::BOUND_PROP: {

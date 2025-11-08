@@ -646,7 +646,7 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
     cuopt_func_call(solution.test_variable_bounds(false));
     is_feasible = round(solution);
     cuopt_func_call(solution.test_variable_bounds(true));
-    proj_and_round_time = proj_begin - timer.remaining_time();
+    proj_and_round_time = timer.remaining_time();
     if (!is_feasible && proj_and_round_time > 0) {
       const f_t time_ratio = 0.2;
       is_feasible          = test_fj_feasible(solution, time_ratio * proj_and_round_time);
