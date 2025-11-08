@@ -111,7 +111,7 @@ template <typename i_t, typename f_t>
 i_t bounds_repair_t<i_t, f_t>::get_random_cstr()
 {
   std::uniform_int_distribution<> dist(0, h_n_violated_cstr - 1);
-  // Generate random number
+  // Generate random number1
   i_t random_number = dist(gen);
   i_t cstr_idx      = violated_constraints.element(random_number, handle_ptr->get_stream());
   CUOPT_LOG_TRACE("Repair: selected random cstr %d", cstr_idx);
