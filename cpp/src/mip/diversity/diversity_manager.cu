@@ -706,7 +706,7 @@ diversity_manager_t<i_t, f_t>::recombine_and_local_search(solution_t<i_t, f_t>& 
     best_quality_of_parents,
     population.best().get_quality(population.weights),
     offspring_qual,
-    recombiner_work_normalized_reward_t(recombine_stats.get_last_recombiner_time()));
+    recombiner_work_normalized_reward_t(recombine_stats.get_last_recombiner_work()));
   mab_ls.add_mab_reward(mab_ls_config_t<i_t, f_t>::last_ls_mab_option,
                         best_quality_of_parents,
                         population.best_feasible().get_quality(population.weights),
@@ -753,30 +753,29 @@ std::pair<solution_t<i_t, f_t>, bool> diversity_manager_t<i_t, f_t>::recombine(
   }
   mab_recombiner.set_last_chosen_option(selected_index);
   recombine_stats.add_attempt((recombiner_enum_t)recombiner);
-  recombine_stats.start_recombiner_time();
   // Refactored code using a switch statement
   switch (recombiner) {
     case recombiner_enum_t::BOUND_PROP: {
-      auto [sol, success] = bound_prop_recombiner.recombine(a, b, population.weights);
-      recombine_stats.stop_recombiner_time();
+      auto [sol, success, work] = bound_prop_recombiner.recombine(a, b, population.weights);
+      recombine_stats.set_recombiner_work(work);
       if (success) { recombine_stats.add_success(); }
       return std::make_pair(sol, success);
     }
     case recombiner_enum_t::FP: {
-      auto [sol, success] = fp_recombiner.recombine(a, b, population.weights);
-      recombine_stats.stop_recombiner_time();
+      auto [sol, success, work] = fp_recombiner.recombine(a, b, population.weights);
+      recombine_stats.set_recombiner_work(work);
       if (success) { recombine_stats.add_success(); }
       return std::make_pair(sol, success);
     }
     case recombiner_enum_t::LINE_SEGMENT: {
-      auto [sol, success] = line_segment_recombiner.recombine(a, b, population.weights);
-      recombine_stats.stop_recombiner_time();
+      auto [sol, success, work] = line_segment_recombiner.recombine(a, b, population.weights);
+      recombine_stats.set_recombiner_work(work);
       if (success) { recombine_stats.add_success(); }
       return std::make_pair(sol, success);
     }
     case recombiner_enum_t::SUB_MIP: {
-      auto [sol, success] = sub_mip_recombiner.recombine(a, b, population.weights);
-      recombine_stats.stop_recombiner_time();
+      auto [sol, success, work] = sub_mip_recombiner.recombine(a, b, population.weights);
+      recombine_stats.set_recombiner_work(work);
       if (success) { recombine_stats.add_success(); }
       return std::make_pair(sol, success);
     }

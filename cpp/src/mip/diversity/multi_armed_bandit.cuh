@@ -55,16 +55,13 @@ struct ls_work_normalized_reward_t {
 };
 
 struct recombiner_work_normalized_reward_t {
-  double time_in_miliseconds;
-  recombiner_work_normalized_reward_t(double time_in_miliseconds)
-    : time_in_miliseconds(time_in_miliseconds)
-  {
-  }
+  double work;
+  recombiner_work_normalized_reward_t(double work) : work(work) {}
 
   double operator()(double factor) const
   {
-    // normal recombiners take 2000 ms
-    return factor * (std::max(0.1, 4.0 - (time_in_miliseconds / 2000)));
+    // normal recombiners process 200 variables
+    return factor * (std::max(0.1, 4.0 - (work / 200)));
   }
 };
 

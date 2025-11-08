@@ -141,9 +141,9 @@ class bound_prop_recombiner_t : public recombiner_t<i_t, f_t> {
       });
   }
 
-  std::pair<solution_t<i_t, f_t>, bool> recombine(solution_t<i_t, f_t>& a,
-                                                  solution_t<i_t, f_t>& b,
-                                                  const weight_t<i_t, f_t>& weights)
+  std::tuple<solution_t<i_t, f_t>, bool, double> recombine(solution_t<i_t, f_t>& a,
+                                                           solution_t<i_t, f_t>& b,
+                                                           const weight_t<i_t, f_t>& weights)
   {
     raft::common::nvtx::range fun_scope("bound_prop_recombiner");
     auto& guiding_solution = a.get_feasible() ? a : b;
@@ -174,8 +174,9 @@ class bound_prop_recombiner_t : public recombiner_t<i_t, f_t> {
     // all are different), return
     if (n_vars_from_guiding == 0 || n_vars_from_other == 0) {
       CUOPT_LOG_DEBUG("Returning false because all vars are common or different");
-      return std::make_pair(offspring, false);
+      return std::make_tuple(offspring, false, 0.0);
     }
+    double work = static_cast<double>(n_vars_from_other);
 
     cuopt_assert(a.problem_ptr == b.problem_ptr,
                  "The two solutions should not refer to different problems");
@@ -266,9 +267,9 @@ class bound_prop_recombiner_t : public recombiner_t<i_t, f_t> {
     }
     if (better_cost_than_parents || better_feasibility_than_parents) {
       CUOPT_LOG_DEBUG("Offspring is feasible or better than both parents");
-      return std::make_pair(offspring, true);
+      return std::make_tuple(offspring, true, work);
     }
-    return std::make_pair(offspring, !same_as_parents);
+    return std::make_tuple(offspring, !same_as_parents, work);
   }
 
   rmm::device_uvector<i_t> vars_to_fix;
