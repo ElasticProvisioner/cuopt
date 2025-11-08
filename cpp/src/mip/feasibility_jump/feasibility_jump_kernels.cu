@@ -1327,7 +1327,7 @@ DI thrust::tuple<i_t, f_t, typename fj_t<i_t, f_t>::move_score_t> best_sat_cstr_
   // TODO: only compute such moves over the objective variables. that way, the grid sync can be
   // eliminated
   compute_mtm_moves<i_t, f_t, MTMMoveType::FJ_MTM_SATISFIED, false, TPB>(fj, true);
-  // TODO: could probably be eliminated1
+  // TODO: could probably be eliminated
   cg::this_grid().sync();
   return gridwide_reduce_best_move<i_t, f_t, TPB, /*WeakTabu=*/false, /*recompute_score=*/false>(
     fj, fj.objective_vars.begin(), fj.objective_vars.end(), [fj] __device__(i_t var_idx) {
