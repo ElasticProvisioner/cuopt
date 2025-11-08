@@ -1322,7 +1322,7 @@ i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
                   detail::compute_hash(cstr_left_weights),
                   detail::compute_hash(cstr_right_weights));
 
-  // 1settings.load_balancing_mode = fj_load_balancing_mode_t::ALWAYS_OFF;
+  // settings.load_balancing_mode = fj_load_balancing_mode_t::ALWAYS_OFF;
 
   if (context.settings.deterministic) { settings.work_limit = settings.time_limit; }
   // if work_limit is set: compute an estimate of the number of iterations required
