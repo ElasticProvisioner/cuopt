@@ -37,6 +37,7 @@
 #include <raft/core/handle.hpp>
 
 #include <cuda_profiler_api.h>
+#include <papi.h>
 
 namespace cuopt::linear_programming {
 
@@ -160,6 +161,15 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     // Init libraies before to not include it in solve time
     // This needs to be called before pdlp is initialized
     init_handler(op_problem.get_handle_ptr());
+
+    auto retval = PAPI_library_init(PAPI_VER_CURRENT);
+    if (retval != PAPI_VER_CURRENT && retval > 0) {
+      fprintf(stderr, "PAPI library version mismatch!\n");
+      exit(1);
+    } else if (retval < 0) {
+      fprintf(stderr, "PAPI initialization error!\n");
+      exit(1);
+    }
 
     print_version_info();
 

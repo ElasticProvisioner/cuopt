@@ -109,6 +109,33 @@ struct fj_cpu_climber_t {
   std::string log_prefix{""};
 
   std::atomic<bool> halted{false};
+
+  // PAPI performance counters
+  int papi_event_set{-1};
+  bool papi_initialized{false};
+  std::vector<int> papi_events;
+
+  // Feature tracking for regression model (last 1000 iterations)
+  i_t nnz_processed_window{0};
+  i_t n_lift_moves_window{0};
+  i_t n_mtm_viol_moves_window{0};
+  i_t n_mtm_sat_moves_window{0};
+  i_t n_constraint_evals_window{0};
+  i_t n_variable_updates_window{0};
+  i_t n_local_minima_window{0};
+  std::chrono::high_resolution_clock::time_point last_feature_log_time;
+  f_t prev_best_objective{std::numeric_limits<f_t>::infinity()};
+  i_t iterations_since_best{0};
+
+  // Precomputed static problem features
+  i_t n_binary_vars{0};
+  i_t n_integer_vars{0};
+  i_t n_continuous_vars{0};
+  i_t max_var_degree{0};
+  i_t max_cstr_degree{0};
+  double avg_var_degree{0.0};
+  double avg_cstr_degree{0.0};
+  double problem_density{0.0};
 };
 
 }  // namespace cuopt::linear_programming::detail

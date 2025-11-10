@@ -323,6 +323,17 @@ target_link_libraries(cuopt
   ${CUOPT_PRIVATE_CUDA_LIBS}
   )
 
+find_path(PAPI_INCLUDE_DIR papi.h)
+find_library(PAPI_LIBRARY papi)
+
+if (PAPI_INCLUDE_DIR AND PAPI_LIBRARY)
+    message(STATUS "Found PAPI in ${PAPI_INCLUDE_DIR}")
+    target_include_directories(cuopt PRIVATE ${PAPI_INCLUDE_DIR})
+    target_link_libraries(cuopt PRIVATE ${PAPI_LIBRARY})
+else()
+    message(FATAL_ERROR "Could not find PAPI")
+endif()
+
 
 # ##################################################################################################
 # - generate tests --------------------------------------------------------------------------------

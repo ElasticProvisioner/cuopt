@@ -14,15 +14,28 @@
 #include <utilities/seed_generator.cuh>
 
 #include <chrono>
+#include <mutex>
 #include <random>
+#include <thread>
 #include <unordered_set>
 #include <vector>
+
+#ifdef __linux__
+#include <papi.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 #define CPUFJ_TIMING_TRACE 0
 
 namespace cuopt::linear_programming::detail {
 
 static constexpr double BIGVAL_THRESHOLD = 1e20;
+
+#ifdef __linux__
+// Global mutex to protect PAPI metric printing across multiple threads
+static std::mutex papi_print_mutex;
+#endif
 
 template <typename i_t, typename f_t>
 class timing_raii_t {
@@ -62,43 +75,354 @@ static void print_timing_stats(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
   auto [apply_avg, apply_total]     = compute_avg_and_total(fj_cpu.apply_move_times);
   auto [weights_avg, weights_total] = compute_avg_and_total(fj_cpu.update_weights_times);
   auto [compute_score_avg, compute_score_total] = compute_avg_and_total(fj_cpu.compute_score_times);
-  CUOPT_LOG_TRACE("=== Timing Statistics (Iteration %d) ===\n", fj_cpu.iterations);
-  CUOPT_LOG_TRACE("find_lift_move:      avg=%.6f ms, total=%.6f ms, calls=%zu\n",
+  CUOPT_LOG_TRACE("=== Timing Statistics (Iteration %d) ===", fj_cpu.iterations);
+  CUOPT_LOG_TRACE("find_lift_move:      avg=%.6f ms, total=%.6f ms, calls=%zu",
                   lift_avg * 1000.0,
                   lift_total * 1000.0,
                   fj_cpu.find_lift_move_times.size());
-  CUOPT_LOG_TRACE("find_mtm_move_viol:  avg=%.6f ms, total=%.6f ms, calls=%zu\n",
+  CUOPT_LOG_TRACE("find_mtm_move_viol:  avg=%.6f ms, total=%.6f ms, calls=%zu",
                   viol_avg * 1000.0,
                   viol_total * 1000.0,
                   fj_cpu.find_mtm_move_viol_times.size());
-  CUOPT_LOG_TRACE("find_mtm_move_sat:   avg=%.6f ms, total=%.6f ms, calls=%zu\n",
+  CUOPT_LOG_TRACE("find_mtm_move_sat:   avg=%.6f ms, total=%.6f ms, calls=%zu",
                   sat_avg * 1000.0,
                   sat_total * 1000.0,
                   fj_cpu.find_mtm_move_sat_times.size());
-  CUOPT_LOG_TRACE("apply_move:          avg=%.6f ms, total=%.6f ms, calls=%zu\n",
+  CUOPT_LOG_TRACE("apply_move:          avg=%.6f ms, total=%.6f ms, calls=%zu",
                   apply_avg * 1000.0,
                   apply_total * 1000.0,
                   fj_cpu.apply_move_times.size());
-  CUOPT_LOG_TRACE("update_weights:      avg=%.6f ms, total=%.6f ms, calls=%zu\n",
+  CUOPT_LOG_TRACE("update_weights:      avg=%.6f ms, total=%.6f ms, calls=%zu",
                   weights_avg * 1000.0,
                   weights_total * 1000.0,
                   fj_cpu.update_weights_times.size());
-  CUOPT_LOG_TRACE("compute_score:       avg=%.6f ms, total=%.6f ms, calls=%zu\n",
+  CUOPT_LOG_TRACE("compute_score:       avg=%.6f ms, total=%.6f ms, calls=%zu",
                   compute_score_avg * 1000.0,
                   compute_score_total * 1000.0,
                   fj_cpu.compute_score_times.size());
-  CUOPT_LOG_TRACE("cache hit percentage: %.2f%%\n",
+  CUOPT_LOG_TRACE("cache hit percentage: %.2f%%",
                   (double)fj_cpu.hit_count / (fj_cpu.hit_count + fj_cpu.miss_count) * 100.0);
-  CUOPT_LOG_TRACE("bin  candidate move hit percentage: %.2f%%\n",
+  CUOPT_LOG_TRACE("bin  candidate move hit percentage: %.2f%%",
                   (double)fj_cpu.candidate_move_hits[0] /
                     (fj_cpu.candidate_move_hits[0] + fj_cpu.candidate_move_misses[0]) * 100.0);
-  CUOPT_LOG_TRACE("int  candidate move hit percentage: %.2f%%\n",
+  CUOPT_LOG_TRACE("int  candidate move hit percentage: %.2f%%",
                   (double)fj_cpu.candidate_move_hits[1] /
                     (fj_cpu.candidate_move_hits[1] + fj_cpu.candidate_move_misses[1]) * 100.0);
-  CUOPT_LOG_TRACE("cont candidate move hit percentage: %.2f%%\n",
+  CUOPT_LOG_TRACE("cont candidate move hit percentage: %.2f%%",
                   (double)fj_cpu.candidate_move_hits[2] /
                     (fj_cpu.candidate_move_hits[2] + fj_cpu.candidate_move_misses[2]) * 100.0);
-  CUOPT_LOG_TRACE("========================================\n");
+  CUOPT_LOG_TRACE("========================================");
+}
+
+#ifdef __linux__
+template <typename i_t, typename f_t>
+static void initialize_papi(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
+{
+  int retval = PAPI_library_init(PAPI_VER_CURRENT);
+  if (retval != PAPI_VER_CURRENT && retval > 0) {
+    CUOPT_LOG_TRACE("%sPAPI library version mismatch", fj_cpu.log_prefix.c_str());
+    return;
+  }
+  if (retval < 0) {
+    CUOPT_LOG_TRACE("%sPAPI library initialization failed", fj_cpu.log_prefix.c_str());
+    return;
+  }
+
+  fj_cpu.papi_event_set = PAPI_NULL;
+  retval                = PAPI_create_eventset(&fj_cpu.papi_event_set);
+  if (retval != PAPI_OK) {
+    CUOPT_LOG_TRACE("%sPAPI eventset creation failed", fj_cpu.log_prefix.c_str());
+    return;
+  }
+
+  // Define the events we want to track
+  int candidate_events[] = {
+    PAPI_L1_DCA,  // L1 data cache accesses
+    PAPI_L1_DCM,  // L1 data cache misses
+    PAPI_L2_DCA,  // L2 data cache accesses
+    PAPI_L2_DCM,  // L2 data cache misses
+    PAPI_L3_TCA,  // L3 total cache accesses
+    PAPI_L3_TCM,  // L3 total cache misses
+    PAPI_LD_INS,  // Load instructions
+    PAPI_SR_INS   // Store instructions
+  };
+
+  const char* event_names[] = {"PAPI_L1_DCA",
+                               "PAPI_L1_DCM",
+                               "PAPI_L2_DCA",
+                               "PAPI_L2_DCM",
+                               "PAPI_L3_TCA",
+                               "PAPI_L3_TCM",
+                               "PAPI_LD_INS",
+                               "PAPI_SR_INS"};
+
+  int num_candidate_events = sizeof(candidate_events) / sizeof(candidate_events[0]);
+
+  // Try to add each event, store -1 for unavailable ones
+  for (int i = 0; i < num_candidate_events; i++) {
+    retval = PAPI_add_event(fj_cpu.papi_event_set, candidate_events[i]);
+    if (retval == PAPI_OK) {
+      fj_cpu.papi_events.push_back(candidate_events[i]);
+    } else {
+      fj_cpu.papi_events.push_back(-1);
+      CUOPT_LOG_TRACE(
+        "%sPAPI event %s not available on this system", fj_cpu.log_prefix.c_str(), event_names[i]);
+    }
+  }
+  (void)event_names;  // Suppress unused warning when logging is disabled
+
+  // Start counting
+  retval = PAPI_start(fj_cpu.papi_event_set);
+  if (retval != PAPI_OK) {
+    CUOPT_LOG_TRACE("%sPAPI start failed", fj_cpu.log_prefix.c_str());
+    return;
+  }
+
+  fj_cpu.papi_initialized = true;
+  CUOPT_LOG_TRACE("%sPAPI initialized successfully", fj_cpu.log_prefix.c_str());
+}
+
+template <typename i_t, typename f_t>
+static void collect_and_print_papi_metrics(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
+{
+  if (!fj_cpu.papi_initialized) return;
+
+  std::vector<long long> values(fj_cpu.papi_events.size(), 0);
+  int retval = PAPI_read(fj_cpu.papi_event_set, values.data());
+  if (retval != PAPI_OK) {
+    CUOPT_LOG_TRACE("%sPAPI read failed", fj_cpu.log_prefix.c_str());
+    return;
+  }
+
+  // Get thread ID
+  pid_t tid = syscall(SYS_gettid);
+
+  // Build map of actual values indexed by event position
+  std::vector<long long> all_values(8, -1);
+  int value_idx = 0;
+  for (size_t i = 0; i < fj_cpu.papi_events.size(); i++) {
+    if (fj_cpu.papi_events[i] != -1) { all_values[i] = values[value_idx++]; }
+  }
+
+  // Compute derived metrics
+  double l1_miss_rate = -1.0;
+  if (all_values[0] > 0 && all_values[1] != -1) {
+    l1_miss_rate = (double)all_values[1] / all_values[0] * 100.0;
+  }
+
+  double l2_miss_rate = -1.0;
+  if (all_values[2] > 0 && all_values[3] != -1) {
+    l2_miss_rate = (double)all_values[3] / all_values[2] * 100.0;
+  }
+
+  // Lock to ensure thread-safe printing
+  std::lock_guard<std::mutex> lock(papi_print_mutex);
+
+  // Print everything on a single compact line
+  CUOPT_LOG_DEBUG(
+    "%sPAPI iter=%d tid=%d L1_DCA=%lld L1_DCM=%lld L2_DCA=%lld L2_DCM=%lld L3_TCA=%lld "
+    "L3_TCM=%lld LD_INS=%lld SR_INS=%lld L1_miss=%.2f%% L2_miss=%.2f%%",
+    fj_cpu.log_prefix.c_str(),
+    fj_cpu.iterations,
+    tid,
+    all_values[0],
+    all_values[1],
+    all_values[2],
+    all_values[3],
+    all_values[4],
+    all_values[5],
+    all_values[6],
+    all_values[7],
+    l1_miss_rate,
+    l2_miss_rate);
+
+  // Reset counters for the next 1000 iterations
+  retval = PAPI_reset(fj_cpu.papi_event_set);
+  if (retval != PAPI_OK) { CUOPT_LOG_TRACE("%sPAPI reset failed", fj_cpu.log_prefix.c_str()); }
+}
+
+template <typename i_t, typename f_t>
+static void cleanup_papi(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
+{
+  if (fj_cpu.papi_initialized) {
+    PAPI_stop(fj_cpu.papi_event_set, nullptr);
+    PAPI_cleanup_eventset(fj_cpu.papi_event_set);
+    PAPI_destroy_eventset(&fj_cpu.papi_event_set);
+  }
+}
+#endif
+
+template <typename i_t, typename f_t>
+static void precompute_problem_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
+{
+  // Count variable types - use host vectors
+  fj_cpu.n_binary_vars     = 0;
+  fj_cpu.n_integer_vars    = 0;
+  fj_cpu.n_continuous_vars = 0;
+  for (i_t i = 0; i < (i_t)fj_cpu.h_is_binary_variable.size(); i++) {
+    if (fj_cpu.h_is_binary_variable[i]) {
+      fj_cpu.n_binary_vars++;
+    } else if (fj_cpu.h_var_types[i] == var_t::INTEGER) {
+      fj_cpu.n_integer_vars++;
+    } else {
+      fj_cpu.n_continuous_vars++;
+    }
+  }
+
+  i_t total_nnz = fj_cpu.h_reverse_offsets.back();
+  i_t n_vars    = fj_cpu.h_reverse_offsets.size() - 1;
+  i_t n_cstrs   = fj_cpu.h_offsets.size() - 1;
+
+  fj_cpu.avg_var_degree = (double)total_nnz / n_vars;
+
+  // Compute max variable degree
+  fj_cpu.max_var_degree = 0;
+  for (i_t i = 0; i < n_vars; i++) {
+    i_t degree            = fj_cpu.h_reverse_offsets[i + 1] - fj_cpu.h_reverse_offsets[i];
+    fj_cpu.max_var_degree = std::max(fj_cpu.max_var_degree, degree);
+  }
+
+  fj_cpu.avg_cstr_degree = (double)total_nnz / n_cstrs;
+
+  // Compute max constraint degree
+  fj_cpu.max_cstr_degree = 0;
+  for (i_t i = 0; i < n_cstrs; i++) {
+    i_t degree             = fj_cpu.h_offsets[i + 1] - fj_cpu.h_offsets[i];
+    fj_cpu.max_cstr_degree = std::max(fj_cpu.max_cstr_degree, degree);
+  }
+
+  fj_cpu.problem_density = (double)total_nnz / ((double)n_vars * n_cstrs);
+}
+
+template <typename i_t, typename f_t>
+static void log_regression_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
+                                    double time_window_ms,
+                                    double total_time_ms)
+{
+#ifdef __linux__
+  pid_t tid = syscall(SYS_gettid);
+#else
+  int tid = 0;
+#endif
+
+  i_t total_nnz = fj_cpu.h_reverse_offsets.back();
+  i_t n_vars    = fj_cpu.h_reverse_offsets.size() - 1;
+  i_t n_cstrs   = fj_cpu.h_offsets.size() - 1;
+
+  // Dynamic runtime features
+  i_t n_violated        = fj_cpu.violated_constraints.size();
+  double violated_ratio = (double)n_violated / n_cstrs;
+
+  // Compute improvement velocity
+  double improvement_velocity = 0.0;
+  if (fj_cpu.iterations > 0) {
+    improvement_velocity = (fj_cpu.prev_best_objective - fj_cpu.h_best_objective) / 1000.0;
+  }
+
+  // Compute per-iteration metrics
+  double nnz_per_move = 0.0;
+  i_t total_moves =
+    fj_cpu.n_lift_moves_window + fj_cpu.n_mtm_viol_moves_window + fj_cpu.n_mtm_sat_moves_window;
+  if (total_moves > 0) { nnz_per_move = (double)fj_cpu.nnz_processed_window / total_moves; }
+
+  double eval_intensity = (double)fj_cpu.n_constraint_evals_window / n_cstrs;
+
+  double loads_per_iter  = 0.0;
+  double stores_per_iter = 0.0;
+  double l1_miss         = -1.0;
+  double l2_miss         = -1.0;
+  double l3_miss         = -1.0;
+
+#ifdef __linux__
+  // Get PAPI metrics if available
+  if (fj_cpu.papi_initialized) {
+    std::vector<long long> values(fj_cpu.papi_events.size(), 0);
+    int retval = PAPI_read(fj_cpu.papi_event_set, values.data());
+    if (retval == PAPI_OK) {
+      std::vector<long long> all_values(8, -1);
+      int value_idx = 0;
+      for (size_t i = 0; i < fj_cpu.papi_events.size(); i++) {
+        if (fj_cpu.papi_events[i] != -1) { all_values[i] = values[value_idx++]; }
+      }
+
+      // Compute cache miss rates
+      if (all_values[0] > 0 && all_values[1] != -1) {
+        l1_miss = (double)all_values[1] / all_values[0] * 100.0;
+      }
+      if (all_values[2] > 0 && all_values[3] != -1) {
+        l2_miss = (double)all_values[3] / all_values[2] * 100.0;
+      }
+      if (all_values[4] > 0 && all_values[5] != -1) {
+        l3_miss = (double)all_values[5] / all_values[4] * 100.0;
+      }
+
+      // Loads and stores per iteration
+      if (all_values[6] != -1) { loads_per_iter = (double)all_values[6] / 1000.0; }
+      if (all_values[7] != -1) { stores_per_iter = (double)all_values[7] / 1000.0; }
+    }
+  }
+#endif
+
+  // Print everything on a single line using precomputed features
+  CUOPT_LOG_DEBUG(
+    "%sCPUFJ_FEATURES iter=%d tid=%d time_window=%.2f "
+    "n_vars=%d n_cstrs=%d n_bin=%d n_int=%d n_cont=%d total_nnz=%d "
+    "avg_var_deg=%.2f max_var_deg=%d avg_cstr_deg=%.2f max_cstr_deg=%d density=%.6f "
+    "n_viol=%d total_viol=%.4f curr_obj=%.4f best_obj=%.4f obj_weight=%.4f max_weight=%.4f "
+    "n_locmin=%d is_feas=%d iter_since_best=%d feas_found=%d "
+    "nnz_proc=%d n_lift=%d n_mtm_viol=%d n_mtm_sat=%d n_cstr_eval=%d n_var_updates=%d "
+    "L1_miss=%.2f L2_miss=%.2f L3_miss=%.2f loads_per_iter=%.0f stores_per_iter=%.0f "
+    "viol_ratio=%.4f improv_vel=%.6f nnz_per_move=%.2f eval_intensity=%.2f",
+    fj_cpu.log_prefix.c_str(),
+    fj_cpu.iterations,
+    tid,
+    time_window_ms,
+    n_vars,
+    n_cstrs,
+    fj_cpu.n_binary_vars,
+    fj_cpu.n_integer_vars,
+    fj_cpu.n_continuous_vars,
+    total_nnz,
+    fj_cpu.avg_var_degree,
+    fj_cpu.max_var_degree,
+    fj_cpu.avg_cstr_degree,
+    fj_cpu.max_cstr_degree,
+    fj_cpu.problem_density,
+    n_violated,
+    fj_cpu.total_violations,
+    fj_cpu.h_incumbent_objective,
+    fj_cpu.h_best_objective,
+    fj_cpu.h_objective_weight,
+    fj_cpu.max_weight,
+    fj_cpu.n_local_minima_window,
+    fj_cpu.feasible_found ? 1 : 0,
+    fj_cpu.iterations_since_best,
+    fj_cpu.feasible_found ? 1 : 0,
+    fj_cpu.nnz_processed_window,
+    fj_cpu.n_lift_moves_window,
+    fj_cpu.n_mtm_viol_moves_window,
+    fj_cpu.n_mtm_sat_moves_window,
+    fj_cpu.n_constraint_evals_window,
+    fj_cpu.n_variable_updates_window,
+    l1_miss,
+    l2_miss,
+    l3_miss,
+    loads_per_iter,
+    stores_per_iter,
+    violated_ratio,
+    improvement_velocity,
+    nnz_per_move,
+    eval_intensity);
+
+  // Reset window counters
+  fj_cpu.nnz_processed_window      = 0;
+  fj_cpu.n_lift_moves_window       = 0;
+  fj_cpu.n_mtm_viol_moves_window   = 0;
+  fj_cpu.n_mtm_sat_moves_window    = 0;
+  fj_cpu.n_constraint_evals_window = 0;
+  fj_cpu.n_variable_updates_window = 0;
+  fj_cpu.n_local_minima_window     = 0;
+  fj_cpu.prev_best_objective       = fj_cpu.h_best_objective;
 }
 
 template <typename i_t, typename f_t>
@@ -149,6 +473,8 @@ static inline std::pair<fj_staged_score_t, f_t> compute_score(fj_cpu_climber_t<i
   f_t bonus_robust_sum = 0;
 
   auto [offset_begin, offset_end] = fj_cpu.view.pb.reverse_range_for_var(var_idx);
+  fj_cpu.n_constraint_evals_window += (offset_end - offset_begin);
+
   for (i_t i = offset_begin; i < offset_end; i++) {
     auto cstr_idx     = fj_cpu.h_reverse_constraints[i];
     auto cstr_coeff   = fj_cpu.h_reverse_coefficients[i];
@@ -272,6 +598,10 @@ static void apply_move(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
   // Update the LHSs of all involved constraints.
   auto [offset_begin, offset_end] = fj_cpu.view.pb.reverse_range_for_var(var_idx);
 
+  // Track work metrics for regression model
+  fj_cpu.nnz_processed_window += (offset_end - offset_begin);
+  fj_cpu.n_variable_updates_window++;
+
   i_t previous_viol = fj_cpu.violated_constraints.size();
 
   for (auto i = offset_begin; i < offset_end; i++) {
@@ -343,8 +673,9 @@ static void apply_move(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
       cuopt_assert(fj_cpu.satisfied_constraints.size() == fj_cpu.view.pb.n_constraints, "");
       fj_cpu.h_best_objective =
         fj_cpu.h_incumbent_objective - fj_cpu.settings.parameters.breakthrough_move_epsilon;
-      fj_cpu.h_best_assignment = fj_cpu.h_assignment;
-      CUOPT_LOG_TRACE("%sCPUFJ: new best objective: %g\n",
+      fj_cpu.h_best_assignment     = fj_cpu.h_assignment;
+      fj_cpu.iterations_since_best = 0;  // Reset counter on improvement
+      CUOPT_LOG_TRACE("%sCPUFJ: new best objective: %g",
                       fj_cpu.log_prefix.c_str(),
                       fj_cpu.pb_ptr->get_user_obj_from_solver_obj(fj_cpu.h_best_objective));
       if (fj_cpu.improvement_callback) {
@@ -361,12 +692,12 @@ static void apply_move(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
     fj_cpu.h_tabu_lastinc[var_idx]     = fj_cpu.iterations;
     fj_cpu.h_tabu_nodec_until[var_idx] = fj_cpu.iterations + tabu_tenure;
     fj_cpu.h_tabu_noinc_until[var_idx] = fj_cpu.iterations + tabu_tenure / 2;
-    // CUOPT_LOG_TRACE("CPU: tabu nodec_until: %d\n", fj_cpu.h_tabu_nodec_until[var_idx]);
+    // CUOPT_LOG_TRACE("CPU: tabu nodec_until: %d", fj_cpu.h_tabu_nodec_until[var_idx]);
   } else {
     fj_cpu.h_tabu_lastdec[var_idx]     = fj_cpu.iterations;
     fj_cpu.h_tabu_noinc_until[var_idx] = fj_cpu.iterations + tabu_tenure;
     fj_cpu.h_tabu_nodec_until[var_idx] = fj_cpu.iterations + tabu_tenure / 2;
-    // CUOPT_LOG_TRACE("CPU: tabu noinc_until: %d\n", fj_cpu.h_tabu_noinc_until[var_idx]);
+    // CUOPT_LOG_TRACE("CPU: tabu noinc_until: %d", fj_cpu.h_tabu_noinc_until[var_idx]);
   }
 
   std::fill(fj_cpu.flip_move_computed.begin(), fj_cpu.flip_move_computed.end(), false);
@@ -855,6 +1186,9 @@ static void init_fj_cpu(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
   fj_cpu.iter_mtm_vars.reserve(fj_cpu.view.pb.n_variables);
 
   recompute_lhs(fj_cpu);
+
+  // Precompute static problem features for regression model
+  precompute_problem_features(fj_cpu);
 }
 
 template <typename i_t, typename f_t>
@@ -932,19 +1266,30 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
   auto loop_start      = std::chrono::high_resolution_clock::now();
   auto time_limit      = std::chrono::milliseconds((int)(in_time_limit * 1000));
   auto loop_time_start = std::chrono::high_resolution_clock::now();
+
+#ifdef __linux__
+  // Initialize PAPI for performance monitoring
+  initialize_papi(fj_cpu);
+#endif
+
+  // Initialize feature tracking
+  fj_cpu.last_feature_log_time = loop_start;
+  fj_cpu.prev_best_objective   = fj_cpu.h_best_objective;
+  fj_cpu.iterations_since_best = 0;
+
   while (!fj_cpu.halted) {
     // Check if 5 seconds have passed
     auto now = std::chrono::high_resolution_clock::now();
     if (in_time_limit < std::numeric_limits<f_t>::infinity() &&
         now - loop_time_start > time_limit) {
-      CUOPT_LOG_TRACE("%sTime limit of %.4f seconds reached, breaking loop at iteration %d\n",
+      CUOPT_LOG_TRACE("%sTime limit of %.4f seconds reached, breaking loop at iteration %d",
                       fj_cpu.log_prefix.c_str(),
                       time_limit.count() / 1000.f,
                       fj_cpu.iterations);
       break;
     }
     if (fj_cpu.iterations >= fj_cpu.settings.iteration_limit) {
-      CUOPT_LOG_TRACE("%sIteration limit of %d reached, breaking loop at iteration %d\n",
+      CUOPT_LOG_TRACE("%sIteration limit of %d reached, breaking loop at iteration %d",
                       fj_cpu.log_prefix.c_str(),
                       fj_cpu.settings.iteration_limit,
                       fj_cpu.iterations);
@@ -963,15 +1308,24 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
 
     fj_move_t move          = fj_move_t{-1, 0};
     fj_staged_score_t score = fj_staged_score_t::invalid();
+    bool is_lift            = false;
+    bool is_mtm_viol        = false;
+    bool is_mtm_sat         = false;
+
     // Perform lift moves
-    if (fj_cpu.violated_constraints.empty()) { thrust::tie(move, score) = find_lift_move(fj_cpu); }
+    if (fj_cpu.violated_constraints.empty()) {
+      thrust::tie(move, score) = find_lift_move(fj_cpu);
+      if (score > fj_staged_score_t::zero()) is_lift = true;
+    }
     // Regular MTM
     if (!(score > fj_staged_score_t::zero())) {
       thrust::tie(move, score) = find_mtm_move_viol(fj_cpu, fj_cpu.mtm_viol_samples);
+      if (score > fj_staged_score_t::zero()) is_mtm_viol = true;
     }
     // try with MTM in satisfied constraints
     if (fj_cpu.feasible_found && !(score > fj_staged_score_t::zero())) {
       thrust::tie(move, score) = find_mtm_move_sat(fj_cpu, fj_cpu.mtm_sat_samples);
+      if (score > fj_staged_score_t::zero()) is_mtm_sat = true;
     }
     // if we're in the feasible region but haven't found improvements in the last n iterations,
     // perturb
@@ -984,6 +1338,10 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
 
     if (score > fj_staged_score_t::zero() && !should_perturb) {
       apply_move(fj_cpu, move.var_idx, move.value, false);
+      // Track move types
+      if (is_lift) fj_cpu.n_lift_moves_window++;
+      if (is_mtm_viol) fj_cpu.n_mtm_viol_moves_window++;
+      if (is_mtm_sat) fj_cpu.n_mtm_sat_moves_window++;
     } else {
       // Local Min
       update_weights(fj_cpu);
@@ -998,6 +1356,7 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
       f_t delta   = move.var_idx >= 0 ? move.value : 0;
       apply_move(fj_cpu, var_idx, delta, true);
       ++local_mins;
+      ++fj_cpu.n_local_minima_window;
     }
 
     // number of violated constraints is usually small (<100). recomputing from all LHSs is cheap
@@ -1010,7 +1369,7 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
       CUOPT_LOG_TRACE(
         "%sCPUFJ iteration: %d/%d, local mins: %d, best_objective: %g, viol: %zu, obj weight %g, "
         "maxw "
-        "%g\n",
+        "%g",
         fj_cpu.log_prefix.c_str(),
         fj_cpu.iterations,
         fj_cpu.settings.iteration_limit != std::numeric_limits<i_t>::max()
@@ -1035,21 +1394,46 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
       print_timing_stats(fj_cpu);
     }
 #endif
+
+    // Collect and print PAPI metrics and regression features every 1000 iterations
+    if (fj_cpu.iterations % 1000 == 0 && fj_cpu.iterations > 0) {
+      auto now              = std::chrono::high_resolution_clock::now();
+      double time_window_ms = std::chrono::duration_cast<std::chrono::duration<double>>(
+                                now - fj_cpu.last_feature_log_time)
+                                .count() *
+                              1000.0;
+      double total_time_ms =
+        std::chrono::duration_cast<std::chrono::duration<double>>(now - loop_start).count() *
+        1000.0;
+
+#ifdef __linux__
+      collect_and_print_papi_metrics(fj_cpu);
+#endif
+      log_regression_features(fj_cpu, time_window_ms, total_time_ms);
+      fj_cpu.last_feature_log_time = now;
+    }
+
     cuopt_func_call(sanity_checks(fj_cpu));
     fj_cpu.iterations++;
+    fj_cpu.iterations_since_best++;
   }
   auto loop_end = std::chrono::high_resolution_clock::now();
   double total_time =
     std::chrono::duration_cast<std::chrono::duration<double>>(loop_end - loop_start).count();
   double avg_time_per_iter = total_time / fj_cpu.iterations;
-  CUOPT_LOG_TRACE("%sCPUFJ Average time per iteration: %.8fms\n",
+  CUOPT_LOG_TRACE("%sCPUFJ Average time per iteration: %.8fms",
                   fj_cpu.log_prefix.c_str(),
                   avg_time_per_iter * 1000.0);
 
 #if CPUFJ_TIMING_TRACE
   // Print final timing statistics
-  CUOPT_LOG_TRACE("\n=== Final Timing Statistics ===\n");
+  CUOPT_LOG_TRACE("=== Final Timing Statistics ===");
   print_timing_stats(fj_cpu);
+#endif
+
+#ifdef __linux__
+  // Cleanup PAPI
+  cleanup_papi(fj_cpu);
 #endif
 
   return fj_cpu.feasible_found;
