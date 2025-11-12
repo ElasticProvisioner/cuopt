@@ -28,20 +28,22 @@ HDI f_t fj_kahan_babushka_neumaier_sum(Iterator begin, Iterator end)
 }
 
 // Returns the current slack, and the variable delta that would nullify this slack ("tighten" it)
-template <typename i_t, typename f_t>
+template <typename i_t, typename f_t, typename ArrayType>
 HDI thrust::tuple<f_t, f_t> get_mtm_for_bound(
   const typename fj_t<i_t, f_t>::climber_data_t::view_t& fj,
   i_t var_idx,
   i_t cstr_idx,
   f_t cstr_coeff,
   f_t bound,
-  f_t sign)
+  f_t sign,
+  const ArrayType& assignment,
+  const ArrayType& lhs_vector)
 {
   f_t delta_ij = 0;
   f_t slack    = 0;
-  f_t old_val  = fj.incumbent_assignment[var_idx];
+  f_t old_val  = assignment[var_idx];
 
-  f_t lhs = fj.incumbent_lhs[cstr_idx] * sign;
+  f_t lhs = lhs_vector[cstr_idx] * sign;
   f_t rhs = bound * sign;
   slack   = rhs - lhs;  // bound might be infinite. let the caller handle this case
 
@@ -50,22 +52,24 @@ HDI thrust::tuple<f_t, f_t> get_mtm_for_bound(
   return {delta_ij, slack};
 }
 
-template <typename i_t, typename f_t, MTMMoveType move_type>
+template <typename i_t, typename f_t, MTMMoveType move_type, typename ArrayType>
 HDI thrust::tuple<f_t, f_t, f_t, f_t> get_mtm_for_constraint(
   const typename fj_t<i_t, f_t>::climber_data_t::view_t& fj,
   i_t var_idx,
   i_t cstr_idx,
   f_t cstr_coeff,
   f_t c_lb,
-  f_t c_ub)
+  f_t c_ub,
+  const ArrayType& assignment,
+  const ArrayType& lhs_vector)
 {
   f_t sign     = -1;
   f_t delta_ij = 0;
   f_t slack    = 0;
 
-  f_t cstr_tolerance = fj.get_corrected_tolerance(cstr_idx);
+  f_t cstr_tolerance = fj.get_corrected_tolerance(cstr_idx, c_lb, c_ub);
 
-  f_t old_val = fj.incumbent_assignment[var_idx];
+  f_t old_val = assignment[var_idx];
 
   // process each bound as two separate constraints
   f_t bounds[2] = {c_lb, c_ub};
@@ -77,7 +81,7 @@ HDI thrust::tuple<f_t, f_t, f_t, f_t> get_mtm_for_constraint(
     // factor to correct the lhs/rhs to turn a lb <= lhs <= ub constraint into
     // two virtual constraints lhs <= ub and -lhs <= -lb
     sign    = bound_idx == 0 ? -1 : 1;
-    f_t lhs = fj.incumbent_lhs[cstr_idx] * sign;
+    f_t lhs = lhs_vector[cstr_idx] * sign;
     f_t rhs = bounds[bound_idx] * sign;
     slack   = rhs - lhs;
 

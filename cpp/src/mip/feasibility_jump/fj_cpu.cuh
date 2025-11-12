@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <mip/feasibility_jump/feasibility_jump.cuh>
+#include <utilities/memory_instrumentation.hpp>
 
 namespace cuopt::linear_programming::detail {
 
@@ -19,7 +20,36 @@ namespace cuopt::linear_programming::detail {
 // Maintaining a single source of truth for all members would be nice
 template <typename i_t, typename f_t>
 struct fj_cpu_climber_t {
-  fj_cpu_climber_t()                                                             = default;
+  fj_cpu_climber_t()
+  {
+    // Initialize memory manifold with all ins_vector members
+    memory_manifold = instrumentation_manifold_t{h_reverse_coefficients,
+                                                 h_reverse_constraints,
+                                                 h_reverse_offsets,
+                                                 h_coefficients,
+                                                 h_offsets,
+                                                 h_variables,
+                                                 h_obj_coeffs,
+                                                 h_var_bounds,
+                                                 h_cstr_lb,
+                                                 h_cstr_ub,
+                                                 h_var_types,
+                                                 h_is_binary_variable,
+                                                 h_objective_vars,
+                                                 h_binary_indices,
+                                                 h_tabu_nodec_until,
+                                                 h_tabu_noinc_until,
+                                                 h_tabu_lastdec,
+                                                 h_tabu_lastinc,
+                                                 h_lhs,
+                                                 h_lhs_sumcomp,
+                                                 h_cstr_left_weights,
+                                                 h_cstr_right_weights,
+                                                 h_assignment,
+                                                 h_best_assignment,
+                                                 cached_cstr_bounds,
+                                                 iter_mtm_vars};
+  }
   fj_cpu_climber_t(const fj_cpu_climber_t<i_t, f_t>& other)                      = delete;
   fj_cpu_climber_t<i_t, f_t>& operator=(const fj_cpu_climber_t<i_t, f_t>& other) = delete;
 
@@ -30,33 +60,33 @@ struct fj_cpu_climber_t {
   fj_settings_t settings;
   typename fj_t<i_t, f_t>::climber_data_t::view_t view;
   // Host copies of device data as struct members
-  std::vector<f_t> h_reverse_coefficients;
-  std::vector<i_t> h_reverse_constraints;
-  std::vector<i_t> h_reverse_offsets;
-  std::vector<f_t> h_coefficients;
-  std::vector<i_t> h_offsets;
-  std::vector<i_t> h_variables;
-  std::vector<f_t> h_obj_coeffs;
-  std::vector<typename type_2<f_t>::type> h_var_bounds;
-  std::vector<f_t> h_cstr_lb;
-  std::vector<f_t> h_cstr_ub;
-  std::vector<var_t> h_var_types;
-  std::vector<i_t> h_is_binary_variable;
-  std::vector<i_t> h_objective_vars;
-  std::vector<i_t> h_binary_indices;
+  ins_vector<f_t> h_reverse_coefficients;
+  ins_vector<i_t> h_reverse_constraints;
+  ins_vector<i_t> h_reverse_offsets;
+  ins_vector<f_t> h_coefficients;
+  ins_vector<i_t> h_offsets;
+  ins_vector<i_t> h_variables;
+  ins_vector<f_t> h_obj_coeffs;
+  ins_vector<typename type_2<f_t>::type> h_var_bounds;
+  ins_vector<f_t> h_cstr_lb;
+  ins_vector<f_t> h_cstr_ub;
+  ins_vector<var_t> h_var_types;
+  ins_vector<i_t> h_is_binary_variable;
+  ins_vector<i_t> h_objective_vars;
+  ins_vector<i_t> h_binary_indices;
 
-  std::vector<i_t> h_tabu_nodec_until;
-  std::vector<i_t> h_tabu_noinc_until;
-  std::vector<i_t> h_tabu_lastdec;
-  std::vector<i_t> h_tabu_lastinc;
+  ins_vector<i_t> h_tabu_nodec_until;
+  ins_vector<i_t> h_tabu_noinc_until;
+  ins_vector<i_t> h_tabu_lastdec;
+  ins_vector<i_t> h_tabu_lastinc;
 
-  std::vector<f_t> h_lhs;
-  std::vector<f_t> h_lhs_sumcomp;
-  std::vector<f_t> h_cstr_left_weights;
-  std::vector<f_t> h_cstr_right_weights;
+  ins_vector<f_t> h_lhs;
+  ins_vector<f_t> h_lhs_sumcomp;
+  ins_vector<f_t> h_cstr_left_weights;
+  ins_vector<f_t> h_cstr_right_weights;
   f_t max_weight;
-  std::vector<f_t> h_assignment;
-  std::vector<f_t> h_best_assignment;
+  ins_vector<f_t> h_assignment;
+  ins_vector<f_t> h_best_assignment;
   f_t h_objective_weight;
   f_t h_incumbent_objective;
   f_t h_best_objective;
@@ -84,16 +114,16 @@ struct fj_cpu_climber_t {
 
   // vector<bool> is actually likely beneficial here since we're memory bound
   std::vector<bool> flip_move_computed;
-  ;
+
   // CSR nnz offset -> (delta, score)
   std::vector<std::pair<f_t, fj_staged_score_t>> cached_mtm_moves;
 
   // CSC (transposed!) nnz-offset-indexed constraint bounds (lb, ub)
   // std::pair<f_t, f_t> better compile down to 16 bytes!! GCC do your job!
-  std::vector<std::pair<f_t, f_t>> cached_cstr_bounds;
+  ins_vector<std::pair<f_t, f_t>> cached_cstr_bounds;
 
   std::vector<bool> var_bitmap;
-  std::vector<i_t> iter_mtm_vars;
+  ins_vector<i_t> iter_mtm_vars;
 
   i_t mtm_viol_samples{25};
   i_t mtm_sat_samples{15};
@@ -142,6 +172,9 @@ struct fj_cpu_climber_t {
   double var_degree_cv{0.0};
   double cstr_degree_cv{0.0};
   double problem_density{0.0};
+
+  // Memory instrumentation manifold
+  instrumentation_manifold_t memory_manifold;
 };
 
 }  // namespace cuopt::linear_programming::detail

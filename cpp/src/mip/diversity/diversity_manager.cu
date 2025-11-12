@@ -355,7 +355,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   population.allocate_solutions();
   ls_cpufj_raii_guard_t ls_cpufj_raii_guard(ls);  // RAII to stop cpufj threads on solve stop
   if (!context.settings.deterministic) {
-#if 0
+#if 1
     ls.start_cpufj_scratch_threads(population);
     std::this_thread::sleep_for(std::chrono::seconds(30));
     ls.stop_cpufj_scratch_threads();

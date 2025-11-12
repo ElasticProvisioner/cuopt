@@ -5,6 +5,28 @@
  */
 /* clang-format on */
 
+/*
+ * MEMORY OPERATION ANNOTATIONS:
+ *
+ * This file contains detailed comments marking all memory operations (array reads and writes)
+ * within loops for the CPU Feasibility Jump (CPUFJ) algorithm. These annotations are intended
+ * to help estimate the memory bandwidth requirements and runtime of this memory-bound workload.
+ *
+ * Key annotations:
+ * - "MEMORY OPS:" marks the start of a loop that performs memory operations
+ * - "ARRAY READ:" marks array read operations with array name and count per iteration
+ * - "ARRAY WRITE:" marks array write operations with array name and count per iteration
+ * - "CRITICAL LOOP" or "HOTTEST LOOP" marks the most frequently executed loops
+ * - "Total per iteration:" summarizes memory ops per loop iteration
+ *
+ * Important notation:
+ * - n_vars: number of variables
+ * - n_cstrs: number of constraints
+ * - avg_var_degree: average number of constraints per variable
+ * - avg_cstr_degree: average number of variables per constraint
+ * - total_nnz: total non-zeros in constraint matrix
+ */
+
 #include <mip/mip_constants.hpp>
 
 #include "feasibility_jump.cuh"
@@ -258,12 +280,16 @@ static void precompute_problem_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
   // Count variable types - use host vectors
   fj_cpu.n_binary_vars  = 0;
   fj_cpu.n_integer_vars = 0;
+  // MEMORY OPS: Loop over all variables (n_vars iterations)
   for (i_t i = 0; i < (i_t)fj_cpu.h_is_binary_variable.size(); i++) {
+    // ARRAY READ: h_is_binary_variable[i] - 1 read per iteration
     if (fj_cpu.h_is_binary_variable[i]) {
       fj_cpu.n_binary_vars++;
     } else if (fj_cpu.h_var_types[i] == var_t::INTEGER) {
+      // ARRAY READ: h_var_types[i] - 1 read per iteration (conditional)
       fj_cpu.n_integer_vars++;
     }
+    // Total per iteration: 2 array reads
   }
 
   i_t total_nnz = fj_cpu.h_reverse_offsets.back();
@@ -275,17 +301,24 @@ static void precompute_problem_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
   // Compute variable degree statistics (max, cv)
   fj_cpu.max_var_degree = 0;
   std::vector<i_t> var_degrees(n_vars);
+  // MEMORY OPS: Loop over all variables (n_vars iterations)
   for (i_t i = 0; i < n_vars; i++) {
-    i_t degree            = fj_cpu.h_reverse_offsets[i + 1] - fj_cpu.h_reverse_offsets[i];
+    // ARRAY READ: h_reverse_offsets[i] and h_reverse_offsets[i+1] - 2 reads per iteration
+    i_t degree = fj_cpu.h_reverse_offsets[i + 1] - fj_cpu.h_reverse_offsets[i];
+    // ARRAY WRITE: var_degrees[i] - 1 write per iteration
     var_degrees[i]        = degree;
     fj_cpu.max_var_degree = std::max(fj_cpu.max_var_degree, degree);
+    // Total per iteration: 2 reads + 1 write = 3 memory ops
   }
 
   // Compute variable degree coefficient of variation
   double var_deg_variance = 0.0;
+  // MEMORY OPS: Loop over all variables (n_vars iterations)
   for (i_t i = 0; i < n_vars; i++) {
+    // ARRAY READ: var_degrees[i] - 1 read per iteration
     double diff = var_degrees[i] - fj_cpu.avg_var_degree;
     var_deg_variance += diff * diff;
+    // Total per iteration: 1 read
   }
   var_deg_variance /= n_vars;
   double var_degree_std = std::sqrt(var_deg_variance);
@@ -296,17 +329,24 @@ static void precompute_problem_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
   // Compute constraint degree statistics (max, cv)
   fj_cpu.max_cstr_degree = 0;
   std::vector<i_t> cstr_degrees(n_cstrs);
+  // MEMORY OPS: Loop over all constraints (n_cstrs iterations)
   for (i_t i = 0; i < n_cstrs; i++) {
-    i_t degree             = fj_cpu.h_offsets[i + 1] - fj_cpu.h_offsets[i];
+    // ARRAY READ: h_offsets[i] and h_offsets[i+1] - 2 reads per iteration
+    i_t degree = fj_cpu.h_offsets[i + 1] - fj_cpu.h_offsets[i];
+    // ARRAY WRITE: cstr_degrees[i] - 1 write per iteration
     cstr_degrees[i]        = degree;
     fj_cpu.max_cstr_degree = std::max(fj_cpu.max_cstr_degree, degree);
+    // Total per iteration: 2 reads + 1 write = 3 memory ops
   }
 
   // Compute constraint degree coefficient of variation
   double cstr_deg_variance = 0.0;
+  // MEMORY OPS: Loop over all constraints (n_cstrs iterations)
   for (i_t i = 0; i < n_cstrs; i++) {
+    // ARRAY READ: cstr_degrees[i] - 1 read per iteration
     double diff = cstr_degrees[i] - fj_cpu.avg_cstr_degree;
     cstr_deg_variance += diff * diff;
+    // Total per iteration: 1 read
   }
   cstr_deg_variance /= n_cstrs;
   double cstr_degree_std = std::sqrt(cstr_deg_variance);
@@ -319,7 +359,9 @@ static void precompute_problem_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
 template <typename i_t, typename f_t>
 static void log_regression_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
                                     double time_window_ms,
-                                    double total_time_ms)
+                                    double total_time_ms,
+                                    size_t mem_loads_bytes,
+                                    size_t mem_stores_bytes)
 {
   i_t total_nnz = fj_cpu.h_reverse_offsets.back();
   i_t n_vars    = fj_cpu.h_reverse_offsets.size() - 1;
@@ -394,6 +436,12 @@ static void log_regression_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
   }
 #endif
 
+  // Compute memory statistics
+  double mem_loads_mb             = mem_loads_bytes / 1e6;
+  double mem_stores_mb            = mem_stores_bytes / 1e6;
+  double mem_total_mb             = (mem_loads_bytes + mem_stores_bytes) / 1e6;
+  double mem_bandwidth_gb_per_sec = (mem_total_mb / 1000.0) / (time_window_ms / 1000.0);
+
   // Print everything on a single line using precomputed features
   CUOPT_LOG_DEBUG(
     "%sCPUFJ_FEATURES iter=%d time_window=%.2f "
@@ -408,7 +456,8 @@ static void log_regression_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
     "cstr_reuse=%.2f var_reuse=%.2f working_set_kb=%.1f "
     "cstr_coverage=%.4f var_coverage=%.4f "
     "L1_miss=%.2f L3_miss=%.2f loads_per_iter=%.0f stores_per_iter=%.0f "
-    "viol_ratio=%.4f nnz_per_move=%.2f eval_intensity=%.2f",
+    "viol_ratio=%.4f nnz_per_move=%.2f eval_intensity=%.2f "
+    "mem_loads_mb=%.3f mem_stores_mb=%.3f mem_total_mb=%.3f mem_bandwidth_gb_s=%.3f",
     fj_cpu.log_prefix.c_str(),
     fj_cpu.iterations,
     time_window_ms,
@@ -449,7 +498,11 @@ static void log_regression_features(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
     stores_per_iter,
     violated_ratio,
     nnz_per_move,
-    eval_intensity);
+    eval_intensity,
+    mem_loads_mb,
+    mem_stores_mb,
+    mem_total_mb,
+    mem_bandwidth_gb_per_sec);
 
   // Reset window counters
   fj_cpu.nnz_processed_window      = 0;
@@ -483,16 +536,16 @@ static inline bool tabu_check(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
 }
 
 template <typename i_t, typename f_t>
-static bool check_variable_feasibility(const typename fj_t<i_t, f_t>::climber_data_t::view_t& fj,
+static bool check_variable_feasibility(const fj_cpu_climber_t<i_t, f_t>& fj_cpu,
                                        bool check_integer = true)
 {
-  for (i_t var_idx = 0; var_idx < fj.pb.n_variables; var_idx += 1) {
-    auto val      = fj.incumbent_assignment[var_idx];
-    bool feasible = fj.pb.check_variable_within_bounds(var_idx, val);
+  for (i_t var_idx = 0; var_idx < fj_cpu.view.pb.n_variables; var_idx += 1) {
+    auto val      = fj_cpu.h_assignment[var_idx];
+    bool feasible = fj_cpu.view.pb.check_variable_within_bounds(var_idx, val);
 
     if (!feasible) return false;
-    if (check_integer && fj.pb.is_integer_var(var_idx) &&
-        !fj.pb.is_integer(fj.incumbent_assignment[var_idx]))
+    if (check_integer && fj_cpu.view.pb.is_integer_var(var_idx) &&
+        !fj_cpu.view.pb.is_integer(fj_cpu.h_assignment[var_idx]))
       return false;
   }
   return true;
@@ -505,6 +558,7 @@ static inline std::pair<fj_staged_score_t, f_t> compute_score(fj_cpu_climber_t<i
 {
   // timing_raii_t<i_t, f_t> timer(fj_cpu.compute_score_times);
 
+  // ARRAY READ: h_obj_coeffs[var_idx] - 1 read
   f_t obj_diff = fj_cpu.h_obj_coeffs[var_idx] * delta;
 
   cuopt_assert(isfinite(delta), "");
@@ -517,19 +571,29 @@ static inline std::pair<fj_staged_score_t, f_t> compute_score(fj_cpu_climber_t<i
   auto [offset_begin, offset_end] = fj_cpu.view.pb.reverse_range_for_var(var_idx);
   fj_cpu.nnz_processed_window += (offset_end - offset_begin);
 
+  // MEMORY OPS: Loop over all constraints involving this variable (avg_var_degree iterations)
+  // This is one of the HOTTEST loops in the code - called for every candidate move evaluation
   for (i_t i = offset_begin; i < offset_end; i++) {
+    // ARRAY READ: h_reverse_constraints[i] - 1 read per iteration
     auto cstr_idx = fj_cpu.h_reverse_constraints[i];
     fj_cpu.unique_cstrs_accessed_window.insert(cstr_idx);
-    auto cstr_coeff   = fj_cpu.h_reverse_coefficients[i];
-    auto [c_lb, c_ub] = fj_cpu.cached_cstr_bounds[i];
+    // ARRAY READ: h_reverse_coefficients[i] - 1 read per iteration
+    auto cstr_coeff = fj_cpu.h_reverse_coefficients[i];
+    // ARRAY READ: cached_cstr_bounds[i] - 1 read per iteration (reads 2 f_t values)
+    auto [c_lb, c_ub] = fj_cpu.cached_cstr_bounds[i].get();
 
     cuopt_assert(c_lb <= c_ub, "invalid bounds");
 
+    // ARRAY READ: h_lhs[cstr_idx] - 1 read per iteration (indirect indexing)
+    // feas_score_constraint also reads from h_cstr_left_weights[cstr_idx] and
+    // h_cstr_right_weights[cstr_idx]
     auto [cstr_base_feas, cstr_bonus_robust] = feas_score_constraint<i_t, f_t>(
       fj_cpu.view, var_idx, delta, cstr_idx, cstr_coeff, c_lb, c_ub, fj_cpu.h_lhs[cstr_idx]);
 
     base_feas_sum += cstr_base_feas;
     bonus_robust_sum += cstr_bonus_robust;
+    // Total per iteration: ~6-7 array reads (h_reverse_constraints, h_reverse_coefficients,
+    // cached_cstr_bounds (2 values), h_lhs, h_cstr_left_weights, h_cstr_right_weights)
   }
 
   f_t base_obj = 0;
@@ -557,15 +621,21 @@ static inline std::pair<fj_staged_score_t, f_t> compute_score(fj_cpu_climber_t<i
 template <typename i_t, typename f_t>
 static void smooth_weights(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
 {
+  // MEMORY OPS: Loop over all constraints (n_cstrs iterations)
   for (i_t cstr_idx = 0; cstr_idx < fj_cpu.view.pb.n_constraints; cstr_idx++) {
     // consider only satisfied constraints
     if (fj_cpu.violated_constraints.count(cstr_idx)) continue;
 
+    // ARRAY READ: h_cstr_left_weights[cstr_idx] - 1 read per iteration (if not violated)
     f_t weight_l = max((f_t)0, fj_cpu.h_cstr_left_weights[cstr_idx] - 1);
+    // ARRAY READ: h_cstr_right_weights[cstr_idx] - 1 read per iteration (if not violated)
     f_t weight_r = max((f_t)0, fj_cpu.h_cstr_right_weights[cstr_idx] - 1);
 
-    fj_cpu.h_cstr_left_weights[cstr_idx]  = weight_l;
+    // ARRAY WRITE: h_cstr_left_weights[cstr_idx] - 1 write per iteration (if not violated)
+    fj_cpu.h_cstr_left_weights[cstr_idx] = weight_l;
+    // ARRAY WRITE: h_cstr_right_weights[cstr_idx] - 1 write per iteration (if not violated)
     fj_cpu.h_cstr_right_weights[cstr_idx] = weight_r;
+    // Total per iteration (for satisfied constraints): 2 reads + 2 writes = 4 memory ops
   }
 
   if (fj_cpu.h_objective_weight > 0 && fj_cpu.h_incumbent_objective >= fj_cpu.h_best_objective) {
@@ -586,18 +656,24 @@ static void update_weights(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
     return;
   }
 
+  // MEMORY OPS: Loop over violated constraints (typically small: <100 iterations)
   for (auto cstr_idx : fj_cpu.violated_constraints) {
+    // ARRAY READ: h_lhs[cstr_idx] - 1 read per iteration
     f_t curr_incumbent_lhs = fj_cpu.h_lhs[cstr_idx];
+    // ARRAY READ: h_cstr_lb[cstr_idx] - 1 read per iteration
     f_t curr_lower_excess =
       fj_cpu.view.lower_excess_score(cstr_idx, curr_incumbent_lhs, fj_cpu.h_cstr_lb[cstr_idx]);
+    // ARRAY READ: h_cstr_ub[cstr_idx] - 1 read per iteration
     f_t curr_upper_excess =
       fj_cpu.view.upper_excess_score(cstr_idx, curr_incumbent_lhs, fj_cpu.h_cstr_ub[cstr_idx]);
     f_t curr_excess_score = curr_lower_excess + curr_upper_excess;
 
     f_t old_weight;
     if (curr_lower_excess < 0.) {
+      // ARRAY READ: h_cstr_left_weights[cstr_idx] - 1 read per iteration (conditional)
       old_weight = fj_cpu.h_cstr_left_weights[cstr_idx];
     } else {
+      // ARRAY READ: h_cstr_right_weights[cstr_idx] - 1 read per iteration (conditional)
       old_weight = fj_cpu.h_cstr_right_weights[cstr_idx];
     }
 
@@ -610,18 +686,25 @@ static void update_weights(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
     new_weight     = round(new_weight);
 
     if (curr_lower_excess < 0.) {
+      // ARRAY WRITE: h_cstr_left_weights[cstr_idx] - 1 write per iteration (conditional)
       fj_cpu.h_cstr_left_weights[cstr_idx] = new_weight;
       fj_cpu.max_weight                    = max(fj_cpu.max_weight, new_weight);
     } else {
+      // ARRAY WRITE: h_cstr_right_weights[cstr_idx] - 1 write per iteration (conditional)
       fj_cpu.h_cstr_right_weights[cstr_idx] = new_weight;
       fj_cpu.max_weight                     = max(fj_cpu.max_weight, new_weight);
     }
 
     // Invalidate related cached move scores
     auto [relvar_offset_begin, relvar_offset_end] = fj_cpu.view.pb.range_for_constraint(cstr_idx);
+    // MEMORY OPS: Inner loop over variables in this constraint (avg_cstr_degree iterations per
+    // outer iteration)
     for (auto i = relvar_offset_begin; i < relvar_offset_end; i++) {
+      // ARRAY WRITE: cached_mtm_moves[i].first - 1 write per inner iteration
       fj_cpu.cached_mtm_moves[i].first = 0;
+      // Total per inner iteration: 1 write
     }
+    // Total per outer iteration: 4 reads + 1 write + (avg_cstr_degree writes in inner loop)
   }
 
   if (fj_cpu.violated_constraints.empty()) { fj_cpu.h_objective_weight += 1; }
@@ -648,27 +731,38 @@ static void apply_move(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
 
   i_t previous_viol = fj_cpu.violated_constraints.size();
 
+  // MEMORY OPS: CRITICAL LOOP - Loop over all constraints involving this variable (avg_var_degree
+  // iterations) This loop is called ONCE PER ITERATION and updates constraint LHS values
   for (auto i = offset_begin; i < offset_end; i++) {
     cuopt_assert(i < (i_t)fj_cpu.h_reverse_constraints.size(), "");
-    auto [c_lb, c_ub] = fj_cpu.cached_cstr_bounds[i];
+    // ARRAY READ: cached_cstr_bounds[i] - 1 read per iteration (reads 2 f_t values)
+    auto [c_lb, c_ub] = fj_cpu.cached_cstr_bounds[i].get();
 
+    // ARRAY READ: h_reverse_constraints[i] - 1 read per iteration
     auto cstr_idx = fj_cpu.h_reverse_constraints[i];
     fj_cpu.unique_cstrs_accessed_window.insert(cstr_idx);
+    // ARRAY READ: h_reverse_coefficients[i] - 1 read per iteration
     auto cstr_coeff = fj_cpu.h_reverse_coefficients[i];
 
+    // ARRAY READ: h_lhs[cstr_idx] - 1 read per iteration (indirect indexing)
     f_t old_lhs = fj_cpu.h_lhs[cstr_idx];
     // Kahan compensated summation
-    f_t y                          = cstr_coeff * delta - fj_cpu.h_lhs_sumcomp[cstr_idx];
-    f_t t                          = old_lhs + y;
+    // ARRAY READ: h_lhs_sumcomp[cstr_idx] - 1 read per iteration
+    f_t y = cstr_coeff * delta - fj_cpu.h_lhs_sumcomp[cstr_idx];
+    f_t t = old_lhs + y;
+    // ARRAY WRITE: h_lhs_sumcomp[cstr_idx] - 1 write per iteration
     fj_cpu.h_lhs_sumcomp[cstr_idx] = (t - old_lhs) - y;
-    fj_cpu.h_lhs[cstr_idx]         = t;
-    f_t new_lhs                    = fj_cpu.h_lhs[cstr_idx];
-    f_t old_cost                   = fj_cpu.view.excess_score(cstr_idx, old_lhs, c_lb, c_ub);
-    f_t new_cost                   = fj_cpu.view.excess_score(cstr_idx, new_lhs, c_lb, c_ub);
-    f_t cstr_tolerance             = fj_cpu.view.get_corrected_tolerance(cstr_idx, c_lb, c_ub);
+    // ARRAY WRITE: h_lhs[cstr_idx] - 1 write per iteration
+    fj_cpu.h_lhs[cstr_idx] = t;
+    // ARRAY READ: h_lhs[cstr_idx] - 1 read per iteration (just written)
+    f_t new_lhs        = fj_cpu.h_lhs[cstr_idx];
+    f_t old_cost       = fj_cpu.view.excess_score(cstr_idx, old_lhs, c_lb, c_ub);
+    f_t new_cost       = fj_cpu.view.excess_score(cstr_idx, new_lhs, c_lb, c_ub);
+    f_t cstr_tolerance = fj_cpu.view.get_corrected_tolerance(cstr_idx, c_lb, c_ub);
 
     // trigger early lhs recomputation if the sumcomp term gets too large
     // to avoid large numerical errors
+    // ARRAY READ: h_lhs_sumcomp[cstr_idx] - 1 read per iteration
     if (fabs(fj_cpu.h_lhs_sumcomp[cstr_idx]) > BIGVAL_THRESHOLD)
       fj_cpu.trigger_early_lhs_recomputation = true;
 
@@ -687,9 +781,14 @@ static void apply_move(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
 
     // Invalidate related cached move scores
     auto [relvar_offset_begin, relvar_offset_end] = fj_cpu.view.pb.range_for_constraint(cstr_idx);
+    // MEMORY OPS: Inner loop over variables in this constraint (avg_cstr_degree iterations per
+    // outer iteration)
     for (auto i = relvar_offset_begin; i < relvar_offset_end; i++) {
+      // ARRAY WRITE: cached_mtm_moves[i].first - 1 write per inner iteration
       fj_cpu.cached_mtm_moves[i].first = 0;
+      // Total per inner iteration: 1 write
     }
+    // Total per outer iteration: 7 reads + 3 writes + (avg_cstr_degree writes in inner loop)
   }
 
   if (previous_viol > 0 && fj_cpu.violated_constraints.empty()) {
@@ -697,27 +796,31 @@ static void apply_move(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
   }
 
   // update the assignment and objective proper
+  // ARRAY READ: h_assignment[var_idx] - 1 read
   f_t new_val = fj_cpu.h_assignment[var_idx] + delta;
   if (fj_cpu.view.pb.is_integer_var(var_idx)) {
     cuopt_assert(fj_cpu.view.pb.integer_equal(new_val, round(new_val)), "new_val is not integer");
     new_val = round(new_val);
   }
+  // ARRAY WRITE: h_assignment[var_idx] - 1 write
   fj_cpu.h_assignment[var_idx] = new_val;
 
   cuopt_assert(fj_cpu.view.pb.check_variable_within_bounds(var_idx, new_val),
                "assignment not within bounds");
   cuopt_assert(isfinite(new_val), "assignment is not finite");
 
+  // ARRAY READ: h_obj_coeffs[var_idx] - 1 read
   fj_cpu.h_incumbent_objective += fj_cpu.h_obj_coeffs[var_idx] * delta;
   if (fj_cpu.h_incumbent_objective < fj_cpu.h_best_objective &&
       fj_cpu.violated_constraints.empty()) {
     // recompute the LHS values to cancel out accumulation errors, then check if feasibility remains
     recompute_lhs(fj_cpu);
 
-    if (fj_cpu.violated_constraints.empty() && check_variable_feasibility<i_t, f_t>(fj_cpu.view)) {
+    if (fj_cpu.violated_constraints.empty() && check_variable_feasibility<i_t, f_t>(fj_cpu)) {
       cuopt_assert(fj_cpu.satisfied_constraints.size() == fj_cpu.view.pb.n_constraints, "");
       fj_cpu.h_best_objective =
         fj_cpu.h_incumbent_objective - fj_cpu.settings.parameters.breakthrough_move_epsilon;
+      // ARRAY WRITE: h_best_assignment = h_assignment - n_vars writes (vector copy)
       fj_cpu.h_best_assignment     = fj_cpu.h_assignment;
       fj_cpu.iterations_since_best = 0;  // Reset counter on improvement
       CUOPT_LOG_TRACE("%sCPUFJ: new best objective: %g",
@@ -734,18 +837,25 @@ static void apply_move(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
                     rng.next_u32() % (fj_cpu.settings.parameters.tabu_tenure_max -
                                       fj_cpu.settings.parameters.tabu_tenure_min);
   if (delta > 0) {
-    fj_cpu.h_tabu_lastinc[var_idx]     = fj_cpu.iterations;
+    // ARRAY WRITE: h_tabu_lastinc[var_idx] - 1 write
+    fj_cpu.h_tabu_lastinc[var_idx] = fj_cpu.iterations;
+    // ARRAY WRITE: h_tabu_nodec_until[var_idx] - 1 write
     fj_cpu.h_tabu_nodec_until[var_idx] = fj_cpu.iterations + tabu_tenure;
+    // ARRAY WRITE: h_tabu_noinc_until[var_idx] - 1 write
     fj_cpu.h_tabu_noinc_until[var_idx] = fj_cpu.iterations + tabu_tenure / 2;
     // CUOPT_LOG_TRACE("CPU: tabu nodec_until: %d", fj_cpu.h_tabu_nodec_until[var_idx]);
   } else {
-    fj_cpu.h_tabu_lastdec[var_idx]     = fj_cpu.iterations;
+    // ARRAY WRITE: h_tabu_lastdec[var_idx] - 1 write
+    fj_cpu.h_tabu_lastdec[var_idx] = fj_cpu.iterations;
+    // ARRAY WRITE: h_tabu_noinc_until[var_idx] - 1 write
     fj_cpu.h_tabu_noinc_until[var_idx] = fj_cpu.iterations + tabu_tenure;
+    // ARRAY WRITE: h_tabu_nodec_until[var_idx] - 1 write
     fj_cpu.h_tabu_nodec_until[var_idx] = fj_cpu.iterations + tabu_tenure / 2;
-    // CUOPT_LOG_TRACE("CPU: tabu noinc_until: %d", fj_cpu.h_tabu_noinc_until[var_idx]);
+    // CUOPT_LOG_TRACE("CPU: tabu noinc_until: %d", fj_cpu.h_tabu_nodec_until[var_idx]);
   }
-
+  // ARRAY WRITE: flip_move_computed - n_vars writes (fill with false)
   std::fill(fj_cpu.flip_move_computed.begin(), fj_cpu.flip_move_computed.end(), false);
+  // ARRAY WRITE: var_bitmap - n_vars writes (fill with false)
   std::fill(fj_cpu.var_bitmap.begin(), fj_cpu.var_bitmap.end(), false);
   fj_cpu.iter_mtm_vars.clear();
 }
@@ -762,13 +872,20 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
   fj_staged_score_t best_score = fj_staged_score_t::invalid();
 
   // collect all the variables that are involved in the target constraints
+  // MEMORY OPS: Outer loop over target constraints (sample_size iterations, typically 15-100)
   for (size_t cstr_idx : target_cstrs) {
     auto [offset_begin, offset_end] = fj_cpu.view.pb.range_for_constraint(cstr_idx);
+    // MEMORY OPS: Inner loop over variables in each constraint (avg_cstr_degree per outer
+    // iteration)
     for (auto i = offset_begin; i < offset_end; i++) {
+      // ARRAY READ: h_variables[i] - 1 read per iteration
       i_t var_idx = fj_cpu.h_variables[i];
+      // ARRAY READ: var_bitmap[var_idx] - 1 read per iteration
       if (fj_cpu.var_bitmap[var_idx]) continue;
       fj_cpu.iter_mtm_vars.push_back(var_idx);
+      // ARRAY WRITE: var_bitmap[var_idx] - 1 write per iteration (if not already set)
       fj_cpu.var_bitmap[var_idx] = true;
+      // Total per inner iteration: 2 reads + 1 write (conditional)
     }
   }
   // estimate the amount of nnzs to consider
@@ -781,16 +898,22 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
   f_t nnz_pick_probability = 1;
   if (nnz_sum > fj_cpu.nnz_samples) nnz_pick_probability = (f_t)fj_cpu.nnz_samples / nnz_sum;
 
+  // MEMORY OPS: HOTTEST LOOP - Outer loop over target constraints (sample_size iterations)
   for (size_t cstr_idx : target_cstrs) {
-    f_t cstr_tol = fj_cpu.view.get_corrected_tolerance(cstr_idx);
+    auto [c_lb, c_ub] = fj_cpu.cached_cstr_bounds[cstr_idx].get();
+    f_t cstr_tol      = fj_cpu.view.get_corrected_tolerance(cstr_idx, c_lb, c_ub);
 
     cuopt_assert(cstr_idx < fj_cpu.h_cstr_lb.size(), "cstr_idx is out of bounds");
     auto [offset_begin, offset_end] = fj_cpu.view.pb.range_for_constraint(cstr_idx);
+    // MEMORY OPS: Inner loop over variables (avg_cstr_degree per outer iteration)
     for (auto i = offset_begin; i < offset_end; i++) {
       // early cached check
+      // ARRAY READ: cached_mtm_moves[i] - 1 read per iteration
       if (auto& cached_move = fj_cpu.cached_mtm_moves[i]; cached_move.first != 0) {
         if (best_score < cached_move.second) {
+          // ARRAY READ: h_variables[i] - 1 read per iteration (cache hit)
           auto var_idx = fj_cpu.h_variables[i];
+          // ARRAY READ: h_assignment[var_idx] - 1 read per iteration (cache hit)
           if (fj_cpu.view.pb.check_variable_within_bounds(
                 var_idx, fj_cpu.h_assignment[var_idx] + cached_move.first)) {
             best_score = cached_move.second;
@@ -800,6 +923,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
           // fj_cpu.h_assignment[var_idx] + cached_move.first), "best move not within bounds");
         }
         fj_cpu.hit_count++;
+        // Total per cache hit: 3 reads
         continue;
       }
 
@@ -807,24 +931,39 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
       if (nnz_pick_probability < 1)
         if (rng.next_float() > nnz_pick_probability) continue;
 
+      // ARRAY READ: h_variables[i] - 1 read per iteration (cache miss)
       auto var_idx = fj_cpu.h_variables[i];
 
+      // ARRAY READ: h_assignment[var_idx] - 1 read per iteration (cache miss)
       f_t val     = fj_cpu.h_assignment[var_idx];
       f_t new_val = val;
       f_t delta   = 0;
 
       // Special case for binary variables
+      // ARRAY READ: h_is_binary_variable[var_idx] - 1 read per iteration
       if (fj_cpu.h_is_binary_variable[var_idx]) {
+        // ARRAY READ: flip_move_computed[var_idx] - 1 read per iteration (conditional)
         if (fj_cpu.flip_move_computed[var_idx]) continue;
+        // ARRAY WRITE: flip_move_computed[var_idx] - 1 write per iteration (conditional)
         fj_cpu.flip_move_computed[var_idx] = true;
         new_val                            = 1 - val;
       } else {
+        // ARRAY READ: h_coefficients[i] - 1 read per iteration (non-binary)
         auto cstr_coeff = fj_cpu.h_coefficients[i];
 
-        f_t c_lb                                  = fj_cpu.h_cstr_lb[cstr_idx];
-        f_t c_ub                                  = fj_cpu.h_cstr_ub[cstr_idx];
-        auto [delta, sign, slack, cstr_tolerance] = get_mtm_for_constraint<i_t, f_t, move_type>(
-          fj_cpu.view, var_idx, cstr_idx, cstr_coeff, c_lb, c_ub);
+        // ARRAY READ: h_cstr_lb[cstr_idx] - 1 read per iteration (non-binary)
+        f_t c_lb = fj_cpu.h_cstr_lb[cstr_idx];
+        // ARRAY READ: h_cstr_ub[cstr_idx] - 1 read per iteration (non-binary)
+        f_t c_ub = fj_cpu.h_cstr_ub[cstr_idx];
+        auto [delta, sign, slack, cstr_tolerance] =
+          get_mtm_for_constraint<i_t, f_t, move_type>(fj_cpu.view,
+                                                      var_idx,
+                                                      cstr_idx,
+                                                      cstr_coeff,
+                                                      c_lb,
+                                                      c_ub,
+                                                      fj_cpu.h_assignment,
+                                                      fj_cpu.h_lhs);
         if (fj_cpu.view.pb.is_integer_var(var_idx)) {
           new_val = cstr_coeff * sign > 0
                       ? floor(val + delta + fj_cpu.view.pb.tolerances.integrality_tolerance)
@@ -833,10 +972,11 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
           new_val = val + delta;
         }
         // fallback
-        if (new_val < get_lower(fj_cpu.h_var_bounds[var_idx]) ||
-            new_val > get_upper(fj_cpu.h_var_bounds[var_idx])) {
-          new_val = cstr_coeff * sign > 0 ? get_lower(fj_cpu.h_var_bounds[var_idx])
-                                          : get_upper(fj_cpu.h_var_bounds[var_idx]);
+        // ARRAY READ: h_var_bounds[var_idx] - 1 read per iteration (non-binary, conditional)
+        if (new_val < get_lower(fj_cpu.h_var_bounds[var_idx].get()) ||
+            new_val > get_upper(fj_cpu.h_var_bounds[var_idx].get())) {
+          new_val = cstr_coeff * sign > 0 ? get_lower(fj_cpu.h_var_bounds[var_idx].get())
+                                          : get_upper(fj_cpu.h_var_bounds[var_idx].get());
         }
       }
       if (!isfinite(new_val)) continue;
@@ -844,15 +984,18 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
                    "new_val is not within bounds");
       delta = new_val - val;
       // more permissive tabu in the case of local minima
-      if (tabu_check(fj_cpu, var_idx, delta, localmin)) continue;
+      if (tabu_check<i_t, f_t>(fj_cpu, var_idx, delta, localmin)) continue;
       if (fabs(delta) < cstr_tol) continue;
 
       auto move = fj_move_t{var_idx, delta};
       cuopt_assert(move.var_idx < fj_cpu.h_assignment.size(), "move.var_idx is out of bounds");
       cuopt_assert(move.var_idx >= 0, "move.var_idx is not positive");
 
+      // CRITICAL: compute_score() does ~6-7 array reads per constraint (see compute_score
+      // annotations)
       auto [score, infeasibility] = compute_score<i_t, f_t>(fj_cpu, var_idx, delta);
-      fj_cpu.cached_mtm_moves[i]  = std::make_pair(delta, score);
+      // ARRAY WRITE: cached_mtm_moves[i] - 1 write per iteration (cache miss)
+      fj_cpu.cached_mtm_moves[i] = std::make_pair(delta, score);
       fj_cpu.miss_count++;
       // reject this move if it would increase the target variable to a numerically unstable value
       if (fj_cpu.view.move_numerically_stable(
@@ -862,6 +1005,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
           best_move  = move;
         }
       }
+      // Total per cache miss: ~8-11 reads + 1 write + compute_score overhead
     }
   }
 
@@ -870,7 +1014,9 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
       fj_cpu.h_best_objective < std::numeric_limits<f_t>::infinity() &&
       fj_cpu.h_incumbent_objective >=
         fj_cpu.h_best_objective + fj_cpu.settings.parameters.breakthrough_move_epsilon) {
+    // MEMORY OPS: Loop over objective variables (num_obj_vars iterations, typically small)
     for (auto var_idx : fj_cpu.h_objective_vars) {
+      // ARRAY READ: h_assignment[var_idx] - 1 read per iteration
       f_t old_val = fj_cpu.h_assignment[var_idx];
       f_t new_val = get_breakthrough_move<i_t, f_t>(fj_cpu.view, var_idx);
 
@@ -883,8 +1029,9 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
       cuopt_assert(move.var_idx < fj_cpu.h_assignment.size(), "move.var_idx is out of bounds");
       cuopt_assert(move.var_idx >= 0, "move.var_idx is not positive");
 
-      if (tabu_check(fj_cpu, var_idx, delta)) continue;
+      if (tabu_check<i_t, f_t>(fj_cpu, var_idx, delta)) continue;
 
+      // CRITICAL: compute_score() does ~6-7 array reads per constraint involved
       auto [score, infeasibility] = compute_score<i_t, f_t>(fj_cpu, var_idx, delta);
 
       cuopt_assert(fj_cpu.view.pb.check_variable_within_bounds(var_idx, new_val), "");
@@ -897,6 +1044,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
           best_move  = move;
         }
       }
+      // Total per iteration: 1 read + compute_score overhead
     }
   }
 
@@ -945,29 +1093,44 @@ static void recompute_lhs(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
   fj_cpu.violated_constraints.clear();
   fj_cpu.satisfied_constraints.clear();
   fj_cpu.total_violations = 0;
+  // MEMORY OPS: CRITICAL LOOP - Loop over all constraints (n_cstrs iterations)
+  // This is called periodically to recompute all LHS values from scratch
   for (i_t cstr_idx = 0; cstr_idx < fj_cpu.view.pb.n_constraints; ++cstr_idx) {
     auto [offset_begin, offset_end] = fj_cpu.view.pb.range_for_constraint(cstr_idx);
+    auto [c_lb, c_ub]               = fj_cpu.cached_cstr_bounds[cstr_idx].get();
+    // MEMORY OPS: For each constraint, reads avg_cstr_degree elements from:
+    // - h_coefficients[offset_begin:offset_end] - avg_cstr_degree reads
+    // - h_variables[offset_begin:offset_end] - avg_cstr_degree reads (indirect indexing)
+    // - h_assignment[h_variables[i]] - avg_cstr_degree reads (indirect indexing)
     auto delta_it =
-      thrust::make_transform_iterator(thrust::make_counting_iterator(0), [fj = fj_cpu.view](i_t j) {
-        return fj.pb.coefficients[j] * fj.incumbent_assignment[fj.pb.variables[j]];
+      thrust::make_transform_iterator(thrust::make_counting_iterator(0), [&fj_cpu](i_t j) {
+        return fj_cpu.h_coefficients[j] * fj_cpu.h_assignment[fj_cpu.h_variables[j]];
       });
+    // ARRAY WRITE: h_lhs[cstr_idx] - 1 write per constraint
     fj_cpu.h_lhs[cstr_idx] =
       fj_kahan_babushka_neumaier_sum<i_t, f_t>(delta_it + offset_begin, delta_it + offset_end);
+    // ARRAY WRITE: h_lhs_sumcomp[cstr_idx] - 1 write per constraint
     fj_cpu.h_lhs_sumcomp[cstr_idx] = 0;
 
-    f_t cstr_tolerance = fj_cpu.view.get_corrected_tolerance(cstr_idx);
-    f_t new_cost       = fj_cpu.view.excess_score(cstr_idx, fj_cpu.h_lhs[cstr_idx]);
+    f_t cstr_tolerance = fj_cpu.view.get_corrected_tolerance(cstr_idx, c_lb, c_ub);
+    // ARRAY READ: h_lhs[cstr_idx] - 1 read per constraint
+    f_t new_cost = fj_cpu.view.excess_score(cstr_idx, fj_cpu.h_lhs[cstr_idx]);
     if (new_cost < -cstr_tolerance) {
       fj_cpu.violated_constraints.insert(cstr_idx);
       fj_cpu.total_violations += new_cost;
     } else {
       fj_cpu.satisfied_constraints.insert(cstr_idx);
     }
+    // Total per constraint: (3 * avg_cstr_degree) reads + 2 writes + 1 read = (3 * avg_cstr_degree
+    // + 1) reads + 2 writes
   }
 
   // compute incumbent objective
+  // MEMORY OPS: Reads all n_vars elements from h_assignment and h_obj_coeffs
+  // ARRAY READ: h_assignment (n_vars reads) and h_obj_coeffs (n_vars reads)
   fj_cpu.h_incumbent_objective = thrust::inner_product(
     fj_cpu.h_assignment.begin(), fj_cpu.h_assignment.end(), fj_cpu.h_obj_coeffs.begin(), 0.);
+  // Total: 2 * n_vars reads
 }
 
 template <typename i_t, typename f_t>
@@ -979,15 +1142,20 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_lift_move(
   fj_move_t best_move          = fj_move_t{-1, 0};
   fj_staged_score_t best_score = fj_staged_score_t::zero();
 
+  // MEMORY OPS: Loop over objective variables (num_obj_vars iterations)
+  // This is called when in the feasible region to find improving moves
   for (auto var_idx : fj_cpu.h_objective_vars) {
     cuopt_assert(var_idx < fj_cpu.h_obj_coeffs.size(), "var_idx is out of bounds");
     cuopt_assert(var_idx >= 0, "var_idx is out of bounds");
 
+    // ARRAY READ: h_obj_coeffs[var_idx] - 1 read per iteration
     f_t obj_coeff = fj_cpu.h_obj_coeffs[var_idx];
     f_t delta     = -std::numeric_limits<f_t>::infinity();
-    f_t val       = fj_cpu.h_assignment[var_idx];
+    // ARRAY READ: h_assignment[var_idx] - 1 read per iteration
+    f_t val = fj_cpu.h_assignment[var_idx];
 
     // special path for binary variables
+    // ARRAY READ: h_is_binary_variable[var_idx] - 1 read per iteration
     if (fj_cpu.h_is_binary_variable[var_idx]) {
       cuopt_assert(fj_cpu.view.pb.is_integer(val), "binary variable is not integer");
       cuopt_assert(fj_cpu.view.pb.integer_equal(val, 0) || fj_cpu.view.pb.integer_equal(val, 1),
@@ -996,24 +1164,38 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_lift_move(
       // flip move wouldn't improve
       if (delta * obj_coeff >= 0) continue;
     } else {
-      f_t lfd_lb                      = get_lower(fj_cpu.h_var_bounds[var_idx]) - val;
-      f_t lfd_ub                      = get_upper(fj_cpu.h_var_bounds[var_idx]) - val;
+      // ARRAY READ: h_var_bounds[var_idx] - 1 read per iteration (non-binary)
+      f_t lfd_lb                      = get_lower(fj_cpu.h_var_bounds[var_idx].get()) - val;
+      f_t lfd_ub                      = get_upper(fj_cpu.h_var_bounds[var_idx].get()) - val;
       auto [offset_begin, offset_end] = fj_cpu.view.pb.reverse_range_for_var(var_idx);
+      // MEMORY OPS: Inner loop over constraints involving this variable (avg_var_degree iterations
+      // per outer iteration)
       for (i_t j = offset_begin; j < offset_end; j += 1) {
-        auto cstr_idx      = fj_cpu.view.pb.reverse_constraints[j];
-        auto cstr_coeff    = fj_cpu.view.pb.reverse_coefficients[j];
-        f_t c_lb           = fj_cpu.view.pb.constraint_lower_bounds[cstr_idx];
-        f_t c_ub           = fj_cpu.view.pb.constraint_upper_bounds[cstr_idx];
+        // ARRAY READ: h_reverse_constraints[j] - 1 read per inner iteration
+        auto cstr_idx = fj_cpu.h_reverse_constraints[j];
+        // ARRAY READ: h_reverse_coefficients[j] - 1 read per inner iteration
+        auto cstr_coeff = fj_cpu.h_reverse_coefficients[j];
+        // ARRAY READ: h_cstr_lb[cstr_idx] - 1 read per inner iteration (indirect)
+        f_t c_lb = fj_cpu.h_cstr_lb[cstr_idx];
+        // ARRAY READ: h_cstr_ub[cstr_idx] - 1 read per inner iteration (indirect)
+        f_t c_ub           = fj_cpu.h_cstr_ub[cstr_idx];
         f_t cstr_tolerance = fj_cpu.view.get_corrected_tolerance(cstr_idx, c_lb, c_ub);
         cuopt_assert(c_lb <= c_ub, "invalid bounds");
+        // ARRAY READ: h_lhs[cstr_idx] - 1 read per inner iteration
         cuopt_assert(fj_cpu.view.cstr_satisfied(cstr_idx, fj_cpu.h_lhs[cstr_idx]),
                      "cstr should be satisfied");
 
         // Process each bound separately, as both are satified and may both be finite
         // otherwise range constraints aren't correctly handled
         for (auto [bound, sign] : {std::make_tuple(c_lb, -1), std::make_tuple(c_ub, 1)}) {
-          auto [delta, slack] =
-            get_mtm_for_bound<i_t, f_t>(fj_cpu.view, var_idx, cstr_idx, cstr_coeff, bound, sign);
+          auto [delta, slack] = get_mtm_for_bound<i_t, f_t>(fj_cpu.view,
+                                                            var_idx,
+                                                            cstr_idx,
+                                                            cstr_coeff,
+                                                            bound,
+                                                            sign,
+                                                            fj_cpu.h_assignment,
+                                                            fj_cpu.h_lhs);
 
           if (cstr_coeff * sign < 0) {
             if (fj_cpu.view.pb.is_integer_var(var_idx)) delta = ceil(delta);
@@ -1039,6 +1221,8 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_lift_move(
           }
         }
         if (lfd_lb >= lfd_ub) break;
+        // Total per inner iteration: 5 reads (h_reverse_constraints, h_reverse_coefficients,
+        // h_cstr_lb, h_cstr_ub, h_lhs)
       }
 
       // invalid crossing bounds
@@ -1054,7 +1238,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_lift_move(
 
     if (!isfinite(delta)) delta = 0;
     if (fj_cpu.view.pb.integer_equal(delta, (f_t)0)) continue;
-    if (tabu_check(fj_cpu, var_idx, delta)) continue;
+    if (tabu_check<i_t, f_t>(fj_cpu, var_idx, delta)) continue;
 
     cuopt_assert(delta * obj_coeff < 0, "lift move doesn't improve the objective!");
 
@@ -1068,6 +1252,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_lift_move(
       best_score = score;
       best_move  = move;
     }
+    // Total per outer iteration: 3 reads + (5 * avg_var_degree reads in inner loop for non-binary)
   }
 
   return thrust::make_tuple(best_move, best_score);
@@ -1085,9 +1270,11 @@ static void perturb(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
               std::mt19937(fj_cpu.settings.seed + fj_cpu.iterations));
   raft::random::PCGenerator rng(fj_cpu.settings.seed + fj_cpu.iterations, 0, 0);
 
+  // MEMORY OPS: Loop over sampled variables (2 iterations typically)
   for (auto var_idx : sampled_vars) {
-    f_t lb  = ceil(std::max(get_lower(fj_cpu.h_var_bounds[var_idx]), -1e7));
-    f_t ub  = floor(std::min(get_upper(fj_cpu.h_var_bounds[var_idx]), 1e7));
+    // ARRAY READ: h_var_bounds[var_idx] - 1 read per iteration
+    f_t lb  = ceil(std::max(get_lower(fj_cpu.h_var_bounds[var_idx].get()), -1e7));
+    f_t ub  = floor(std::min(get_upper(fj_cpu.h_var_bounds[var_idx].get()), 1e7));
     f_t val = lb + (ub - lb) * rng.next_double();
     if (fj_cpu.view.pb.is_integer_var(var_idx)) {
       val = std::round(val);
@@ -1096,7 +1283,9 @@ static void perturb(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
 
     cuopt_assert(fj_cpu.view.pb.check_variable_within_bounds(var_idx, val),
                  "value is out of bounds");
+    // ARRAY WRITE: h_assignment[var_idx] - 1 write per iteration
     fj_cpu.h_assignment[var_idx] = val;
+    // Total per iteration: 1 read + 1 write
   }
 
   recompute_lhs(fj_cpu);
@@ -1217,12 +1406,20 @@ static void init_fj_cpu(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
                                  std::make_pair(0, fj_staged_score_t::zero()));
 
   fj_cpu.cached_cstr_bounds.resize(fj_cpu.h_reverse_coefficients.size());
+  // MEMORY OPS: INITIALIZATION - Loop over all variables (n_vars iterations)
   for (i_t var_idx = 0; var_idx < (i_t)fj_cpu.view.pb.n_variables; ++var_idx) {
     auto [offset_begin, offset_end] = fj_cpu.view.pb.reverse_range_for_var(var_idx);
+    // MEMORY OPS: Inner loop over constraints per variable (avg_var_degree iterations per outer
+    // iteration)
     for (i_t i = offset_begin; i < offset_end; ++i) {
+      // ARRAY READ: h_reverse_constraints[i] - 1 read per inner iteration
+      // ARRAY READ: h_cstr_lb[h_reverse_constraints[i]] - 1 read per inner iteration (indirect)
+      // ARRAY READ: h_cstr_ub[h_reverse_constraints[i]] - 1 read per inner iteration (indirect)
+      // ARRAY WRITE: cached_cstr_bounds[i] - 1 write per inner iteration (2 f_t values)
       fj_cpu.cached_cstr_bounds[i] =
         std::make_pair(fj_cpu.h_cstr_lb[fj_cpu.h_reverse_constraints[i]],
                        fj_cpu.h_cstr_ub[fj_cpu.h_reverse_constraints[i]]);
+      // Total per inner iteration: 3 reads + 1 write (2 values)
     }
   }
 
@@ -1392,8 +1589,8 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
       update_weights(fj_cpu);
       if (should_perturb) {
         perturb(fj_cpu);
-        for (auto& cached_move : fj_cpu.cached_mtm_moves)
-          cached_move.first = 0;
+        for (size_t i = 0; i < fj_cpu.cached_mtm_moves.size(); i++)
+          fj_cpu.cached_mtm_moves[i].first = 0;
       }
       thrust::tie(move, score) =
         find_mtm_move_viol(fj_cpu, 1, true);  // pick a single random violated constraint
@@ -1407,8 +1604,11 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
     // number of violated constraints is usually small (<100). recomputing from all LHSs is cheap
     // and more numerically precise than just adding to the accumulator in apply_move
     fj_cpu.total_violations = 0;
+    // MEMORY OPS: Loop over violated constraints (typically <100 iterations per main iteration)
     for (auto cstr_idx : fj_cpu.violated_constraints) {
+      // ARRAY READ: h_lhs[cstr_idx] - 1 read per iteration
       fj_cpu.total_violations += fj_cpu.view.excess_score(cstr_idx, fj_cpu.h_lhs[cstr_idx]);
+      // Total per iteration: 1 read
     }
     if (fj_cpu.iterations % fj_cpu.log_interval == 0) {
       CUOPT_LOG_TRACE(
@@ -1454,7 +1654,13 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
 #ifdef __linux__
       collect_and_print_papi_metrics(fj_cpu);
 #endif
-      log_regression_features(fj_cpu, time_window_ms, total_time_ms);
+
+      // Collect memory statistics
+      auto [loads, stores] = fj_cpu.memory_manifold.collect_and_flush();
+
+      // Log all features including memory statistics
+      log_regression_features(fj_cpu, time_window_ms, total_time_ms, loads, stores);
+
       fj_cpu.last_feature_log_time = now;
     }
 

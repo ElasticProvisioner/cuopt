@@ -633,52 +633,52 @@ void branch_and_bound_t<i_t, f_t>::flush_pending_features()
   constexpr int LINE_BUFFER_SIZE = 512;
   char line_buffer[LINE_BUFFER_SIZE];
 
-  snprintf(line_buffer,
-           LINE_BUFFER_SIZE,
-           "BB_NODE_FEATURES "
-           "node_id=%d depth=%d time=%.6f "
-           "n_rows=%d n_cols=%d n_nnz=%d density=%.6f "
-           "n_bin=%d n_int=%d n_cont=%d int_ratio=%.4f "
-           "avg_row_nnz=%.2f max_row_nnz=%d row_nnz_cv=%.4f "
-           "avg_col_nnz=%.2f max_col_nnz=%d col_nnz_cv=%.4f "
-           "n_bounds_chg=%d cutoff_gap=%.4f basis_from_parent=%d "
-           "simplex_iters=%d n_refact=%d lp_time=%.6f bound_str_time=%.6f var_sel_time=%.6f "
-           "n_frac=%d strong_branch=%d n_sb_cand=%d sb_time=%.6f "
-           "lp_status=%d node_status=%d\n",
-           last_features_.node_id,
-           last_features_.node_depth,
-           last_features_.total_node_time,
-           last_features_.n_rows,
-           last_features_.n_cols,
-           last_features_.n_nonzeros,
-           last_features_.density,
-           last_features_.n_binary,
-           last_features_.n_integer,
-           last_features_.n_continuous,
-           last_features_.integrality_ratio,
-           last_features_.avg_row_nnz,
-           last_features_.max_row_nnz,
-           last_features_.row_nnz_cv,
-           last_features_.avg_col_nnz,
-           last_features_.max_col_nnz,
-           last_features_.col_nnz_cv,
-           last_features_.n_bounds_changed,
-           last_features_.cutoff_gap_ratio,
-           last_features_.basis_from_parent ? 1 : 0,
-           last_features_.simplex_iterations,
-           last_features_.n_refactorizations,
-           last_features_.lp_solve_time,
-           last_features_.bound_str_time,
-           last_features_.variable_sel_time,
-           last_features_.n_fractional,
-           last_features_.strong_branch_performed ? 1 : 0,
-           last_features_.n_strong_branch_candidates,
-           last_features_.strong_branch_time,
-           last_features_.lp_status,
-           last_features_.node_status);
+  // snprintf(line_buffer,
+  //          LINE_BUFFER_SIZE,
+  //          "BB_NODE_FEATURES "
+  //          "node_id=%d depth=%d time=%.6f "
+  //          "n_rows=%d n_cols=%d n_nnz=%d density=%.6f "
+  //          "n_bin=%d n_int=%d n_cont=%d int_ratio=%.4f "
+  //          "avg_row_nnz=%.2f max_row_nnz=%d row_nnz_cv=%.4f "
+  //          "avg_col_nnz=%.2f max_col_nnz=%d col_nnz_cv=%.4f "
+  //          "n_bounds_chg=%d cutoff_gap=%.4f basis_from_parent=%d "
+  //          "simplex_iters=%d n_refact=%d lp_time=%.6f bound_str_time=%.6f var_sel_time=%.6f "
+  //          "n_frac=%d strong_branch=%d n_sb_cand=%d sb_time=%.6f "
+  //          "lp_status=%d node_status=%d\n",
+  //          last_features_.node_id,
+  //          last_features_.node_depth,
+  //          last_features_.total_node_time,
+  //          last_features_.n_rows,
+  //          last_features_.n_cols,
+  //          last_features_.n_nonzeros,
+  //          last_features_.density,
+  //          last_features_.n_binary,
+  //          last_features_.n_integer,
+  //          last_features_.n_continuous,
+  //          last_features_.integrality_ratio,
+  //          last_features_.avg_row_nnz,
+  //          last_features_.max_row_nnz,
+  //          last_features_.row_nnz_cv,
+  //          last_features_.avg_col_nnz,
+  //          last_features_.max_col_nnz,
+  //          last_features_.col_nnz_cv,
+  //          last_features_.n_bounds_changed,
+  //          last_features_.cutoff_gap_ratio,
+  //          last_features_.basis_from_parent ? 1 : 0,
+  //          last_features_.simplex_iterations,
+  //          last_features_.n_refactorizations,
+  //          last_features_.lp_solve_time,
+  //          last_features_.bound_str_time,
+  //          last_features_.variable_sel_time,
+  //          last_features_.n_fractional,
+  //          last_features_.strong_branch_performed ? 1 : 0,
+  //          last_features_.n_strong_branch_candidates,
+  //          last_features_.strong_branch_time,
+  //          last_features_.lp_status,
+  //          last_features_.node_status);
 
-  // Single printf call
-  settings_.log.printf("%s", line_buffer);
+  // // Single printf call
+  // settings_.log.printf("%s", line_buffer);
 
   has_pending_features_ = false;
 }

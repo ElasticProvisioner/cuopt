@@ -25,6 +25,7 @@ Supports parsing of:
 - CP (Constraint Propagation): CP_FEATURES and CP_RESULT logs
 - FJ (Feasibility Jump): Legacy FJ: format
 - CPUFJ (CPU Feasibility Jump): CPUFJ_FEATURES single-line logs
+- BB (Branch and Bound): BB_NODE_FEATURES single-line logs
 
 IMPORTANT - Grep Specificity:
 The parser uses EXACT pattern matching with grep to filter logs efficiently.
@@ -49,6 +50,7 @@ Usage:
     python determinism_logs_parse.py <input_directory> --algorithm CP [-o output.feather]
     python determinism_logs_parse.py <input_directory> --algorithm FJ [-o output.feather]
     python determinism_logs_parse.py <input_directory> --algorithm CPUFJ [-o output.feather]
+    python determinism_logs_parse.py <input_directory> --algorithm BB [-o output.feather]
 """
 
 import argparse
@@ -60,7 +62,7 @@ import pandas as pd
 from typing import List, Dict, Any, Optional
 
 
-SUPPORTED_ALGORITHMS = ["FP", "PDLP", "CP", "FJ", "CPUFJ"]
+SUPPORTED_ALGORITHMS = ["FP", "PDLP", "CP", "FJ", "CPUFJ", "BB"]
 
 
 def parse_value(value_str: str) -> Any:
@@ -423,6 +425,13 @@ def parse_cpufj_logs(log_files: List[str]) -> List[Dict[str, Any]]:
     )
 
 
+def parse_bb_logs(log_files: List[str]) -> List[Dict[str, Any]]:
+    """Parse Branch and Bound node feature logs."""
+    return parse_single_line_logs(
+        log_files, "BB_NODE_FEATURES", "BB (Branch and Bound)"
+    )
+
+
 def print_statistics(entries: List[Dict[str, Any]], algorithm: str) -> None:
     """Print statistics about parsed entries."""
     if not entries:
@@ -473,6 +482,7 @@ Supported Algorithms:
   CP     - Constraint Propagation (parses CP_FEATURES and CP_RESULT logs)
   FJ     - Feasibility Jump (parses legacy FJ: format)
   CPUFJ  - CPU Feasibility Jump (parses CPUFJ_FEATURES single-line logs)
+  BB     - Branch and Bound (parses BB_NODE_FEATURES single-line logs)
 
 Examples:
   python determinism_logs_parse.py logs/ --algorithm FP -o fp_data.feather
@@ -480,6 +490,7 @@ Examples:
   python determinism_logs_parse.py logs/ --algorithm CP -o cp_data.feather
   python determinism_logs_parse.py logs/ --algorithm FJ -o fj_data.feather
   python determinism_logs_parse.py logs/ --algorithm CPUFJ -o cpufj_data.feather
+  python determinism_logs_parse.py logs/ --algorithm BB -o bb_data.feather
 
   # Limit to first 10 files for testing
   python determinism_logs_parse.py logs/ --algorithm FP --max-files 10
@@ -552,6 +563,8 @@ Examples:
         entries = parse_fj_logs(log_files)
     elif args.algorithm == "CPUFJ":
         entries = parse_cpufj_logs(log_files)
+    elif args.algorithm == "BB":
+        entries = parse_bb_logs(log_files)
     else:
         print(f"Error: Unsupported algorithm: {args.algorithm}")
         return 1
@@ -567,6 +580,10 @@ Examples:
         elif args.algorithm == "CPUFJ":
             print(
                 "Make sure your logs contain CPUFJ_FEATURES lines with key=value pairs"
+            )
+        elif args.algorithm == "BB":
+            print(
+                "Make sure your logs contain BB_NODE_FEATURES lines with key=value pairs"
             )
         return 1
 
