@@ -121,6 +121,10 @@ FEATURES_TO_EXCLUDE = [
     "node_status",
     "depth",
     "cutoff_gap",
+    "mem_bandwidth_gb_s",
+    "max_cstr_deg",
+    "viol_ratio",
+    "nnz_per_move",
 ]
 
 # Alternatively, specify ONLY the features you want to use
@@ -130,6 +134,12 @@ FEATURES_TO_INCLUDE_ONLY = [
     # 'n_variables',
     # 'n_constraints',
     # 'sparsity',
+    # "n_vars",
+    # "n_cstrs",
+    # "total_nnz",
+    # "mem_total_mb",
+    # "mem_store_mb",
+    # "mem_load_mb",
 ]
 # ============================================================================
 
