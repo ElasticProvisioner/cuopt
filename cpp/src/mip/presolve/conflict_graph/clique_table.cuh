@@ -27,7 +27,8 @@
 namespace cuopt::linear_programming::detail {
 
 struct clique_config_t {
-  int min_clique_size = 3;
+  int min_clique_size               = 512;
+  int max_clique_size_for_extension = 128;
 };
 
 template <typename i_t, typename f_t>
@@ -43,6 +44,7 @@ struct knapsack_constraint_t {
   std::vector<entry_t<i_t, f_t>> entries;
   f_t rhs;
   i_t cstr_idx;
+  bool is_set_packing = false;
 };
 
 template <typename i_t, typename f_t>
@@ -54,26 +56,37 @@ struct addtl_clique_t {
 
 template <typename i_t, typename f_t>
 struct clique_table_t {
-  clique_table_t(i_t n_vertices, i_t min_clique_size_)
+  clique_table_t(i_t n_vertices, i_t min_clique_size_, i_t max_clique_size_for_extension_)
     : min_clique_size(min_clique_size_),
+      max_clique_size_for_extension(max_clique_size_for_extension_),
       var_clique_map_first(n_vertices),
       var_clique_map_addtl(n_vertices),
-      adj_list_small_cliques(n_vertices)
+      adj_list_small_cliques(n_vertices),
+      var_degrees(n_vertices, -1)
   {
   }
+
+  std::unordered_set<i_t> get_adj_set_of_var(i_t var_idx);
+  i_t get_degree_of_var(i_t var_idx);
+  bool check_adjacency(i_t var_idx1, i_t var_idx2);
+
   // keeps the large cliques in each constraint
   std::vector<std::vector<i_t>> first;
   // keeps the additional cliques
   std::vector<addtl_clique_t<i_t, f_t>> addtl_cliques;
+  // TODO figure out the performance of lookup for the following: unordered_set vs vector
   // keeps the indices of original(first) cliques that contain variable x
-  std::vector<std::vector<i_t>> var_clique_map_first;
+  std::vector<std::unordered_set<i_t>> var_clique_map_first;
   // keeps the indices of additional cliques that contain variable x
-  std::vector<std::vector<i_t>> var_clique_map_addtl;
+  std::vector<std::unordered_set<i_t>> var_clique_map_addtl;
   // adjacency list to keep small cliques, this basically keeps the vars share a small clique
   // constraint
   std::unordered_map<i_t, std::unordered_set<i_t>> adj_list_small_cliques;
+  // degrees of each vertex
+  std::vector<i_t> var_degrees;
 
   const i_t min_clique_size;
+  const i_t max_clique_size_for_extension;
   typename mip_solver_settings_t<i_t, f_t>::tolerances_t tolerances;
 };
 
