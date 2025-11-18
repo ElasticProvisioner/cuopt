@@ -360,6 +360,8 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
 #endif
   }
 
+  if (!context.settings.deterministic) { ls.start_cpufj_scratch_threads(population); }
+
   // before probing cache or LP, run FJ to generate initial primal feasible solution
   const f_t time_ratio_of_probing_cache = diversity_config.time_ratio_of_probing_cache;
   const f_t max_time_on_probing         = diversity_config.max_time_on_probing;
@@ -454,7 +456,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
     lp_rounded_sol.round_nearest();
     lp_rounded_sol.compute_feasibility();
     population.add_solution(std::move(lp_rounded_sol));
-    // if (!context.settings.deterministic) { ls.start_cpufj_lptopt_scratch_threads(population); }
+    if (!context.settings.deterministic) { ls.start_cpufj_lptopt_scratch_threads(population); }
   }
 
   population.add_solutions_from_vec(std::move(initial_sol_vector));
