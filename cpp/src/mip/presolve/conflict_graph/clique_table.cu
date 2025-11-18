@@ -91,6 +91,7 @@ template <typename i_t, typename f_t>
 void make_coeff_positive_knapsack_constraint(
   const dual_simplex::user_problem_t<i_t, f_t>& problem,
   std::vector<knapsack_constraint_t<i_t, f_t>>& knapsack_constraints,
+  std::unordered_set<i_t>& set_packing_constraints,
   typename mip_solver_settings_t<i_t, f_t>::tolerances_t tolerances)
 {
   for (auto& knapsack_constraint : knapsack_constraints) {
@@ -113,6 +114,9 @@ void make_coeff_positive_knapsack_constraint(
       all_coeff_are_equal = false;
     }
     knapsack_constraint.is_set_packing = all_coeff_are_equal;
+    if (knapsack_constraint.is_set_packing) {
+      set_packing_constraints.insert(knapsack_constraint.cstr_idx);
+    }
     cuopt_assert(knapsack_constraint.rhs >= 0, "RHS must be non-negative");
   }
 }
@@ -314,7 +318,7 @@ void insert_clique_into_problem(const std::vector<i_t>& clique,
 }
 
 template <typename i_t, typename f_t>
-void extend_clique(const std::vector<i_t>& clique,
+bool extend_clique(const std::vector<i_t>& clique,
                    clique_table_t<i_t, f_t>& clique_table,
                    dual_simplex::user_problem_t<i_t, f_t>& problem,
                    dual_simplex::csr_matrix_t<i_t, f_t>& A)
@@ -350,24 +354,26 @@ void extend_clique(const std::vector<i_t>& clique,
     }
     if (add) { new_clique.push_back(var_idx); }
   }
-  // if we found a larger cliqe, replace it in the clique table and replace the problem formulation
+  // if we found a larger cliqe, insert it into the formulation
   if (new_clique.size() > clique.size()) {
     clique_table.first.push_back(new_clique);
     CUOPT_LOG_DEBUG("Extended clique: %lu from %lu", new_clique.size(), clique.size());
     // insert the new clique into the problem as a new constraint
     insert_clique_into_problem(new_clique, problem, A);
   }
+  return new_clique.size() > clique.size();
 }
 
 // Also known as clique merging. Infer larger clique constraints which allows inclusion of vars from
 // other constraints. This only extends the original cliques in the formulation for now.
 // TODO: consider a heuristic on how much of the cliques derived from knapsacks to include here
 template <typename i_t, typename f_t>
-void extend_cliques(const std::vector<knapsack_constraint_t<i_t, f_t>>& knapsack_constraints,
-                    clique_table_t<i_t, f_t>& clique_table,
-                    dual_simplex::user_problem_t<i_t, f_t>& problem,
-                    dual_simplex::csr_matrix_t<i_t, f_t>& A)
+i_t extend_cliques(const std::vector<knapsack_constraint_t<i_t, f_t>>& knapsack_constraints,
+                   clique_table_t<i_t, f_t>& clique_table,
+                   dual_simplex::user_problem_t<i_t, f_t>& problem,
+                   dual_simplex::csr_matrix_t<i_t, f_t>& A)
 {
+  i_t n_extended_cliques = 0;
   // we try extending cliques on set packing constraints
   for (const auto& knapsack_constraint : knapsack_constraints) {
     if (!knapsack_constraint.is_set_packing) { continue; }
@@ -376,11 +382,13 @@ void extend_cliques(const std::vector<knapsack_constraint_t<i_t, f_t>>& knapsack
       for (const auto& entry : knapsack_constraint.entries) {
         clique.push_back(entry.col);
       }
-      extend_clique(clique, clique_table, problem, A);
+      bool extended_clique = extend_clique(clique, clique_table, problem, A);
+      if (extended_clique) { n_extended_cliques++; }
     }
   }
   // copy modified matrix back to problem
   A.to_compressed_col(problem.A);
+  return n_extended_cliques;
 }
 
 template <typename i_t, typename f_t>
@@ -399,9 +407,62 @@ void fill_var_clique_maps(clique_table_t<i_t, f_t>& clique_table)
   }
 }
 
+// we want to remove constraints that are covered by extended cliques
+// for set partitioning constraints, we will keep the constraint on original problem but fix
+// extended vars to zero For a set partitioning constraint: v1+v2+...+vk = 1 and discovered:
+// v1+v2+...+vk  + vl1+vl2 +...+vli <= 1
+// Then substituting the first to the second you have:
+// 1  + vl1+vl2 +...+vli <= 1
+// Which is simply:
+// vl1+vl2 +...+vli <= 0
+// so we can fix them
 template <typename i_t, typename f_t>
-void remove_dominated_constraint(const dual_simplex::user_problem_t<i_t, f_t>& problem)
+void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
+                              dual_simplex::csr_matrix_t<i_t, f_t>& A,
+                              clique_table_t<i_t, f_t>& clique_table,
+                              std::unordered_set<i_t>& set_packing_constraints,
+                              i_t n_extended_cliques)
 {
+  // TODO check if we need to add the dominance for the table itself
+  i_t extended_clique_start_idx = clique_table.first.size() - n_extended_cliques;
+  CUOPT_LOG_DEBUG("Number of extended cliques: %d", n_extended_cliques);
+  std::vector<i_t> constraints_to_remove;
+  for (i_t i = 0; i < n_extended_cliques; i++) {
+    i_t clique_idx = extended_clique_start_idx + i;
+    std::set<i_t> curr_clique_vars;
+    const auto& curr_clique = clique_table.first[clique_idx];
+    // check all original set packing constraints. if a set packing constraint is covered remove it.
+    // if it is a set partitioning constraint. keep the set partitioning and fix extensions to zero.
+    for (auto var_idx : curr_clique) {
+      curr_clique_vars.insert(var_idx);
+    }
+    for (size_t cstr_idx = 0; cstr_idx < problem.row_sense.size(); cstr_idx++) {
+      // only process set packing constraints
+      if (set_packing_constraints.count(cstr_idx) == 0) { continue; }
+      auto range = A.get_constraint_range(cstr_idx);
+      std::set<i_t> curr_cstr_vars;
+      bool negate = false;
+      if (problem.row_sense[cstr_idx] == 'E') {
+        // equality constraints are not considered
+        continue;
+      }
+      if (problem.row_sense[cstr_idx] == 'G') { negate = true; }
+      for (i_t j = range.first; j < range.second; j++) {
+        i_t var_idx = A.j[j];
+        f_t coeff   = A.x[j];
+        if (coeff < 0 != negate) { var_idx = var_idx + problem.num_cols; }
+        curr_cstr_vars.insert(var_idx);
+      }
+      bool constraint_covered = std::includes(curr_clique_vars.begin(),
+                                              curr_clique_vars.end(),
+                                              curr_cstr_vars.begin(),
+                                              curr_cstr_vars.end());
+      if (constraint_covered) {
+        CUOPT_LOG_TRACE("Constraint %d is covered by clique %d", cstr_idx, clique_idx);
+        constraints_to_remove.push_back(cstr_idx);
+      }
+    }
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -449,10 +510,12 @@ void find_initial_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
                           typename mip_solver_settings_t<i_t, f_t>::tolerances_t tolerances)
 {
   std::vector<knapsack_constraint_t<i_t, f_t>> knapsack_constraints;
+  std::unordered_set<i_t> set_packing_constraints;
   dual_simplex::csr_matrix_t<i_t, f_t> A(problem.num_rows, problem.num_cols, 0);
   problem.A.to_compressed_row(A);
   fill_knapsack_constraints(problem, knapsack_constraints, A);
-  make_coeff_positive_knapsack_constraint(problem, knapsack_constraints, tolerances);
+  make_coeff_positive_knapsack_constraint(
+    problem, knapsack_constraints, set_packing_constraints, tolerances);
   sort_csr_by_constraint_coefficients(knapsack_constraints);
   print_knapsack_constraints(knapsack_constraints);
   // TODO think about getting min_clique_size according to some problem property
@@ -472,8 +535,8 @@ void find_initial_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
   remove_small_cliques(clique_table);
   // fill var clique maps
   fill_var_clique_maps(clique_table);
-  extend_cliques(knapsack_constraints, clique_table, problem, A);
-  remove_dominated_constraint(problem);
+  i_t n_extended_cliques = extend_cliques(knapsack_constraints, clique_table, problem, A);
+  remove_dominated_cliques(problem, A, clique_table, set_packing_constraints, n_extended_cliques);
   exit(0);
 }
 

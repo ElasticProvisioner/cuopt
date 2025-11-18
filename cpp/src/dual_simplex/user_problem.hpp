@@ -30,13 +30,6 @@ struct user_problem_t {
   {
   }
 
-  void insert_constraint(const std::vector<i_t>& vars,
-                         const std::vector<f_t>& coeffs,
-                         f_t rhs,
-                         char sense)
-  {
-  }
-
   raft::handle_t const* handle_ptr;
   i_t num_rows;
   i_t num_cols;
