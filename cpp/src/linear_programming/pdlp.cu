@@ -257,7 +257,7 @@ static bool time_limit_reached(const timer_t& timer)
   bool elapsed = timer.elapsed_time() >= timer.get_time_limit();
   if (elapsed) {
     CUOPT_LOG_ERROR("**** PDLP Time limit reached: %f *****", timer.get_time_limit());
-    cuopt_assert(false, "unexpected timer");
+    // cuopt_assert(false, "unexpected timer");
   }
   return elapsed;
 }

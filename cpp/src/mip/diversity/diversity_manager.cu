@@ -229,7 +229,6 @@ void diversity_manager_t<i_t, f_t>::generate_quick_feasible_solution()
   work_limit_timer_t sol_timer(context.gpu_heur_loop, generate_fast_solution_time);
   // do very short LP run to get somewhere close to the optimal point
   ls.generate_fast_solution(solution, sol_timer);
-  sol_timer.record_work(0);
   if (solution.get_feasible()) {
     population.run_solution_callbacks(solution);
     initial_sol_vector.emplace_back(std::move(solution));
@@ -325,12 +324,6 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   const f_t time_limit = timer.remaining_time();
   const f_t lp_time_limit =
     std::min(diversity_config.max_time_on_lp, time_limit * diversity_config.time_ratio_on_init_lp);
-
-  if (context.settings.deterministic) {
-    remaining_work_limit = context.settings.work_limit;
-    CUOPT_LOG_INFO("Deterministic mode, remaining work limit: %f", time_limit);
-  }
-
   // to automatically compute the solving time on scope exit
   auto timer_raii_guard =
     cuopt::scope_guard([&]() { stats.total_solve_time = timer.timer.elapsed_time(); });
@@ -357,7 +350,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   // Run CPUFJ early to find quick initial solutions
   ls_cpufj_raii_guard_t ls_cpufj_raii_guard(ls);  // RAII to stop cpufj threads on solve stop
   if (!context.settings.deterministic) {
-#if 1
+#if 0
     ls.start_cpufj_scratch_threads(population);
     // 30'000 iters
     ls.scratch_cpu_fj[0].wait_for_cpu_solver();
@@ -376,7 +369,6 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   if (check_b_b_preemption()) { return population.best_feasible(); }
   if (!diversity_config.fj_only_run) {
     compute_probing_cache(ls.constraint_prop.bounds_update, *problem_ptr, probing_timer);
-    probing_timer.record_work(0);
   }
 
   if (check_b_b_preemption()) { return population.best_feasible(); }
@@ -386,7 +378,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   bool bb_thread_solution_exists = simplex_solution_exists.load();
   if (bb_thread_solution_exists) {
     ls.lp_optimal_exists = true;
-  } else if (!diversity_config.fj_only_run || true) {
+  } else if (!diversity_config.fj_only_run) {
     relaxed_lp_settings_t lp_settings;
     lp_settings.time_limit            = lp_time_limit;
     lp_settings.work_limit            = lp_time_limit;
@@ -830,11 +822,7 @@ void diversity_manager_t<i_t, f_t>::set_simplex_solution(const std::vector<f_t>&
 template <typename i_t, typename f_t>
 bool diversity_manager_t<i_t, f_t>::work_limit_reached()
 {
-  if (context.settings.deterministic) {
-    return remaining_work_limit <= 0;
-  } else {
-    return work_limit_reached();
-  }
+  return timer.check_time_limit();
 }
 
 #if MIP_INSTANTIATE_FLOAT

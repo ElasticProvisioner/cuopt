@@ -68,7 +68,7 @@ f_t bounds_repair_t<i_t, f_t>::get_ii_violation(problem_t<i_t, f_t>& problem)
      min_act              = bound_presolve.upd.min_activity.data(),
      max_act              = bound_presolve.upd.max_activity.data(),
      cstr_violations_up   = cstr_violations_up.data(),
-     cstr_violations_down = cstr_violations_down.data()] __device__(i_t cstr_idx) -> f_t {
+     cstr_violations_down = cstr_violations_down.data()] __device__(i_t cstr_idx) {
       f_t cnst_lb = pb_v.constraint_lower_bounds[cstr_idx];
       f_t cnst_ub = pb_v.constraint_upper_bounds[cstr_idx];
       f_t eps     = get_cstr_tolerance<i_t, f_t>(

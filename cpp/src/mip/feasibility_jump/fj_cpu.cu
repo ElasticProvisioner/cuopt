@@ -5,28 +5,6 @@
  */
 /* clang-format on */
 
-/*
- * MEMORY OPERATION ANNOTATIONS:
- *
- * This file contains detailed comments marking all memory operations (array reads and writes)
- * within loops for the CPU Feasibility Jump (CPUFJ) algorithm. These annotations are intended
- * to help estimate the memory bandwidth requirements and runtime of this memory-bound workload.
- *
- * Key annotations:
- * - "MEMORY OPS:" marks the start of a loop that performs memory operations
- * - "ARRAY READ:" marks array read operations with array name and count per iteration
- * - "ARRAY WRITE:" marks array write operations with array name and count per iteration
- * - "CRITICAL LOOP" or "HOTTEST LOOP" marks the most frequently executed loops
- * - "Total per iteration:" summarizes memory ops per loop iteration
- *
- * Important notation:
- * - n_vars: number of variables
- * - n_cstrs: number of constraints
- * - avg_var_degree: average number of constraints per variable
- * - avg_cstr_degree: average number of variables per constraint
- * - total_nnz: total non-zeros in constraint matrix
- */
-
 #include <mip/mip_constants.hpp>
 
 #include "feasibility_jump.cuh"
@@ -1716,7 +1694,7 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
       auto [loads, stores] = fj_cpu.memory_manifold.collect();
 
       // Log all features including memory statistics
-      log_regression_features(fj_cpu, time_window_ms, total_time_ms, loads, stores);
+      // log_regression_features(fj_cpu, time_window_ms, total_time_ms, loads, stores);
 
       fj_cpu.last_feature_log_time = now;
 

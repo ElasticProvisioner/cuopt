@@ -80,7 +80,6 @@ class diversity_manager_t {
   std::atomic<bool> simplex_solution_exists{false};
   local_search_t<i_t, f_t> ls;
   cuopt::work_limit_timer_t timer;
-  f_t remaining_work_limit{std::numeric_limits<f_t>::infinity()};
   bound_prop_recombiner_t<i_t, f_t> bound_prop_recombiner;
   fp_recombiner_t<i_t, f_t> fp_recombiner;
   line_segment_recombiner_t<i_t, f_t> line_segment_recombiner;

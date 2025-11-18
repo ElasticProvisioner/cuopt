@@ -23,6 +23,7 @@
  *   // When enabled: tracking occurs, counters accumulate
  *   // When disabled: direct passthrough, compiler optimizes away all overhead
  */
+// Thank you Cursor!
 
 #pragma once
 
