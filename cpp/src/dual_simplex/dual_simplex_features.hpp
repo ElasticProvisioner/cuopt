@@ -59,6 +59,9 @@ struct dual_simplex_features_t {
   size_t byte_loads{0};   // total bytes loaded
   size_t byte_stores{0};  // total bytes stored
 
+  // Runtime for the interval (in seconds)
+  f_t interval_runtime{0.0};
+
   /**
    * @brief Initialize static features from problem data.
    */
@@ -113,7 +116,7 @@ struct dual_simplex_features_t {
       "DS_FEATURES: iter=%d m=%d n=%d nnz=%d density=%.6e avg_nnz_col=%.2f avg_nnz_row=%.2f "
       "bounded=%d free=%d fixed=%d phase=%d refact_freq=%d num_refacts=%d num_updates=%d "
       "sparse_dz=%d dense_dz=%d bound_flips=%d num_infeas=%d dy_nz_pct=%.2f "
-      "byte_loads=%zu byte_stores=%zu\n",
+      "byte_loads=%zu byte_stores=%zu runtime=%.6f\n",
       iteration,
       num_rows,
       num_cols,
@@ -134,7 +137,8 @@ struct dual_simplex_features_t {
       num_infeasibilities,
       delta_y_nz_percentage,
       byte_loads,
-      byte_stores);
+      byte_stores,
+      interval_runtime);
   }
 
   /**
@@ -142,8 +146,9 @@ struct dual_simplex_features_t {
    */
   void reset_interval_counters()
   {
-    byte_loads  = 0;
-    byte_stores = 0;
+    byte_loads       = 0;
+    byte_stores      = 0;
+    interval_runtime = 0.0;
   }
 };
 

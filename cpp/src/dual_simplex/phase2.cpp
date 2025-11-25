@@ -699,7 +699,7 @@ void update_primal_infeasibilities(const lp_problem_t<i_t, f_t>& lp,
                                    const std::vector<f_t>& x,
                                    i_t entering_index,
                                    i_t leaving_index,
-                                   std::vector<i_t>& basic_change_list,
+                                   ins_vector<i_t>& basic_change_list,
                                    ins_vector<f_t>& squared_infeasibilities,
                                    ins_vector<i_t>& infeasibility_indices,
                                    f_t& primal_inf)
@@ -906,7 +906,7 @@ f_t first_stage_harris(const lp_problem_t<i_t, f_t>& lp,
                        const std::vector<variable_status_t>& vstatus,
                        const std::vector<i_t>& nonbasic_list,
                        std::vector<f_t>& z,
-                       std::vector<f_t>& delta_z)
+                       ins_vector<f_t>& delta_z)
 {
   const i_t n             = lp.num_cols;
   const i_t m             = lp.num_rows;
@@ -940,7 +940,7 @@ i_t second_stage_harris(const lp_problem_t<i_t, f_t>& lp,
                         const std::vector<variable_status_t>& vstatus,
                         const std::vector<i_t>& nonbasic_list,
                         const std::vector<f_t>& z,
-                        const std::vector<f_t>& delta_z,
+                        const ins_vector<f_t>& delta_z,
                         f_t max_step_length,
                         f_t& step_length,
                         i_t& nonbasic_entering)
@@ -983,7 +983,7 @@ i_t phase2_ratio_test(const lp_problem_t<i_t, f_t>& lp,
                       const std::vector<variable_status_t>& vstatus,
                       const std::vector<i_t>& nonbasic_list,
                       std::vector<f_t>& z,
-                      std::vector<f_t>& delta_z,
+                      ins_vector<f_t>& delta_z,
                       f_t& step_length,
                       i_t& nonbasic_entering)
 {
@@ -1056,7 +1056,7 @@ i_t flip_bounds(const lp_problem_t<i_t, f_t>& lp,
       settings.dual_tol;  // lower to 1e-7 or less will cause 25fv47 and d2q06c to cycle
     if (vstatus[j] == variable_status_t::NONBASIC_LOWER && z[j] < -dual_tol) {
       const f_t delta = lp.upper[j] - lp.lower[j];
-      scatter_dense(lp.A, j, -delta, atilde.array, atilde_mark.array, atilde_index.array);
+      scatter_dense(lp.A, j, -delta, atilde, atilde_mark, atilde_index);
       delta_x_flip[j] += delta;
       vstatus[j] = variable_status_t::NONBASIC_UPPER;
 #ifdef BOUND_FLIP_DEBUG
@@ -1066,7 +1066,7 @@ i_t flip_bounds(const lp_problem_t<i_t, f_t>& lp,
       num_flipped++;
     } else if (vstatus[j] == variable_status_t::NONBASIC_UPPER && z[j] > dual_tol) {
       const f_t delta = lp.lower[j] - lp.upper[j];
-      scatter_dense(lp.A, j, -delta, atilde.array, atilde_mark.array, atilde_index.array);
+      scatter_dense(lp.A, j, -delta, atilde, atilde_mark, atilde_index);
       delta_x_flip[j] += delta;
       vstatus[j] = variable_status_t::NONBASIC_LOWER;
 #ifdef BOUND_FLIP_DEBUG
@@ -1565,12 +1565,12 @@ i_t compute_delta_x(const lp_problem_t<i_t, f_t>& lp,
                     i_t basic_leaving_index,
                     i_t direction,
                     const std::vector<i_t>& basic_list,
-                    const std::vector<f_t>& delta_x_flip,
+                    const ins_vector<f_t>& delta_x_flip,
                     const sparse_vector_t<i_t, f_t>& rhs_sparse,
                     const std::vector<f_t>& x,
                     sparse_vector_t<i_t, f_t>& utilde_sparse,
                     sparse_vector_t<i_t, f_t>& scaled_delta_xB_sparse,
-                    std::vector<f_t>& delta_x)
+                    ins_vector<f_t>& delta_x)
 {
   f_t delta_x_leaving = direction == 1 ? lp.lower[leaving_index] - x[leaving_index]
                                        : lp.upper[leaving_index] - x[leaving_index];
@@ -1644,7 +1644,7 @@ void update_primal_variables(const sparse_vector_t<i_t, f_t>& scaled_delta_xB_sp
 
 template <typename i_t, typename f_t>
 void update_objective(const std::vector<i_t>& basic_list,
-                      const std::vector<i_t>& changed_basic_indices,
+                      const ins_vector<i_t>& changed_basic_indices,
                       const std::vector<f_t>& objective,
                       const ins_vector<f_t>& delta_x,
                       i_t entering_index,
@@ -2442,6 +2442,14 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
   manifold.add("atilde_sparse.i", atilde_sparse.i);
   manifold.add("atilde_sparse.x", atilde_sparse.x);
 
+  // Add A_transpose matrix arrays to manifold for memory tracking
+  manifold.add("A_transpose.col_start", A_transpose.col_start);
+  manifold.add("A_transpose.i", A_transpose.i);
+  manifold.add("A_transpose.x", A_transpose.x);
+
+  // Track iteration interval start time for runtime measurement
+  f_t interval_start_time = toc(start_time);
+
   // Note: Features are logged inline with DS_FEATURES: prefix
 
   while (iter < iter_limit) {
@@ -2539,7 +2547,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     } else {
       dense_delta_z++;
       // delta_zB = sigma*ei
-      delta_y_sparse.to_dense(delta_y.array);
+      delta_y_sparse.to_dense(delta_y);
       phase2::compute_reduced_cost_update(lp,
                                           basic_list,
                                           nonbasic_list,
@@ -3039,6 +3047,10 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
       auto [total_loads, total_stores] = manifold.collect_and_flush();
       features.byte_loads              = total_loads;
       features.byte_stores             = total_stores;
+
+      // Compute interval runtime
+      features.interval_runtime = now - interval_start_time;
+      interval_start_time       = now;
 
       // Update dynamic features
       features.iteration             = iter;

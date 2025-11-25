@@ -88,6 +88,17 @@ void sparse_vector_t<i_t, f_t>::to_dense(std::vector<f_t>& x_dense) const
 }
 
 template <typename i_t, typename f_t>
+void sparse_vector_t<i_t, f_t>::to_dense(ins_vector<f_t>& x_dense) const
+{
+  x_dense.clear();
+  x_dense.resize(n, 0.0);
+  const i_t nz = i.size();
+  for (i_t k = 0; k < nz; ++k) {
+    x_dense[i[k]] = x[k];
+  }
+}
+
+template <typename i_t, typename f_t>
 void sparse_vector_t<i_t, f_t>::scatter(std::vector<f_t>& x_dense) const
 {
   // Assumes x_dense is already cleared

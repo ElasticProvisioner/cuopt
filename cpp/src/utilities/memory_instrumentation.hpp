@@ -37,6 +37,12 @@
 
 #define CUOPT_ENABLE_MEMORY_INSTRUMENTATION 1
 
+#ifdef __NVCC__
+#define HDI inline __host__ __device__
+#else
+#define HDI inline
+#endif
+
 namespace cuopt {
 
 // Define CUOPT_ENABLE_MEMORY_INSTRUMENTATION to enable memory tracking
@@ -45,22 +51,22 @@ namespace cuopt {
 // Base class for memory operation instrumentation
 struct memory_instrumentation_base_t {
 #ifdef CUOPT_ENABLE_MEMORY_INSTRUMENTATION
-  __host__ __device__ void reset_counters() const { byte_loads = byte_stores = 0; }
+  HDI void reset_counters() const { byte_loads = byte_stores = 0; }
 
   template <typename T>
-  __host__ __device__ void record_load() const
+  HDI void record_load() const
   {
     byte_loads += sizeof(T);
   }
 
   template <typename T>
-  __host__ __device__ void record_store() const
+  HDI void record_store() const
   {
     byte_stores += sizeof(T);
   }
 
   template <typename T>
-  __host__ __device__ void record_rmw() const
+  HDI void record_rmw() const
   {
     byte_loads += sizeof(T);
     byte_stores += sizeof(T);
@@ -70,17 +76,17 @@ struct memory_instrumentation_base_t {
   mutable size_t byte_stores{0};
 #else
   // No-op methods when instrumentation is disabled - these inline away to zero overhead
-  __host__ __device__ void reset_counters() const {}
+  HDI void reset_counters() const {}
   template <typename T>
-  __host__ __device__ void record_load() const
+  HDI void record_load() const
   {
   }
   template <typename T>
-  __host__ __device__ void record_store() const
+  HDI void record_store() const
   {
   }
   template <typename T>
-  __host__ __device__ void record_rmw() const
+  HDI void record_rmw() const
   {
   }
 #endif  // CUOPT_ENABLE_MEMORY_INSTRUMENTATION
@@ -530,15 +536,61 @@ struct memop_instrumentation_wrapper_t : public memory_instrumentation_base_t {
     }
   }
 
-  // Copy/move from wrapper
-  memop_instrumentation_wrapper_t(const memop_instrumentation_wrapper_t&)            = default;
-  memop_instrumentation_wrapper_t(memop_instrumentation_wrapper_t&&)                 = default;
-  memop_instrumentation_wrapper_t& operator=(const memop_instrumentation_wrapper_t&) = default;
-  memop_instrumentation_wrapper_t& operator=(memop_instrumentation_wrapper_t&&)      = default;
+  // Copy constructor - must update data_ptr to point to our own array
+  memop_instrumentation_wrapper_t(const memop_instrumentation_wrapper_t& other)
+    : memory_instrumentation_base_t(other), array(other.array)
+  {
+    if constexpr (type_traits_utils::has_data<T>::value) {
+      data_ptr = array.data();
+    } else {
+      data_ptr = nullptr;
+    }
+  }
+
+  // Move constructor - must update data_ptr to point to our own array
+  memop_instrumentation_wrapper_t(memop_instrumentation_wrapper_t&& other) noexcept
+    : memory_instrumentation_base_t(std::move(other)), array(std::move(other.array))
+  {
+    if constexpr (type_traits_utils::has_data<T>::value) {
+      data_ptr = array.data();
+    } else {
+      data_ptr = nullptr;
+    }
+  }
+
+  // Copy assignment - must update data_ptr to point to our own array
+  memop_instrumentation_wrapper_t& operator=(const memop_instrumentation_wrapper_t& other)
+  {
+    if (this != &other) {
+      memory_instrumentation_base_t::operator=(other);
+      array = other.array;
+      if constexpr (type_traits_utils::has_data<T>::value) {
+        data_ptr = array.data();
+      } else {
+        data_ptr = nullptr;
+      }
+    }
+    return *this;
+  }
+
+  // Move assignment - must update data_ptr to point to our own array
+  memop_instrumentation_wrapper_t& operator=(memop_instrumentation_wrapper_t&& other) noexcept
+  {
+    if (this != &other) {
+      memory_instrumentation_base_t::operator=(std::move(other));
+      array = std::move(other.array);
+      if constexpr (type_traits_utils::has_data<T>::value) {
+        data_ptr = array.data();
+      } else {
+        data_ptr = nullptr;
+      }
+    }
+    return *this;
+  }
 
   element_proxy_t operator[](size_type index) { return element_proxy_t(array[index], *this); }
 
-  __host__ __device__ value_type operator[](size_type index) const
+  HDI value_type operator[](size_type index) const
   {
     this->template record_load<value_type>();
     // really ugly hack because otherwise nvcc complains about vector operator[] being __host__ only

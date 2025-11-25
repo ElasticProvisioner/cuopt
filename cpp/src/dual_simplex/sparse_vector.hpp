@@ -22,7 +22,7 @@ using cuopt::ins_vector;
 template <typename i_t, typename f_t>
 class sparse_vector_t {
  public:
-  sparse_vector_t() : n(0), i({}), x({}) {}
+  sparse_vector_t() : n(0), i(), x() {}
   // Construct a sparse vector of dimension n with nz nonzero coefficients
   sparse_vector_t(i_t n, i_t nz) : n(n), i(nz), x(nz) {}
   // Construct a sparse vector from a dense vector.
@@ -35,6 +35,8 @@ class sparse_vector_t {
   void to_csc(csc_matrix_t<i_t, f_t>& A) const;
   // convert a sparse vector into a dense vector. Dense vector is cleared and resized.
   void to_dense(std::vector<f_t>& x_dense) const;
+  // convert a sparse vector into an instrumented dense vector.
+  void to_dense(ins_vector<f_t>& x_dense) const;
   // scatter a sparse vector into a dense vector. Assumes x_dense is already cleared or
   // preinitialized
   void scatter(std::vector<f_t>& x_dense) const;

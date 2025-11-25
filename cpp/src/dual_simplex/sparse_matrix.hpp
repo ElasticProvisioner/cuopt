@@ -9,11 +9,15 @@
 
 #include <dual_simplex/types.hpp>
 #include <dual_simplex/vector_math.hpp>
+#include <utilities/memory_instrumentation.hpp>
 
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <vector>
+
+// Import instrumented vector
+using cuopt::ins_vector;
 
 namespace cuopt::linear_programming::dual_simplex {
 
@@ -110,12 +114,12 @@ class csc_matrix_t {
 
   size_t hash() const;
 
-  i_t m;                       // number of rows
-  i_t n;                       // number of columns
-  i_t nz_max;                  // maximum number of entries
-  std::vector<i_t> col_start;  // column pointers (size n + 1)
-  std::vector<i_t> i;          // row indices, size nz_max
-  std::vector<f_t> x;          // numerical values, size nz_max
+  i_t m;                      // number of rows
+  i_t n;                      // number of columns
+  i_t nz_max;                 // maximum number of entries
+  ins_vector<i_t> col_start;  // column pointers (size n + 1)
+  ins_vector<i_t> i;          // row indices, size nz_max
+  ins_vector<f_t> x;          // numerical values, size nz_max
 
   static_assert(std::is_signed_v<i_t>);  // Require signed integers (we make use of this
                                          // to avoid extra space / computation)
@@ -139,18 +143,18 @@ class csr_matrix_t {
   // Ensures no repeated column indices within a row
   void check_matrix() const;
 
-  i_t nz_max;                  // maximum number of nonzero entries
-  i_t m;                       // number of rows
-  i_t n;                       // number of cols
-  std::vector<i_t> row_start;  // row pointers (size m + 1)
-  std::vector<i_t> j;          // column inidices, size nz_max
-  std::vector<f_t> x;          // numerical valuse, size nz_max
+  i_t nz_max;                 // maximum number of nonzero entries
+  i_t m;                      // number of rows
+  i_t n;                      // number of cols
+  ins_vector<i_t> row_start;  // row pointers (size m + 1)
+  ins_vector<i_t> j;          // column inidices, size nz_max
+  ins_vector<f_t> x;          // numerical valuse, size nz_max
 
   static_assert(std::is_signed_v<i_t>);
 };
 
-template <typename i_t>
-void cumulative_sum(std::vector<i_t>& inout, std::vector<i_t>& output);
+template <typename i_t, typename OutputVector>
+void cumulative_sum(std::vector<i_t>& inout, OutputVector& output);
 
 template <typename i_t, typename f_t>
 i_t coo_to_csc(const std::vector<i_t>& Ai,
@@ -179,6 +183,18 @@ void scatter_dense(const csc_matrix_t<i_t, f_t>& A,
                    std::vector<f_t>& x,
                    std::vector<i_t>& mark,
                    std::vector<i_t>& indices);
+
+// Instrumented vector overloads
+template <typename i_t, typename f_t>
+void scatter_dense(const csc_matrix_t<i_t, f_t>& A, i_t j, f_t alpha, ins_vector<f_t>& x);
+
+template <typename i_t, typename f_t>
+void scatter_dense(const csc_matrix_t<i_t, f_t>& A,
+                   i_t j,
+                   f_t alpha,
+                   ins_vector<f_t>& x,
+                   ins_vector<i_t>& mark,
+                   ins_vector<i_t>& indices);
 
 // Compute C = A*B where C is m x n, A is m x k, and B = k x n
 // Do this by computing C(:, j) = A*B(:, j) = sum (i=1 to k) A(:, k)*B(i, j)
