@@ -1,19 +1,9 @@
+/* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
+/* clang-format on */
 
 #include "relaxed_lp.cuh"
 
@@ -53,8 +43,11 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   pdlp_solver_settings_t<i_t, f_t> pdlp_settings{};
   pdlp_settings.detect_infeasibility = settings.check_infeasibility;
   pdlp_settings.set_optimality_tolerance(settings.tolerance);
-  pdlp_settings.tolerances.relative_primal_tolerance = settings.tolerance / 100.;
-  pdlp_settings.tolerances.relative_dual_tolerance   = settings.tolerance / 100.;
+  f_t tolerance_divisor =
+    op_problem.tolerances.absolute_tolerance / op_problem.tolerances.relative_tolerance;
+  if (tolerance_divisor == 0) { tolerance_divisor = 1; }
+  pdlp_settings.tolerances.relative_primal_tolerance = settings.tolerance / tolerance_divisor;
+  pdlp_settings.tolerances.relative_dual_tolerance   = settings.tolerance / tolerance_divisor;
   pdlp_settings.time_limit                           = settings.time_limit;
   pdlp_settings.concurrent_halt                      = settings.concurrent_halt;
   pdlp_settings.per_constraint_residual              = settings.per_constraint_residual;

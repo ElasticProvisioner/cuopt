@@ -1,19 +1,9 @@
+/* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
+/* clang-format on */
 
 #include "feasibility_pump.cuh"
 
@@ -142,6 +132,7 @@ bool feasibility_pump_t<i_t, f_t>::linear_project_onto_polytope(solution_t<i_t, 
                                                                 f_t ratio_of_set_integers,
                                                                 bool longer_lp_run)
 {
+  raft::common::nvtx::range fun_scope("linear_project_onto_polytope");
   CUOPT_LOG_DEBUG("linear projection of fp");
   auto h_assignment = solution.get_host_assignment();
   auto h_variable_bounds =
@@ -217,7 +208,7 @@ bool feasibility_pump_t<i_t, f_t>::linear_project_onto_polytope(solution_t<i_t, 
     get_tolerance_from_ratio(ratio_of_set_integers, context.settings.tolerances.absolute_tolerance);
   temp_p.check_problem_representation(true);
   f_t time_limit     = longer_lp_run ? 5. : 1.;
-  time_limit         = std::min(time_limit, timer.remaining_time());
+  time_limit         = std::max(0.05, std::min(time_limit, timer.remaining_time() / 10.));
   static f_t lp_time = 0;
   static i_t n_calls = 0;
   f_t old_remaining  = timer.remaining_time();
@@ -255,7 +246,7 @@ bool feasibility_pump_t<i_t, f_t>::round(solution_t<i_t, f_t>& solution)
 {
   bool result;
   CUOPT_LOG_DEBUG("Rounding the point");
-  timer_t bounds_prop_timer(std::min(0.5, timer.remaining_time()));
+  timer_t bounds_prop_timer(std::max(0.05, std::min(0.5, timer.remaining_time() / 10.)));
   const f_t lp_run_time_after_feasible     = 0.;
   bool old_var                             = constraint_prop.round_all_vars;
   f_t old_time                             = constraint_prop.max_time_for_bounds_prop;
@@ -334,6 +325,7 @@ bool feasibility_pump_t<i_t, f_t>::test_fj_feasible(solution_t<i_t, f_t>& soluti
 template <typename i_t, typename f_t>
 bool feasibility_pump_t<i_t, f_t>::handle_cycle(solution_t<i_t, f_t>& solution)
 {
+  raft::common::nvtx::range fun_scope("handle_cycle");
   CUOPT_LOG_DEBUG("running handle cycle");
   bool is_feasible       = false;
   fp_fj_cycle_time_begin = timer.remaining_time();
@@ -363,6 +355,7 @@ bool feasibility_pump_t<i_t, f_t>::handle_cycle(solution_t<i_t, f_t>& solution)
 template <typename i_t, typename f_t>
 bool feasibility_pump_t<i_t, f_t>::restart_fp(solution_t<i_t, f_t>& solution)
 {
+  raft::common::nvtx::range fun_scope("restart_fp");
   bool is_feasible = handle_cycle(solution);
   // reset the distance
   last_distances.resize(0);
@@ -399,6 +392,7 @@ void feasibility_pump_t<i_t, f_t>::resize_vectors(problem_t<i_t, f_t>& problem,
 template <typename i_t, typename f_t>
 bool feasibility_pump_t<i_t, f_t>::check_distance_cycle(solution_t<i_t, f_t>& solution)
 {
+  raft::common::nvtx::range fun_scope("check_distance_cycle");
   f_t distance_to_last_rounding = compute_l1_distance<i_t, f_t>(
     solution.problem_ptr->integer_indices, last_rounding, solution.assignment, solution.handle_ptr);
 
@@ -426,6 +420,7 @@ bool feasibility_pump_t<i_t, f_t>::check_distance_cycle(solution_t<i_t, f_t>& so
 template <typename i_t, typename f_t>
 void feasibility_pump_t<i_t, f_t>::relax_general_integers(solution_t<i_t, f_t>& solution)
 {
+  raft::common::nvtx::range fun_scope("relax_general_integers");
   orig_variable_types.resize(solution.problem_ptr->n_variables, solution.handle_ptr->get_stream());
 
   auto var_types  = make_span(solution.problem_ptr->variable_types);
@@ -474,6 +469,7 @@ void feasibility_pump_t<i_t, f_t>::revert_relaxation(solution_t<i_t, f_t>& solut
 template <typename i_t, typename f_t>
 bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& solution)
 {
+  raft::common::nvtx::range fun_scope("run_single_fp_descent");
   // start by doing nearest rounding
   solution.round_nearest();
   raft::copy(last_rounding.data(),
@@ -523,7 +519,7 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
       }
       // if the solution is almost on polytope
       else if (last_distances[0] < distance_to_check_for_feasible) {
-        // run the linear projection with full precision to check if it actually is feasible
+        // run the LP with full precision to check if it actually is feasible
         const f_t lp_verify_time_limit = 5.;
         relaxed_lp_settings_t lp_settings;
         lp_settings.time_limit            = lp_verify_time_limit;

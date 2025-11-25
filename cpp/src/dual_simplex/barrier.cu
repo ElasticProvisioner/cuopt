@@ -1,19 +1,9 @@
+/* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
+/* clang-format on */
 
 #include <dual_simplex/barrier.hpp>
 
@@ -1207,12 +1197,13 @@ class iteration_data_t {
   // v = alpha * A * Dinv * A^T * y + beta * v
   void gpu_adat_multiply(f_t alpha,
                          const rmm::device_uvector<f_t>& y,
-                         cusparseDnVecDescr_t cusparse_y,
+                         detail::cusparse_dn_vec_descr_wrapper_t<f_t> const& cusparse_y,
+
                          f_t beta,
                          rmm::device_uvector<f_t>& v,
-                         cusparseDnVecDescr_t cusparse_v,
+                         detail::cusparse_dn_vec_descr_wrapper_t<f_t> const& cusparse_v,
                          rmm::device_uvector<f_t>& u,
-                         cusparseDnVecDescr_t cusparse_u,
+                         detail::cusparse_dn_vec_descr_wrapper_t<f_t> const& cusparse_u,
                          cusparse_view_t<i_t, f_t>& cusparse_view,
                          const rmm::device_uvector<f_t>& d_inv_diag) const
   {
@@ -1396,20 +1387,20 @@ class iteration_data_t {
   pinned_dense_vector_t<i_t, f_t> dz;
   cusparse_info_t<i_t, f_t> cusparse_info;
   cusparse_view_t<i_t, f_t> cusparse_view_;
-  cusparseDnVecDescr_t cusparse_tmp4_;
-  cusparseDnVecDescr_t cusparse_h_;
-  cusparseDnVecDescr_t cusparse_dx_residual_;
-  cusparseDnVecDescr_t cusparse_dy_;
-  cusparseDnVecDescr_t cusparse_dx_residual_5_;
-  cusparseDnVecDescr_t cusparse_dx_residual_6_;
-  cusparseDnVecDescr_t cusparse_dx_;
-  cusparseDnVecDescr_t cusparse_dx_residual_3_;
-  cusparseDnVecDescr_t cusparse_dx_residual_4_;
-  cusparseDnVecDescr_t cusparse_r1_;
-  cusparseDnVecDescr_t cusparse_dual_residual_;
-  cusparseDnVecDescr_t cusparse_y_residual_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_tmp4_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_h_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_dx_residual_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_dy_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_dx_residual_5_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_dx_residual_6_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_dx_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_dx_residual_3_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_dx_residual_4_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_r1_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_dual_residual_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_y_residual_;
   // GPU ADAT multiply
-  cusparseDnVecDescr_t cusparse_u_;
+  detail::cusparse_dn_vec_descr_wrapper_t<f_t> cusparse_u_;
 
   // Device vectors
 
@@ -1487,7 +1478,6 @@ int barrier_solver_t<i_t, f_t>::initial_point(iteration_data_t<i_t, f_t>& data)
   // Perform a numerical factorization
   i_t status;
   if (use_augmented) {
-    settings.log.printf("Factorizing augmented\n");
     status = data.chol->factorize(data.augmented);
   } else {
     if (use_gpu) {
@@ -2290,7 +2280,7 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
       raft::copy(data.d_y_residual_.data(), data.d_h_.data(), data.d_h_.size(), stream_view_);
 
       // TMP should be done only once
-      cusparseDnVecDescr_t cusparse_dy_ = data.cusparse_view_.create_vector(data.d_dy_);
+      auto cusparse_dy_ = data.cusparse_view_.create_vector(data.d_dy_);
 
       data.gpu_adat_multiply(1.0,
                              data.d_dy_,
@@ -2459,9 +2449,8 @@ i_t barrier_solver_t<i_t, f_t>::gpu_compute_search_direction(iteration_data_t<i_
 
       // TMP data should already be on the GPU
       rmm::device_uvector<f_t> d_dx_residual_7(data.d_h_, stream_view_);
-      cusparseDnVecDescr_t cusparse_dy_ = data.cusparse_view_.create_vector(data.d_dy_);
-      cusparseDnVecDescr_t cusparse_dx_residual_7 =
-        data.cusparse_view_.create_vector(d_dx_residual_7);
+      auto cusparse_dy_           = data.cusparse_view_.create_vector(data.d_dy_);
+      auto cusparse_dx_residual_7 = data.cusparse_view_.create_vector(d_dx_residual_7);
 
       // matrix_vector_multiply(data.ADAT, 1.0, dy, -1.0, dx_residual_7);
       data.gpu_adat_multiply(1.0,
@@ -3243,331 +3232,343 @@ lp_status_t barrier_solver_t<i_t, f_t>::solve(f_t start_time,
                                               const barrier_solver_settings_t<i_t, f_t>& options,
                                               lp_solution_t<i_t, f_t>& solution)
 {
-  raft::common::nvtx::range fun_scope("Barrier: solve");
+  try {
+    raft::common::nvtx::range fun_scope("Barrier: solve");
 
-  i_t n = lp.num_cols;
-  i_t m = lp.num_rows;
+    i_t n = lp.num_cols;
+    i_t m = lp.num_rows;
 
-  solution.resize(m, n);
-  settings.log.printf(
-    "Barrier solver: %d constraints, %d variables, %ld nonzeros\n", m, n, lp.A.col_start[n]);
-  settings.log.printf("\n");
+    solution.resize(m, n);
+    settings.log.printf(
+      "Barrier solver: %d constraints, %d variables, %ld nonzeros\n", m, n, lp.A.col_start[n]);
+    settings.log.printf("\n");
 
-  // Compute the number of free variables
-  i_t num_free_variables = presolve_info.free_variable_pairs.size() / 2;
-  if (num_free_variables > 0) {
-    settings.log.printf("Free variables              : %d\n", num_free_variables);
-  }
-
-  // Compute the number of upper bounds
-  i_t num_upper_bounds = 0;
-  for (i_t j = 0; j < n; j++) {
-    if (lp.upper[j] < inf) { num_upper_bounds++; }
-  }
-
-  iteration_data_t<i_t, f_t> data(lp, num_upper_bounds, settings);
-  if (data.symbolic_status != 0) {
-    settings.log.printf("Error in symbolic analysis\n");
-    return lp_status_t::NUMERICAL_ISSUES;
-  }
-  if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
-    settings.log.printf("Barrier solver halted\n");
-    return lp_status_t::CONCURRENT_LIMIT;
-  }
-  data.cusparse_dual_residual_ = data.cusparse_view_.create_vector(data.d_dual_residual_);
-  data.cusparse_r1_            = data.cusparse_view_.create_vector(data.d_r1_);
-  data.cusparse_tmp4_          = data.cusparse_view_.create_vector(data.d_tmp4_);
-  data.cusparse_h_             = data.cusparse_view_.create_vector(data.d_h_);
-  data.cusparse_dx_residual_   = data.cusparse_view_.create_vector(data.d_dx_residual_);
-  data.cusparse_u_             = data.cusparse_view_.create_vector(data.d_u_);
-  data.cusparse_y_residual_    = data.cusparse_view_.create_vector(data.d_y_residual_);
-  data.restrict_u_.resize(num_upper_bounds);
-
-  if (toc(start_time) > settings.time_limit) {
-    settings.log.printf("Barrier time limit exceeded\n");
-    return lp_status_t::TIME_LIMIT;
-  }
-
-  i_t initial_status = initial_point(data);
-  if (toc(start_time) > settings.time_limit) {
-    settings.log.printf("Barrier time limit exceeded\n");
-    return lp_status_t::TIME_LIMIT;
-  }
-  if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
-    settings.log.printf("Barrier solver halted\n");
-    return lp_status_t::CONCURRENT_LIMIT;
-  }
-  if (initial_status != 0) {
-    settings.log.printf("Unable to compute initial point\n");
-    return lp_status_t::NUMERICAL_ISSUES;
-  }
-  compute_residuals<PinnedHostAllocator<f_t>>(data.w, data.x, data.y, data.v, data.z, data);
-
-  f_t primal_residual_norm = std::max(vector_norm_inf<i_t, f_t>(data.primal_residual, stream_view_),
-                                      vector_norm_inf<i_t, f_t>(data.bound_residual, stream_view_));
-  f_t dual_residual_norm   = vector_norm_inf<i_t, f_t>(data.dual_residual, stream_view_);
-  f_t complementarity_residual_norm =
-    std::max(vector_norm_inf<i_t, f_t>(data.complementarity_xz_residual, stream_view_),
-             vector_norm_inf<i_t, f_t>(data.complementarity_wv_residual, stream_view_));
-  f_t mu = (data.complementarity_xz_residual.sum() + data.complementarity_wv_residual.sum()) /
-           (static_cast<f_t>(n) + static_cast<f_t>(num_upper_bounds));
-
-  f_t norm_b = vector_norm_inf<i_t, f_t>(data.b, stream_view_);
-  f_t norm_c = vector_norm_inf<i_t, f_t>(data.c, stream_view_);
-
-  f_t primal_objective = data.c.inner_product(data.x);
-
-  f_t relative_primal_residual = primal_residual_norm / (1.0 + norm_b);
-  f_t relative_dual_residual   = dual_residual_norm / (1.0 + norm_c);
-  f_t relative_complementarity_residual =
-    complementarity_residual_norm / (1.0 + std::abs(primal_objective));
-
-  dense_vector_t<i_t, f_t> upper(lp.upper);
-  data.gather_upper_bounds(upper, data.restrict_u_);
-  f_t dual_objective = data.b.inner_product(data.y) - data.restrict_u_.inner_product(data.v);
-
-  i_t iter = 0;
-  settings.log.printf("\n");
-  settings.log.printf(
-    "        Objective                            Infeasibility              Time\n");
-  settings.log.printf(
-    "Iter    Primal               Dual            Primal   Dual    Compl.    Elapsed\n");
-  float64_t elapsed_time = toc(start_time);
-  settings.log.printf("%3d   %+.12e %+.12e %.2e %.2e %.2e %.1f\n",
-                      iter,
-                      primal_objective,
-                      dual_objective,
-                      primal_residual_norm,
-                      dual_residual_norm,
-                      complementarity_residual_norm,
-                      elapsed_time);
-
-  bool converged = primal_residual_norm < settings.barrier_relative_feasibility_tol &&
-                   dual_residual_norm < settings.barrier_relative_optimality_tol &&
-                   complementarity_residual_norm < settings.barrier_relative_complementarity_tol;
-
-  data.d_complementarity_xz_residual_.resize(data.complementarity_xz_residual.size(), stream_view_);
-  data.d_complementarity_wv_residual_.resize(data.complementarity_wv_residual.size(), stream_view_);
-  data.d_complementarity_xz_rhs_.resize(data.complementarity_xz_rhs.size(), stream_view_);
-  data.d_complementarity_wv_rhs_.resize(data.complementarity_wv_rhs.size(), stream_view_);
-  raft::copy(data.d_complementarity_xz_residual_.data(),
-             data.complementarity_xz_residual.data(),
-             data.complementarity_xz_residual.size(),
-             stream_view_);
-  raft::copy(data.d_complementarity_wv_residual_.data(),
-             data.complementarity_wv_residual.data(),
-             data.complementarity_wv_residual.size(),
-             stream_view_);
-  raft::copy(data.d_complementarity_xz_rhs_.data(),
-             data.complementarity_xz_rhs.data(),
-             data.complementarity_xz_rhs.size(),
-             stream_view_);
-  raft::copy(data.d_complementarity_wv_rhs_.data(),
-             data.complementarity_wv_rhs.data(),
-             data.complementarity_wv_rhs.size(),
-             stream_view_);
-
-  data.w_save = data.w;
-  data.x_save = data.x;
-  data.y_save = data.y;
-  data.v_save = data.v;
-  data.z_save = data.z;
-
-  const i_t iteration_limit = settings.iteration_limit;
-
-  while (iter < iteration_limit) {
-    raft::common::nvtx::range fun_scope("Barrier: iteration");
-
-    if (toc(start_time) > settings.time_limit) {
-      settings.log.printf("Barrier time limit exceeded\n");
-      return lp_status_t::TIME_LIMIT;
+    // Compute the number of free variables
+    i_t num_free_variables = presolve_info.free_variable_pairs.size() / 2;
+    if (num_free_variables > 0) {
+      settings.log.printf("Free variables              : %d\n", num_free_variables);
     }
+
+    // Compute the number of upper bounds
+    i_t num_upper_bounds = 0;
+    for (i_t j = 0; j < n; j++) {
+      if (lp.upper[j] < inf) { num_upper_bounds++; }
+    }
+
+    iteration_data_t<i_t, f_t> data(lp, num_upper_bounds, settings);
     if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
       settings.log.printf("Barrier solver halted\n");
       return lp_status_t::CONCURRENT_LIMIT;
     }
-
-    // Compute the affine step
-    compute_affine_rhs(data);
-    f_t max_affine_residual = 0.0;
-
-    i_t status = gpu_compute_search_direction(
-      data, data.dw_aff, data.dx_aff, data.dy_aff, data.dv_aff, data.dz_aff, max_affine_residual);
-    if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
-      settings.log.printf("Barrier solver halted\n");
-      return lp_status_t::CONCURRENT_LIMIT;
-    }
-    // Sync to make sure all the async copies to host done inside are finished
-    if (use_gpu) RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
-
-    if (status < 0) {
-      return check_for_suboptimal_solution(options,
-                                           data,
-                                           start_time,
-                                           iter,
-                                           primal_objective,
-                                           primal_residual_norm,
-                                           dual_residual_norm,
-                                           complementarity_residual_norm,
-                                           relative_primal_residual,
-                                           relative_dual_residual,
-                                           relative_complementarity_residual,
-                                           solution);
-    }
-    if (toc(start_time) > settings.time_limit) {
-      settings.log.printf("Barrier time limit exceeded\n");
-      return lp_status_t::TIME_LIMIT;
-    }
-    if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
-      settings.log.printf("Barrier solver halted\n");
-      return lp_status_t::CONCURRENT_LIMIT;
-    }
-
-    f_t mu_aff, sigma, new_mu;
-    compute_target_mu(data, mu, mu_aff, sigma, new_mu);
-
-    compute_cc_rhs(data, new_mu);
-
-    f_t max_corrector_residual = 0.0;
-
-    status = gpu_compute_search_direction(
-      data, data.dw, data.dx, data.dy, data.dv, data.dz, max_corrector_residual);
-    if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
-      settings.log.printf("Barrier solver halted\n");
-      return lp_status_t::CONCURRENT_LIMIT;
-    }
-    // Sync to make sure all the async copies to host done inside are finished
-    if (use_gpu) RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
-    if (status < 0) {
-      return check_for_suboptimal_solution(options,
-                                           data,
-                                           start_time,
-                                           iter,
-                                           primal_objective,
-                                           primal_residual_norm,
-                                           dual_residual_norm,
-                                           complementarity_residual_norm,
-                                           relative_primal_residual,
-                                           relative_dual_residual,
-                                           relative_complementarity_residual,
-                                           solution);
-    }
-    data.has_factorization = false;
-    data.has_solve_info    = false;
-    if (toc(start_time) > settings.time_limit) {
-      settings.log.printf("Barrier time limit exceeded\n");
-      return lp_status_t::TIME_LIMIT;
-    }
-    if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
-      settings.log.printf("Barrier solver halted\n");
-      return lp_status_t::CONCURRENT_LIMIT;
-    }
-
-    compute_final_direction(data);
-    f_t step_primal, step_dual;
-    compute_primal_dual_step_length(data, options.step_scale, step_primal, step_dual);
-    compute_next_iterate(data, options.step_scale, step_primal, step_dual);
-
-    compute_residual_norms(
-      data, primal_residual_norm, dual_residual_norm, complementarity_residual_norm);
-
-    compute_mu(data, mu);
-
-    compute_primal_dual_objective(data, primal_objective, dual_objective);
-
-    relative_primal_residual = primal_residual_norm / (1.0 + norm_b);
-    relative_dual_residual   = dual_residual_norm / (1.0 + norm_c);
-    relative_complementarity_residual =
-      complementarity_residual_norm / (1.0 + std::abs(primal_objective));
-
-    if (relative_primal_residual < settings.barrier_relaxed_feasibility_tol &&
-        relative_dual_residual < settings.barrier_relaxed_optimality_tol &&
-        relative_complementarity_residual < settings.barrier_relaxed_complementarity_tol) {
-      if (relative_primal_residual < data.relative_primal_residual_save &&
-          relative_dual_residual < data.relative_dual_residual_save &&
-          relative_complementarity_residual < data.relative_complementarity_residual_save) {
-        settings.log.debug(
-          "Saving solution: feasibility %.2e (%.2e), optimality %.2e (%.2e), complementarity "
-          "%.2e (%.2e)\n",
-          relative_primal_residual,
-          primal_residual_norm,
-          relative_dual_residual,
-          dual_residual_norm,
-          relative_complementarity_residual,
-          complementarity_residual_norm);
-        data.w_save                                 = data.w;
-        data.x_save                                 = data.x;
-        data.y_save                                 = data.y;
-        data.v_save                                 = data.v;
-        data.z_save                                 = data.z;
-        data.relative_primal_residual_save          = relative_primal_residual;
-        data.relative_dual_residual_save            = relative_dual_residual;
-        data.relative_complementarity_residual_save = relative_complementarity_residual;
-        data.primal_residual_norm_save              = primal_residual_norm;
-        data.dual_residual_norm_save                = dual_residual_norm;
-        data.complementarity_residual_norm_save     = complementarity_residual_norm;
-      }
-    }
-
-    iter++;
-    elapsed_time = toc(start_time);
-
-    if (primal_objective != primal_objective || dual_objective != dual_objective) {
-      settings.log.printf("Numerical error in objective\n");
+    if (data.symbolic_status != 0) {
+      settings.log.printf("Error in symbolic analysis\n");
       return lp_status_t::NUMERICAL_ISSUES;
     }
 
+    data.cusparse_dual_residual_ = data.cusparse_view_.create_vector(data.d_dual_residual_);
+    data.cusparse_r1_            = data.cusparse_view_.create_vector(data.d_r1_);
+    data.cusparse_tmp4_          = data.cusparse_view_.create_vector(data.d_tmp4_);
+    data.cusparse_h_             = data.cusparse_view_.create_vector(data.d_h_);
+    data.cusparse_dx_residual_   = data.cusparse_view_.create_vector(data.d_dx_residual_);
+    data.cusparse_u_             = data.cusparse_view_.create_vector(data.d_u_);
+    data.cusparse_y_residual_    = data.cusparse_view_.create_vector(data.d_y_residual_);
+    data.restrict_u_.resize(num_upper_bounds);
+
+    if (toc(start_time) > settings.time_limit) {
+      settings.log.printf("Barrier time limit exceeded\n");
+      return lp_status_t::TIME_LIMIT;
+    }
+
+    i_t initial_status = initial_point(data);
+    if (toc(start_time) > settings.time_limit) {
+      settings.log.printf("Barrier time limit exceeded\n");
+      return lp_status_t::TIME_LIMIT;
+    }
+    if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
+      settings.log.printf("Barrier solver halted\n");
+      return lp_status_t::CONCURRENT_LIMIT;
+    }
+    if (initial_status != 0) {
+      settings.log.printf("Unable to compute initial point\n");
+      return lp_status_t::NUMERICAL_ISSUES;
+    }
+    compute_residuals<PinnedHostAllocator<f_t>>(data.w, data.x, data.y, data.v, data.z, data);
+
+    f_t primal_residual_norm =
+      std::max(vector_norm_inf<i_t, f_t>(data.primal_residual, stream_view_),
+               vector_norm_inf<i_t, f_t>(data.bound_residual, stream_view_));
+    f_t dual_residual_norm = vector_norm_inf<i_t, f_t>(data.dual_residual, stream_view_);
+    f_t complementarity_residual_norm =
+      std::max(vector_norm_inf<i_t, f_t>(data.complementarity_xz_residual, stream_view_),
+               vector_norm_inf<i_t, f_t>(data.complementarity_wv_residual, stream_view_));
+    f_t mu = (data.complementarity_xz_residual.sum() + data.complementarity_wv_residual.sum()) /
+             (static_cast<f_t>(n) + static_cast<f_t>(num_upper_bounds));
+
+    f_t norm_b = vector_norm_inf<i_t, f_t>(data.b, stream_view_);
+    f_t norm_c = vector_norm_inf<i_t, f_t>(data.c, stream_view_);
+
+    f_t primal_objective = data.c.inner_product(data.x);
+
+    f_t relative_primal_residual = primal_residual_norm / (1.0 + norm_b);
+    f_t relative_dual_residual   = dual_residual_norm / (1.0 + norm_c);
+    f_t relative_complementarity_residual =
+      complementarity_residual_norm / (1.0 + std::abs(primal_objective));
+
+    dense_vector_t<i_t, f_t> upper(lp.upper);
+    data.gather_upper_bounds(upper, data.restrict_u_);
+    f_t dual_objective = data.b.inner_product(data.y) - data.restrict_u_.inner_product(data.v);
+
+    i_t iter = 0;
+    settings.log.printf("\n");
+    settings.log.printf(
+      "                  Objective                         Infeasibility        Time\n");
+    settings.log.printf(
+      "Iter   Primal              Dual                Primal   Dual    Compl.   Elapsed\n");
+    float64_t elapsed_time = toc(start_time);
     settings.log.printf("%3d   %+.12e %+.12e %.2e %.2e %.2e %.1f\n",
                         iter,
-                        compute_user_objective(lp, primal_objective),
-                        compute_user_objective(lp, dual_objective),
-                        relative_primal_residual,
-                        relative_dual_residual,
-                        relative_complementarity_residual,
+                        primal_objective,
+                        dual_objective,
+                        primal_residual_norm,
+                        dual_residual_norm,
+                        complementarity_residual_norm,
                         elapsed_time);
 
-    bool primal_feasible = relative_primal_residual < settings.barrier_relative_feasibility_tol;
-    bool dual_feasible   = relative_dual_residual < settings.barrier_relative_optimality_tol;
-    bool small_gap =
-      relative_complementarity_residual < settings.barrier_relative_complementarity_tol;
+    bool converged = primal_residual_norm < settings.barrier_relative_feasibility_tol &&
+                     dual_residual_norm < settings.barrier_relative_optimality_tol &&
+                     complementarity_residual_norm < settings.barrier_relative_complementarity_tol;
 
-    converged = primal_feasible && dual_feasible && small_gap;
+    data.d_complementarity_xz_residual_.resize(data.complementarity_xz_residual.size(),
+                                               stream_view_);
+    data.d_complementarity_wv_residual_.resize(data.complementarity_wv_residual.size(),
+                                               stream_view_);
+    data.d_complementarity_xz_rhs_.resize(data.complementarity_xz_rhs.size(), stream_view_);
+    data.d_complementarity_wv_rhs_.resize(data.complementarity_wv_rhs.size(), stream_view_);
+    raft::copy(data.d_complementarity_xz_residual_.data(),
+               data.complementarity_xz_residual.data(),
+               data.complementarity_xz_residual.size(),
+               stream_view_);
+    raft::copy(data.d_complementarity_wv_residual_.data(),
+               data.complementarity_wv_residual.data(),
+               data.complementarity_wv_residual.size(),
+               stream_view_);
+    raft::copy(data.d_complementarity_xz_rhs_.data(),
+               data.complementarity_xz_rhs.data(),
+               data.complementarity_xz_rhs.size(),
+               stream_view_);
+    raft::copy(data.d_complementarity_wv_rhs_.data(),
+               data.complementarity_wv_rhs.data(),
+               data.complementarity_wv_rhs.size(),
+               stream_view_);
 
-    if (converged) {
-      settings.log.printf("\n");
-      settings.log.printf(
-        "Optimal solution found in %d iterations and %.2fs\n", iter, toc(start_time));
-      settings.log.printf("Objective %+.8e\n", compute_user_objective(lp, primal_objective));
-      settings.log.printf("Primal infeasibility (abs/rel): %8.2e/%8.2e\n",
-                          primal_residual_norm,
-                          relative_primal_residual);
-      settings.log.printf("Dual infeasibility   (abs/rel): %8.2e/%8.2e\n",
-                          dual_residual_norm,
-                          relative_dual_residual);
-      settings.log.printf("Complementarity gap  (abs/rel): %8.2e/%8.2e\n",
-                          complementarity_residual_norm,
-                          relative_complementarity_residual);
-      settings.log.printf("\n");
-      data.to_solution(lp,
-                       iter,
-                       primal_objective,
-                       compute_user_objective(lp, primal_objective),
-                       primal_residual_norm,
-                       dual_residual_norm,
-                       data.cusparse_view_,
-                       solution);
-      return lp_status_t::OPTIMAL;
+    data.w_save = data.w;
+    data.x_save = data.x;
+    data.y_save = data.y;
+    data.v_save = data.v;
+    data.z_save = data.z;
+
+    const i_t iteration_limit = settings.iteration_limit;
+
+    while (iter < iteration_limit) {
+      raft::common::nvtx::range fun_scope("Barrier: iteration");
+
+      if (toc(start_time) > settings.time_limit) {
+        settings.log.printf("Barrier time limit exceeded\n");
+        return lp_status_t::TIME_LIMIT;
+      }
+      if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
+        settings.log.printf("Barrier solver halted\n");
+        return lp_status_t::CONCURRENT_LIMIT;
+      }
+
+      // Compute the affine step
+      compute_affine_rhs(data);
+      f_t max_affine_residual = 0.0;
+
+      i_t status = gpu_compute_search_direction(
+        data, data.dw_aff, data.dx_aff, data.dy_aff, data.dv_aff, data.dz_aff, max_affine_residual);
+      if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
+        settings.log.printf("Barrier solver halted\n");
+        return lp_status_t::CONCURRENT_LIMIT;
+      }
+      // Sync to make sure all the async copies to host done inside are finished
+      if (use_gpu) RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+
+      if (status < 0) {
+        return check_for_suboptimal_solution(options,
+                                             data,
+                                             start_time,
+                                             iter,
+                                             primal_objective,
+                                             primal_residual_norm,
+                                             dual_residual_norm,
+                                             complementarity_residual_norm,
+                                             relative_primal_residual,
+                                             relative_dual_residual,
+                                             relative_complementarity_residual,
+                                             solution);
+      }
+      if (toc(start_time) > settings.time_limit) {
+        settings.log.printf("Barrier time limit exceeded\n");
+        return lp_status_t::TIME_LIMIT;
+      }
+      if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
+        settings.log.printf("Barrier solver halted\n");
+        return lp_status_t::CONCURRENT_LIMIT;
+      }
+
+      f_t mu_aff, sigma, new_mu;
+      compute_target_mu(data, mu, mu_aff, sigma, new_mu);
+
+      compute_cc_rhs(data, new_mu);
+
+      f_t max_corrector_residual = 0.0;
+
+      status = gpu_compute_search_direction(
+        data, data.dw, data.dx, data.dy, data.dv, data.dz, max_corrector_residual);
+      if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
+        settings.log.printf("Barrier solver halted\n");
+        return lp_status_t::CONCURRENT_LIMIT;
+      }
+      // Sync to make sure all the async copies to host done inside are finished
+      if (use_gpu) RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+      if (status < 0) {
+        return check_for_suboptimal_solution(options,
+                                             data,
+                                             start_time,
+                                             iter,
+                                             primal_objective,
+                                             primal_residual_norm,
+                                             dual_residual_norm,
+                                             complementarity_residual_norm,
+                                             relative_primal_residual,
+                                             relative_dual_residual,
+                                             relative_complementarity_residual,
+                                             solution);
+      }
+      data.has_factorization = false;
+      data.has_solve_info    = false;
+      if (toc(start_time) > settings.time_limit) {
+        settings.log.printf("Barrier time limit exceeded\n");
+        return lp_status_t::TIME_LIMIT;
+      }
+      if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
+        settings.log.printf("Barrier solver halted\n");
+        return lp_status_t::CONCURRENT_LIMIT;
+      }
+
+      compute_final_direction(data);
+      f_t step_primal, step_dual;
+      compute_primal_dual_step_length(data, options.step_scale, step_primal, step_dual);
+      compute_next_iterate(data, options.step_scale, step_primal, step_dual);
+
+      compute_residual_norms(
+        data, primal_residual_norm, dual_residual_norm, complementarity_residual_norm);
+
+      compute_mu(data, mu);
+
+      compute_primal_dual_objective(data, primal_objective, dual_objective);
+
+      relative_primal_residual = primal_residual_norm / (1.0 + norm_b);
+      relative_dual_residual   = dual_residual_norm / (1.0 + norm_c);
+      relative_complementarity_residual =
+        complementarity_residual_norm / (1.0 + std::abs(primal_objective));
+
+      if (relative_primal_residual < settings.barrier_relaxed_feasibility_tol &&
+          relative_dual_residual < settings.barrier_relaxed_optimality_tol &&
+          relative_complementarity_residual < settings.barrier_relaxed_complementarity_tol) {
+        if (relative_primal_residual < data.relative_primal_residual_save &&
+            relative_dual_residual < data.relative_dual_residual_save &&
+            relative_complementarity_residual < data.relative_complementarity_residual_save) {
+          settings.log.debug(
+            "Saving solution: feasibility %.2e (%.2e), optimality %.2e (%.2e), complementarity "
+            "%.2e (%.2e)\n",
+            relative_primal_residual,
+            primal_residual_norm,
+            relative_dual_residual,
+            dual_residual_norm,
+            relative_complementarity_residual,
+            complementarity_residual_norm);
+          data.w_save                                 = data.w;
+          data.x_save                                 = data.x;
+          data.y_save                                 = data.y;
+          data.v_save                                 = data.v;
+          data.z_save                                 = data.z;
+          data.relative_primal_residual_save          = relative_primal_residual;
+          data.relative_dual_residual_save            = relative_dual_residual;
+          data.relative_complementarity_residual_save = relative_complementarity_residual;
+          data.primal_residual_norm_save              = primal_residual_norm;
+          data.dual_residual_norm_save                = dual_residual_norm;
+          data.complementarity_residual_norm_save     = complementarity_residual_norm;
+        }
+      }
+
+      iter++;
+      elapsed_time = toc(start_time);
+
+      if (primal_objective != primal_objective || dual_objective != dual_objective) {
+        settings.log.printf("Numerical error in objective\n");
+        return lp_status_t::NUMERICAL_ISSUES;
+      }
+
+      settings.log.printf("%3d   %+.12e %+.12e %.2e %.2e %.2e %.1f\n",
+                          iter,
+                          compute_user_objective(lp, primal_objective),
+                          compute_user_objective(lp, dual_objective),
+                          relative_primal_residual,
+                          relative_dual_residual,
+                          relative_complementarity_residual,
+                          elapsed_time);
+
+      bool primal_feasible = relative_primal_residual < settings.barrier_relative_feasibility_tol;
+      bool dual_feasible   = relative_dual_residual < settings.barrier_relative_optimality_tol;
+      bool small_gap =
+        relative_complementarity_residual < settings.barrier_relative_complementarity_tol;
+
+      converged = primal_feasible && dual_feasible && small_gap;
+
+      if (converged) {
+        settings.log.printf("\n");
+        settings.log.printf(
+          "Optimal solution found in %d iterations and %.2fs\n", iter, toc(start_time));
+        settings.log.printf("Objective %+.8e\n", compute_user_objective(lp, primal_objective));
+        settings.log.printf("Primal infeasibility (abs/rel): %8.2e/%8.2e\n",
+                            primal_residual_norm,
+                            relative_primal_residual);
+        settings.log.printf("Dual infeasibility   (abs/rel): %8.2e/%8.2e\n",
+                            dual_residual_norm,
+                            relative_dual_residual);
+        settings.log.printf("Complementarity gap  (abs/rel): %8.2e/%8.2e\n",
+                            complementarity_residual_norm,
+                            relative_complementarity_residual);
+        settings.log.printf("\n");
+        data.to_solution(lp,
+                         iter,
+                         primal_objective,
+                         compute_user_objective(lp, primal_objective),
+                         primal_residual_norm,
+                         dual_residual_norm,
+                         data.cusparse_view_,
+                         solution);
+        return lp_status_t::OPTIMAL;
+      }
     }
+    data.to_solution(lp,
+                     iter,
+                     primal_objective,
+                     compute_user_objective(lp, primal_objective),
+                     vector_norm2<i_t, f_t>(data.primal_residual),
+                     vector_norm2<i_t, f_t>(data.dual_residual),
+                     data.cusparse_view_,
+                     solution);
+    return lp_status_t::ITERATION_LIMIT;
+  } catch (const raft::cuda_error& e) {
+    settings.log.debug("Error in barrier_solver_t: %s\n", e.what());
+    return lp_status_t::NUMERICAL_ISSUES;
+  } catch (const rmm::out_of_memory& e) {
+    settings.log.debug("Out of memory in barrier_solver_t: %s\n", e.what());
+    return lp_status_t::NUMERICAL_ISSUES;
   }
-  data.to_solution(lp,
-                   iter,
-                   primal_objective,
-                   compute_user_objective(lp, primal_objective),
-                   vector_norm2<i_t, f_t>(data.primal_residual),
-                   vector_norm2<i_t, f_t>(data.dual_residual),
-                   data.cusparse_view_,
-                   solution);
-  return lp_status_t::ITERATION_LIMIT;
 }
 
 #ifdef DUAL_SIMPLEX_INSTANTIATE_DOUBLE

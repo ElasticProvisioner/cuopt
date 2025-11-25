@@ -1,19 +1,9 @@
+/* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
+/* clang-format on */
 #include "initial_solution_reader.hpp"
 #include "mip_test_instances.hpp"
 
@@ -22,18 +12,18 @@
 #include <cuopt/linear_programming/mip/solver_solution.hpp>
 #include <cuopt/linear_programming/optimization_problem.hpp>
 #include <cuopt/linear_programming/solve.hpp>
-#include <cuopt/logger.hpp>
 #include <mps_parser/parser.hpp>
+#include <utilities/logger.hpp>
 
 #include <raft/core/handle.hpp>
 
-#include <rmm/mr/device/cuda_async_memory_resource.hpp>
-#include <rmm/mr/device/limiting_resource_adaptor.hpp>
-#include <rmm/mr/device/logging_resource_adaptor.hpp>
-#include <rmm/mr/device/pool_memory_resource.hpp>
-#include <rmm/mr/device/tracking_resource_adaptor.hpp>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
+#include <rmm/mr/limiting_resource_adaptor.hpp>
+#include <rmm/mr/logging_resource_adaptor.hpp>
+#include <rmm/mr/pool_memory_resource.hpp>
+#include <rmm/mr/tracking_resource_adaptor.hpp>
 
-#include <rmm/mr/device/owning_wrapper.hpp>
+#include <rmm/mr/owning_wrapper.hpp>
 
 #include <fcntl.h>
 #include <omp.h>
@@ -80,10 +70,11 @@ void merge_result_files(const std::string& out_dir,
 void write_to_output_file(const std::string& out_dir,
                           const std::string& base_filename,
                           int gpu_id,
+                          int n_gpus,
                           int batch_id,
                           const std::string& data)
 {
-  int output_id        = batch_id * 8 + gpu_id;
+  int output_id        = batch_id * n_gpus + gpu_id;
   std::string filename = out_dir + "/result_" + std::to_string(output_id) + ".txt";
   std::ofstream outfile(filename, std::ios_base::app);
   if (outfile.is_open()) {
@@ -149,6 +140,7 @@ std::vector<std::vector<double>> read_solution_from_dir(const std::string file_p
 int run_single_file(std::string file_path,
                     int device,
                     int batch_id,
+                    int n_gpus,
                     std::string out_dir,
                     std::optional<std::string> initial_solution_dir,
                     bool heuristics_only,
@@ -243,7 +235,7 @@ int run_single_file(std::string file_path,
      << obj_val << "," << benchmark_info.objective_of_initial_population << ","
      << benchmark_info.last_improvement_of_best_feasible << ","
      << benchmark_info.last_improvement_after_recombination << "\n";
-  write_to_output_file(out_dir, base_filename, device, batch_id, ss.str());
+  write_to_output_file(out_dir, base_filename, device, n_gpus, batch_id, ss.str());
   CUOPT_LOG_INFO("Results written to the file %s", base_filename.c_str());
   return sol_found;
 }
@@ -251,6 +243,7 @@ int run_single_file(std::string file_path,
 void run_single_file_mp(std::string file_path,
                         int device,
                         int batch_id,
+                        int n_gpus,
                         std::string out_dir,
                         std::optional<std::string> input_file_dir,
                         bool heuristics_only,
@@ -265,6 +258,7 @@ void run_single_file_mp(std::string file_path,
   int sol_found = run_single_file(file_path,
                                   device,
                                   batch_id,
+                                  n_gpus,
                                   out_dir,
                                   input_file_dir,
                                   heuristics_only,
@@ -343,7 +337,7 @@ int main(int argc, char* argv[])
   program.add_argument("--time-limit")
     .help("time limit")
     .scan<'g', double>()
-    .default_value(std::numeric_limits<double>::max());
+    .default_value(std::numeric_limits<double>::infinity());
 
   program.add_argument("--memory-limit")
     .help("memory limit in MB")
@@ -462,6 +456,7 @@ int main(int argc, char* argv[])
             run_single_file_mp(file_name,
                                gpu_id,
                                batch_num,
+                               n_gpus,
                                out_dir,
                                initial_solution_file,
                                heuristics_only,
@@ -501,6 +496,7 @@ int main(int argc, char* argv[])
     run_single_file(path,
                     0,
                     0,
+                    n_gpus,
                     out_dir,
                     initial_solution_file,
                     heuristics_only,

@@ -2,18 +2,6 @@
 
 # SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 set -euo pipefail
 
@@ -66,14 +54,17 @@ cd -
 RAPIDS_DATASET_ROOT_DIR="$(realpath datasets)"
 export RAPIDS_DATASET_ROOT_DIR
 
-# Please enable this once ISSUE https://github.com/NVIDIA/cuopt/issues/94 is fixed
 # Run CLI tests
 timeout 10m bash ./python/libcuopt/libcuopt/tests/test_cli.sh
 
 # Run Python tests
+
+# Due to race condition in certain cases UCX might not be able to cleanup properly, so we set the number of threads to 1
+export OMP_NUM_THREADS=1
+
 RAPIDS_DATASET_ROOT_DIR=./datasets timeout 30m python -m pytest --verbose --capture=no ./python/cuopt/cuopt/tests/
 
-# run jump tests and cvxpy integration tests for only nightly builds
+# run thirdparty integration tests for only nightly builds
 if [[ "${RAPIDS_BUILD_TYPE}" == "nightly" ]]; then
     ./ci/thirdparty-testing/run_jump_tests.sh
     ./ci/thirdparty-testing/run_cvxpy_tests.sh

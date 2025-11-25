@@ -1,17 +1,7 @@
+# cmake-format: off
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# cmake-format: on
 
 cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
 
@@ -21,7 +11,7 @@ rapids_cuda_init_architectures(libcuopt-python)
 
 project(
   libcuopt-python
-  VERSION "${CUOPT_VERSION}"
+  VERSION "${RAPIDS_VERSION}"
   LANGUAGES CXX CUDA
 )
 
@@ -33,7 +23,7 @@ message(STATUS "=============================================================")
 
 # Check if cuopt is already available. If so, it is the user's responsibility to ensure that the
 # CMake package is also available at build time of the Python cuopt package.
-find_package(cuopt "${CUOPT_VERSION}")
+find_package(cuopt "${RAPIDS_VERSION}")
 
 if(cuopt_FOUND)
   return()
@@ -86,6 +76,7 @@ set(rpaths
   "$ORIGIN/../../nvidia/curand/lib"
   "$ORIGIN/../../nvidia/cusolver/lib"
   "$ORIGIN/../../nvidia/cusparse/lib"
+  "$ORIGIN/../../nvidia/nvjitlink/lib"
 )
 
 # Add CUDA version-specific paths based on CUDA compiler version

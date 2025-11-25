@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 name: Trigger Nightly cuOpt Pipeline
 
 on:
@@ -12,15 +15,16 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        include:
-          - cuopt_version: "25.12"
+        cuopt_branch:
+          - "main"
+          - "release/25.12"
     steps:
       - uses: actions/checkout@v4
       - name: Trigger Pipeline
         env:
           GH_TOKEN: ${{ github.token }}
+          CUOPT_BRANCH: ${{ matrix.cuopt_branch }}
         run: |
-          export CUOPT_BRANCH="branch-${{ matrix.cuopt_version }}"
           export DATE=$(date +%F)
           export SHA=$(gh api -q '.commit.sha' "repos/nvidia/cuopt/branches/${CUOPT_BRANCH}")
 
@@ -28,7 +32,7 @@ jobs:
           #       to pull the actual cuOpt source code from
           gh workflow run build.yaml    \
             --repo NVIDIA/cuopt         \
-            --ref "${{ github.ref }}"   \
+            --ref "${CUOPT_BRANCH}"     \
             -f branch="${CUOPT_BRANCH}" \
             -f build_type=nightly       \
             -f date="${DATE}"           \

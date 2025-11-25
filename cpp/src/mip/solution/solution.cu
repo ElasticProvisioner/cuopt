@@ -1,19 +1,9 @@
+/* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
+/* clang-format on */
 
 #include "feasibility_test.cuh"
 #include "solution.cuh"
@@ -63,6 +53,7 @@ solution_t<i_t, f_t>::solution_t(problem_t<i_t, f_t>& problem_)
     n_feasible_constraints(handle_ptr->get_stream()),
     lp_state(problem_)
 {
+  clamp_within_var_bounds(assignment, problem_ptr, handle_ptr);
 }
 
 template <typename i_t, typename f_t>
@@ -224,6 +215,13 @@ void solution_t<i_t, f_t>::copy_new_assignment(const std::vector<f_t>& h_assignm
 {
   assignment.resize(h_assignment.size(), handle_ptr->get_stream());
   raft::copy(assignment.data(), h_assignment.data(), h_assignment.size(), handle_ptr->get_stream());
+}
+
+template <typename i_t, typename f_t>
+void solution_t<i_t, f_t>::copy_new_assignment(const rmm::device_uvector<f_t>& d_assignment)
+{
+  assignment.resize(d_assignment.size(), handle_ptr->get_stream());
+  raft::copy(assignment.data(), d_assignment.data(), d_assignment.size(), handle_ptr->get_stream());
 }
 
 template <typename i_t, typename f_t>

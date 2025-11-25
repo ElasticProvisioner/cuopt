@@ -1,19 +1,9 @@
+/* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
+/* clang-format on */
 
 #include <dual_simplex/presolve.hpp>
 
@@ -1381,7 +1371,10 @@ void uncrush_primal_solution(const user_problem_t<i_t, f_t>& user_problem,
 {
   user_solution.resize(user_problem.num_cols);
   assert(problem.num_cols >= user_problem.num_cols);
-  std::copy(solution.begin(), solution.begin() + user_problem.num_cols, user_solution.data());
+  assert(solution.size() >= user_problem.num_cols);
+  std::copy(solution.begin(),
+            solution.begin() + std::min((i_t)solution.size(), user_problem.num_cols),
+            user_solution.data());
 }
 
 template <typename i_t, typename f_t>
@@ -1419,9 +1412,10 @@ void uncrush_solution(const presolve_info_t<i_t, f_t>& presolve_info,
                       std::vector<f_t>& uncrushed_y,
                       std::vector<f_t>& uncrushed_z)
 {
-  std::vector<f_t> input_x = crushed_x;
-  std::vector<f_t> input_y = crushed_y;
-  std::vector<f_t> input_z = crushed_z;
+  std::vector<f_t> input_x             = crushed_x;
+  std::vector<f_t> input_y             = crushed_y;
+  std::vector<f_t> input_z             = crushed_z;
+  std::vector<i_t> free_variable_pairs = presolve_info.free_variable_pairs;
   if (presolve_info.folding_info.is_folded) {
     // We solved a foled problem in the form
     // minimize c_prime^T x_prime
@@ -1474,15 +1468,18 @@ void uncrush_solution(const presolve_info_t<i_t, f_t>& presolve_info,
     input_y.resize(previous_rows - presolve_info.folding_info.num_upper_bounds);
     input_z = ztilde;
     input_z.resize(previous_cols - presolve_info.folding_info.num_upper_bounds);
+
+    // If the original problem had free variables we need to reinstate them
+    free_variable_pairs = presolve_info.folding_info.previous_free_variable_pairs;
   }
 
-  const i_t num_free_variables = presolve_info.free_variable_pairs.size() / 2;
+  const i_t num_free_variables = free_variable_pairs.size() / 2;
   if (num_free_variables > 0) {
     settings.log.printf("Post-solve: Handling free variables %d\n", num_free_variables);
     // We added free variables so we need to map the crushed solution back to the original variables
     for (i_t k = 0; k < 2 * num_free_variables; k += 2) {
-      const i_t u = presolve_info.free_variable_pairs[k];
-      const i_t v = presolve_info.free_variable_pairs[k + 1];
+      const i_t u = free_variable_pairs[k];
+      const i_t v = free_variable_pairs[k + 1];
       input_x[u] -= input_x[v];
     }
     input_z.resize(input_z.size() - num_free_variables);

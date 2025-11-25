@@ -1,19 +1,9 @@
+/* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights
- * reserved. SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
  */
+/* clang-format on */
 
 #include <cuopt/error.hpp>
 #include <cuopt/linear_programming/pdlp/pdlp_hyper_params.cuh>
@@ -1083,10 +1073,8 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
 
   auto& cusparse_view = pdhg_solver_.get_cusparse_view();
   // Make potential_next_dual_solution point towards reflected dual solution to reuse the code
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
-    &cusparse_view.potential_next_dual_solution,
-    op_problem_scaled_.n_constraints,
-    const_cast<f_t*>(pdhg_solver_.get_reflected_dual().data())));
+  RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view.potential_next_dual_solution,
+                                           (void*)pdhg_solver_.get_reflected_dual().data()));
 
   // TODO batch mode: tmp for determinism, should be SpMM
   for (size_t i = 0; i < climber_strategies_.size(); ++i)
@@ -1119,10 +1107,9 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
   }
 
   // Put back
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
-    &cusparse_view.potential_next_dual_solution,
-    op_problem_scaled_.n_constraints,
-    const_cast<f_t*>(pdhg_solver_.get_potential_next_dual_solution().data())));
+  RAFT_CUSPARSE_TRY(
+    cusparseDnVecSetValues(cusparse_view.potential_next_dual_solution,
+                           (void*)pdhg_solver_.get_potential_next_dual_solution().data()));
 
   // TODO batch mode: tmp for determinism, should be SpMM
   for (size_t i = 0; i < climber_strategies_.size(); ++i)
@@ -1672,6 +1659,9 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_step_size()
 
     // Sync since we are using local variable
     RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+    RAFT_CUSPARSE_TRY(cusparseDestroyDnVec(vecZ));
+    RAFT_CUSPARSE_TRY(cusparseDestroyDnVec(vecQ));
+    RAFT_CUSPARSE_TRY(cusparseDestroyDnVec(vecATQ));
   }
 }
 
