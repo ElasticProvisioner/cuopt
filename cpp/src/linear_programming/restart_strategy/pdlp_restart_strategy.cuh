@@ -22,6 +22,7 @@
 #include <linear_programming/restart_strategy/weighted_average_solution.hpp>
 #include <linear_programming/saddle_point.hpp>
 #include <linear_programming/termination_strategy/convergence_information.hpp>
+#include <linear_programming/pdlp_climber_strategy.hpp>
 
 #include <cuopt/linear_programming/pdlp/pdlp_hyper_params.cuh>
 
@@ -103,41 +104,43 @@ class pdlp_restart_strategy_t {
                           const cusparse_view_t<i_t, f_t>& cusparse_view,
                           const i_t primal_size,
                           const i_t dual_size,
-                          bool is_batch_mode = false);
+                          bool is_legacy_batch_mode,
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies_);
 
   // Compute kkt score on passed argument using the container tmp_kkt score and stream view
-  f_t compute_kkt_score(const rmm::device_scalar<f_t>& l2_primal_residual,
-                        const rmm::device_scalar<f_t>& l2_dual_residual,
-                        const rmm::device_scalar<f_t>& gap,
-                        const rmm::device_scalar<f_t>& primal_weight);
+  f_t compute_kkt_score(const rmm::device_uvector<f_t>& l2_primal_residual,
+                        const rmm::device_uvector<f_t>& l2_dual_residual,
+                        const rmm::device_uvector<f_t>& gap,
+                        const rmm::device_uvector<f_t>& primal_weight);
 
   void increment_iteration_since_last_restart();
 
   void update_distance(pdhg_solver_t<i_t, f_t>& pdhg_solver,
-                       rmm::device_scalar<f_t>& primal_weight,
-                       rmm::device_scalar<f_t>& primal_step_size,
-                       rmm::device_scalar<f_t>& dual_step_size,
-                       const rmm::device_scalar<f_t>& step_size);
+                       rmm::device_uvector<f_t>& primal_weight,
+                       rmm::device_uvector<f_t>& primal_step_size,
+                       rmm::device_uvector<f_t>& dual_step_size,
+                       const rmm::device_uvector<f_t>& step_size);
 
   void add_current_solution_to_average_solution(const f_t* primal_solution,
                                                 const f_t* dual_solution,
-                                                const rmm::device_scalar<f_t>& weight,
+                                                const rmm::device_uvector<f_t>& weight,
                                                 i_t total_pdlp_iterations);
 
   void get_average_solutions(rmm::device_uvector<f_t>& avg_primal,
                              rmm::device_uvector<f_t>& avg_dual);
 
-  bool compute_restart(pdhg_solver_t<i_t, f_t>& pdhg_solver,
+  void compute_restart(pdhg_solver_t<i_t, f_t>& pdhg_solver,
                        rmm::device_uvector<f_t>& primal_solution_avg,
                        rmm::device_uvector<f_t>& dual_solution_avg,
                        const i_t total_number_of_iterations,
-                       rmm::device_scalar<f_t>& primal_step_size,  // Updated if new primal weight
-                       rmm::device_scalar<f_t>& dual_step_size,    // Updated if new primal weight
-                       rmm::device_scalar<f_t>& primal_weight,
-                       const rmm::device_scalar<f_t>& step_size,  // To update primal/dual step size
+                       rmm::device_uvector<f_t>& primal_step_size,  // Updated if new primal weight
+                       rmm::device_uvector<f_t>& dual_step_size,    // Updated if new primal weight
+                       rmm::device_uvector<f_t>& primal_weight,
+                       const rmm::device_uvector<f_t>& step_size,  // To update primal/dual step size
                        const convergence_information_t<i_t, f_t>& current_convergence_information,
                        const convergence_information_t<i_t, f_t>& average_convergence_information,
-                       [[maybe_unused]] rmm::device_scalar<f_t>& best_primal_weight);
+                       [[maybe_unused]] rmm::device_uvector<f_t>& best_primal_weight,
+                       std::vector<int>& has_restarted);
 
   /**
    * @brief Gets the device-side view (with raw pointers), for ease of access
@@ -153,57 +156,61 @@ class pdlp_restart_strategy_t {
   i_t should_do_artificial_restart(i_t total_number_of_iterations) const;
 
  private:
-  bool run_cupdlpx_restart(
+  void run_cupdlpx_restart(
     const convergence_information_t<i_t, f_t>& current_convergence_information,
     pdhg_solver_t<i_t, f_t>& pdhg_solver,
     i_t total_number_of_iterations,
-    rmm::device_scalar<f_t>& primal_weight,
-    const rmm::device_scalar<f_t>& step_size,
-    rmm::device_scalar<f_t>& primal_step_size,
-    rmm::device_scalar<f_t>& dual_step_size,
-    rmm::device_scalar<f_t>& best_primal_weight);
-  bool should_cupdlpx_restart(i_t total_number_of_iterations);
+    rmm::device_uvector<f_t>& primal_weight,
+    const rmm::device_uvector<f_t>& step_size,
+    rmm::device_uvector<f_t>& primal_step_size,
+    rmm::device_uvector<f_t>& dual_step_size,
+    rmm::device_uvector<f_t>& best_primal_weight,
+    std::vector<int>& has_restarted);
+  void should_cupdlpx_restart(i_t total_number_of_iterations, std::vector<int>& has_restarted);
   void cupdlpx_restart(const convergence_information_t<i_t, f_t>& current_convergence_information,
                        pdhg_solver_t<i_t, f_t>& pdhg_solver,
-                       rmm::device_scalar<f_t>& primal_weight,
-                       const rmm::device_scalar<f_t>& step_size,
-                       rmm::device_scalar<f_t>& primal_step_size,
-                       rmm::device_scalar<f_t>& dual_step_size,
-                       rmm::device_scalar<f_t>& best_primal_weight);
+                       rmm::device_uvector<f_t>& primal_weight,
+                       const rmm::device_uvector<f_t>& step_size,
+                       rmm::device_uvector<f_t>& primal_step_size,
+                       rmm::device_uvector<f_t>& dual_step_size,
+                       rmm::device_uvector<f_t>& best_primal_weight,
+                       const std::vector<int>& should_restart);
 
   bool run_trust_region_restart(pdhg_solver_t<i_t, f_t>& pdhg_solver,
                                 rmm::device_uvector<f_t>& primal_solution_avg,
                                 rmm::device_uvector<f_t>& dual_solution_avg,
                                 const i_t total_number_of_iterations,
-                                rmm::device_scalar<f_t>& primal_step_size,
-                                rmm::device_scalar<f_t>& dual_step_size,
-                                rmm::device_scalar<f_t>& primal_weight,
-                                const rmm::device_scalar<f_t>& step_size);
+                                rmm::device_uvector<f_t>& primal_step_size,
+                                rmm::device_uvector<f_t>& dual_step_size,
+                                rmm::device_uvector<f_t>& primal_weight,
+                                const rmm::device_uvector<f_t>& step_size);
   bool run_kkt_restart(pdhg_solver_t<i_t, f_t>& pdhg_solver,
                        rmm::device_uvector<f_t>& primal_solution_avg,
                        rmm::device_uvector<f_t>& dual_solution_avg,
                        const convergence_information_t<i_t, f_t>& current_convergence_information,
                        const convergence_information_t<i_t, f_t>& average_convergence_information,
-                       rmm::device_scalar<f_t>& primal_step_size,
-                       rmm::device_scalar<f_t>& dual_step_size,
-                       rmm::device_scalar<f_t>& primal_weight,
-                       const rmm::device_scalar<f_t>& step_size,
+                       rmm::device_uvector<f_t>& primal_step_size,
+                       rmm::device_uvector<f_t>& dual_step_size,
+                       rmm::device_uvector<f_t>& primal_weight,
+                       const rmm::device_uvector<f_t>& step_size,
                        i_t total_number_of_iterations);
   bool kkt_restart_conditions(f_t candidate_kkt_score, i_t total_number_of_iterations);
   bool kkt_decay(f_t candidate_kkt_score);
   void compute_localized_duality_gaps(saddle_point_state_t<i_t, f_t>& current_saddle_point_state,
                                       rmm::device_uvector<f_t>& primal_solution_avg,
                                       rmm::device_uvector<f_t>& dual_solution_avg,
-                                      rmm::device_scalar<f_t>& primal_weight,
+                                      rmm::device_uvector<f_t>& primal_weight,
                                       rmm::device_uvector<f_t>& tmp_primal,
                                       rmm::device_uvector<f_t>& tmp_dual);
 
+  // TODO batch mode: may need this for mask mode later
+  //static std::vector<int> one{1};
   void distance_squared_moved_from_last_restart_period(const rmm::device_uvector<f_t>& new_solution,
                                                        const rmm::device_uvector<f_t>& old_solution,
                                                        rmm::device_uvector<f_t>& tmp,
                                                        i_t size_of_solutions_h,
                                                        i_t stride,
-                                                       rmm::device_scalar<f_t>& distance_moved);
+                                                       rmm::device_uvector<f_t>& distance_moved);
 
   void compute_primal_gradient(localized_duality_gap_container_t<i_t, f_t>& duality_gap,
                                cusparse_view_t<i_t, f_t>& cusparse_view);
@@ -223,7 +230,7 @@ class pdlp_restart_strategy_t {
     localized_duality_gap_container_t<i_t, f_t>& candidate_duality_gap,
     rmm::device_uvector<f_t>& tmp_primal,
     rmm::device_uvector<f_t>& tmp_dual,
-    rmm::device_scalar<f_t>& primal_weight,
+    rmm::device_uvector<f_t>& primal_weight,
     i_t& restart);
 
   void bound_optimal_objective(cusparse_view_t<i_t, f_t>& existing_cusparse_view,
@@ -248,7 +255,7 @@ class pdlp_restart_strategy_t {
    */
   void compute_distance_traveled_from_last_restart(
     localized_duality_gap_container_t<i_t, f_t>& duality_gap,
-    rmm::device_scalar<f_t>& primal_weight,
+    rmm::device_uvector<f_t>& primal_weight,
     rmm::device_uvector<f_t>& tmp_primal,
     rmm::device_uvector<f_t>& tmp_dual);
 
@@ -258,29 +265,28 @@ class pdlp_restart_strategy_t {
     rmm::device_uvector<f_t>& tmp_dual);
 
   void update_last_restart_information(localized_duality_gap_container_t<i_t, f_t>& duality_gap,
-                                       rmm::device_scalar<f_t>& primal_weight);
+                                       rmm::device_uvector<f_t>& primal_weight);
 
   void reset_internal();
 
   void compute_new_primal_weight(localized_duality_gap_container_t<i_t, f_t>& duality_gap,
-                                 rmm::device_scalar<f_t>& primal_weight,
-                                 const rmm::device_scalar<f_t>& step_size,
-                                 rmm::device_scalar<f_t>& primal_step_size,
-                                 rmm::device_scalar<f_t>& dual_step_size);
+                                 rmm::device_uvector<f_t>& primal_weight,
+                                 const rmm::device_uvector<f_t>& step_size,
+                                 rmm::device_uvector<f_t>& primal_step_size,
+                                 rmm::device_uvector<f_t>& dual_step_size);
 
   raft::handle_t const* handle_ptr_{nullptr};
   rmm::cuda_stream_view stream_view_;
 
  public:
+  const bool batch_mode_{false};
+
   weighted_average_solution_t<i_t, f_t> weighted_average_solution_;
 
   i_t primal_size_h_;
   i_t dual_size_h_;
 
   problem_t<i_t, f_t>* problem_ptr;
-
-  rmm::device_scalar<i_t> primal_size_;
-  rmm::device_scalar<i_t> dual_size_;
 
   rmm::device_scalar<f_t> primal_norm_weight_;
   rmm::device_scalar<f_t> dual_norm_weight_;
@@ -335,6 +341,9 @@ class pdlp_restart_strategy_t {
   const rmm::device_scalar<f_t> reusable_device_scalar_value_0_;
   const rmm::device_scalar<i_t> reusable_device_scalar_value_0_i_t_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_neg_1_;
+  rmm::device_buffer dot_product_storage;
+  size_t dot_product_bytes;
+
   // Used to store temporarily on the device the kkt scores before host retrival
   rmm::device_scalar<f_t> tmp_kkt_score_;
   rmm::device_scalar<f_t> reusable_device_scalar_1_;
@@ -347,12 +356,14 @@ class pdlp_restart_strategy_t {
   bool last_restart_was_average_ = false;
 
   // Needed for cuPDLP+ restart
-  f_t fixed_point_error_             = std::numeric_limits<f_t>::signaling_NaN();
-  f_t initial_fixed_point_error_     = std::numeric_limits<f_t>::signaling_NaN();
-  f_t last_trial_fixed_point_error_  = std::numeric_limits<f_t>::infinity();
-  f_t primal_weight_error_sum_       = f_t(0.0);
-  f_t primal_weight_last_error_      = f_t(0.0);
-  f_t best_primal_dual_residual_gap_ = std::numeric_limits<f_t>::infinity();
+  std::vector<f_t> fixed_point_error_;
+  std::vector<f_t> initial_fixed_point_error_;
+  std::vector<f_t> last_trial_fixed_point_error_;
+  std::vector<f_t> primal_weight_error_sum_;       
+  std::vector<f_t> primal_weight_last_error_;      
+  std::vector<f_t> best_primal_dual_residual_gap_;
+
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies_;
 };
 
 template <typename i_t, typename f_t>

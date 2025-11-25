@@ -519,54 +519,78 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::scale_solutions(
   rmm::device_uvector<f_t>& dual_slack) const
 {
   if (primal_solution.size()) {
-    cuopt_expects(primal_solution.size() == static_cast<size_t>(primal_size_h_),
+    cuopt_expects(primal_solution.size() % static_cast<size_t>(primal_size_h_) == 0,
                   error_type_t::RuntimeError,
                   "Scale primal didn't get a vector of size primal");
-    raft::linalg::eltwiseDivideCheckZero(primal_solution.data(),
-                                         primal_solution.data(),
-                                         cummulative_variable_scaling_.data(),
-                                         primal_size_h_,
-                                         stream_view_);
+    
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(primal_solution.data(),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            problem_wrapped_iterator<f_t>(cummulative_variable_scaling_.data(), primal_size_h_)
+                          )),
+                          primal_solution.data(),
+                          primal_solution.size(),
+                          batch_safe_div<f_t>(),
+                          stream_view_);
 
     if (pdlp_hyper_params::bound_objective_rescaling && !running_mip_) {
-      raft::linalg::scalarMultiply(primal_solution.data(),
-                                   primal_solution.data(),
-                                   h_bound_rescaling,
-                                   primal_size_h_,
-                                   stream_view_);
+      
+      cub::DeviceTransform::Transform(primal_solution.data(),
+                          primal_solution.data(),
+                          primal_solution.size(),
+                          a_times_scalar<f_t>(h_bound_rescaling),
+                          stream_view_);      
     }
   }
 
   if (dual_solution.size()) {
-    cuopt_expects(dual_solution.size() == static_cast<size_t>(dual_size_h_),
+    cuopt_expects(dual_solution.size() % static_cast<size_t>(dual_size_h_) == 0,
                   error_type_t::RuntimeError,
                   "Unscale dual didn't get a vector of size dual");
-    raft::linalg::eltwiseDivideCheckZero(dual_solution.data(),
-                                         dual_solution.data(),
-                                         cummulative_constraint_matrix_scaling_.data(),
-                                         dual_size_h_,
-                                         stream_view_);
+
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(dual_solution.data(),
+                                       thrust::make_transform_iterator(
+                                         thrust::make_counting_iterator(0),
+                                         problem_wrapped_iterator<f_t>(cummulative_constraint_matrix_scaling_.data(), dual_size_h_)
+                                       )),
+                                       dual_solution.data(),
+                                       dual_solution.size(),
+                                       batch_safe_div<f_t>(),
+                                        stream_view_);
+
     if (pdlp_hyper_params::bound_objective_rescaling && !running_mip_) {
-      raft::linalg::scalarMultiply(dual_solution.data(),
-                                   dual_solution.data(),
-                                   h_objective_rescaling,
-                                   dual_size_h_,
-                                   stream_view_);
+
+      cub::DeviceTransform::Transform(dual_solution.data(),
+                          dual_solution.data(),
+                          dual_solution.size(),
+                          a_times_scalar<f_t>(h_bound_rescaling),
+                          stream_view_); 
     }
   }
 
   if (dual_slack.size()) {
-    cuopt_expects(dual_slack.size() == static_cast<size_t>(primal_size_h_),
+    cuopt_expects(dual_slack.size() % static_cast<size_t>(primal_size_h_) == 0,
                   error_type_t::RuntimeError,
                   "Unscale dual didn't get a vector of size dual");
-    raft::linalg::eltwiseMultiply(dual_slack.data(),
-                                  dual_slack.data(),
-                                  cummulative_variable_scaling_.data(),
-                                  primal_size_h_,
-                                  stream_view_);
+
+
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(dual_slack.data(),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            problem_wrapped_iterator<f_t>(cummulative_variable_scaling_.data(), primal_size_h_)
+                          )),
+                          dual_slack.data(),
+                          dual_slack.size(),
+                          cuda::std::multiplies<>{},
+                          stream_view_);
+
     if (pdlp_hyper_params::bound_objective_rescaling && !running_mip_) {
-      raft::linalg::scalarMultiply(
-        dual_slack.data(), dual_slack.data(), h_objective_rescaling, primal_size_h_, stream_view_);
+
+      cub::DeviceTransform::Transform(dual_slack.data(),
+                          dual_slack.data(),
+                          dual_slack.size(),
+                          a_times_scalar<f_t>{h_objective_rescaling},
+                          stream_view_);
     }
   }
 }
@@ -611,63 +635,79 @@ void pdlp_initial_scaling_strategy_t<i_t, f_t>::unscale_solutions(
   raft::common::nvtx::range fun_scope("unscale_solutions");
 
   if (primal_solution.size()) {
-    cuopt_expects(primal_solution.size() == static_cast<size_t>(primal_size_h_),
+    cuopt_expects(primal_solution.size() % static_cast<size_t>(primal_size_h_) == 0,
                   error_type_t::RuntimeError,
                   "Unscale primal didn't get a vector of size primal");
     cuopt_assert(cummulative_variable_scaling_.size() == static_cast<size_t>(primal_size_h_), "");
 
-    raft::linalg::eltwiseMultiply(primal_solution.data(),
-                                  primal_solution.data(),
-                                  cummulative_variable_scaling_.data(),
-                                  primal_size_h_,
-                                  stream_view_);
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(primal_solution.data(),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            problem_wrapped_iterator<f_t>(cummulative_variable_scaling_.data(), primal_size_h_)
+                          )),
+                          primal_solution.data(),
+                          primal_solution.size(),
+                          cuda::std::multiplies<>{},
+                          stream_view_);
 
     if (pdlp_hyper_params::bound_objective_rescaling && !running_mip_) {
       cuopt_assert(h_bound_rescaling != f_t(0),
                    "Numerical error: bound_rescaling_ should never equal 0");
-      raft::linalg::scalarMultiply(primal_solution.data(),
-                                   primal_solution.data(),
-                                   f_t(1.0) / h_bound_rescaling,
-                                   primal_size_h_,
-                                   stream_view_);
+      cub::DeviceTransform::Transform(primal_solution.data(),
+                          primal_solution.data(),
+                          primal_solution.size(),
+                          a_times_scalar<f_t>(f_t(1.0) / h_bound_rescaling),
+                          stream_view_);  
     }
   }
 
   if (dual_solution.size()) {
-    cuopt_expects(dual_solution.size() == static_cast<size_t>(dual_size_h_),
+    cuopt_expects(dual_solution.size() % static_cast<size_t>(dual_size_h_) == 0,
                   error_type_t::RuntimeError,
                   "Unscale dual didn't get a vector of size dual");
     cuopt_assert(cummulative_constraint_matrix_scaling_.size() == static_cast<size_t>(dual_size_h_),
                  "");
-    raft::linalg::eltwiseMultiply(dual_solution.data(),
-                                  dual_solution.data(),
-                                  cummulative_constraint_matrix_scaling_.data(),
-                                  dual_size_h_,
-                                  stream_view_);
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(dual_solution.data(),
+                                       thrust::make_transform_iterator(
+                                         thrust::make_counting_iterator(0),
+                                         problem_wrapped_iterator<f_t>(cummulative_constraint_matrix_scaling_.data(), dual_size_h_)
+                                       )),
+                                       dual_solution.data(),
+                                       dual_solution.size(),
+                                       cuda::std::multiplies<>{},
+                                        stream_view_);
     if (pdlp_hyper_params::bound_objective_rescaling && !running_mip_) {
-      raft::linalg::scalarMultiply(dual_solution.data(),
-                                   dual_solution.data(),
-                                   f_t(1.0) / (h_objective_rescaling),
-                                   dual_size_h_,
-                                   stream_view_);
+      cuopt_assert(h_bound_rescaling != f_t(0),
+                   "Numerical error: bound_rescaling_ should never equal 0");
+      cub::DeviceTransform::Transform(dual_solution.data(),
+                          dual_solution.data(),
+                          dual_solution.size(),
+                          a_times_scalar<f_t>(f_t(1.0) / h_bound_rescaling),
+                          stream_view_); 
     }
   }
 
   if (dual_slack.size()) {
-    cuopt_expects(dual_slack.size() == static_cast<size_t>(primal_size_h_),
+    cuopt_expects(dual_slack.size() % static_cast<size_t>(primal_size_h_) == 0,
                   error_type_t::RuntimeError,
                   "Unscale dual didn't get a vector of size dual");
-    raft::linalg::eltwiseDivideCheckZero(dual_slack.data(),
-                                         dual_slack.data(),
-                                         cummulative_variable_scaling_.data(),
-                                         primal_size_h_,
-                                         stream_view_);
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(dual_slack.data(),
+                          thrust::make_transform_iterator(
+                            thrust::make_counting_iterator(0),
+                            problem_wrapped_iterator<f_t>(cummulative_variable_scaling_.data(), primal_size_h_)
+                          )),
+                          dual_slack.data(),
+                          dual_slack.size(),
+                          batch_safe_div<f_t>(),
+                          stream_view_);
     if (pdlp_hyper_params::bound_objective_rescaling && !running_mip_) {
-      raft::linalg::scalarMultiply(dual_slack.data(),
-                                   dual_slack.data(),
-                                   f_t(1.0) / h_objective_rescaling,
-                                   primal_size_h_,
-                                   stream_view_);
+      cuopt_assert(h_bound_rescaling != f_t(0),
+                   "Numerical error: bound_rescaling_ should never equal 0");
+      cub::DeviceTransform::Transform(dual_slack.data(),
+                          dual_slack.data(),
+                          dual_slack.size(),
+                          a_times_scalar<f_t>{f_t(1.0) / h_objective_rescaling},
+                          stream_view_);
     }
   }
 }

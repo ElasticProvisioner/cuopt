@@ -19,6 +19,7 @@
 
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/utils.cuh>
+#include <linear_programming/pdlp_climber_strategy.hpp>
 #include <mip/mip_constants.hpp>
 
 #include <raft/sparse/detail/cusparse_macros.h>
@@ -121,7 +122,37 @@ void my_cusparsespmv_preprocess(cusparseHandle_t handle,
 }
 #endif
 
-// This cstr is used in pdhg
+// TODO add proper checking
+#if CUDA_VER_12_4_UP
+template <
+  typename T,
+  typename std::enable_if_t<std::is_same_v<T, float> || std::is_same_v<T, double>>* = nullptr>
+cusparseStatus_t my_cusparsespmm_preprocess(cusparseHandle_t handle,
+                                         cusparseOperation_t opA,
+                                         cusparseOperation_t opB,
+                                         const T* alpha,
+                                         const cusparseSpMatDescr_t matA,
+                                         const cusparseDnMatDescr_t matB,
+                                         const T* beta,
+                                         const cusparseDnMatDescr_t matC,
+                                         cusparseSpMMAlg_t alg,
+                                         void* externalBuffer,
+                                         cudaStream_t stream)
+{
+  auto constexpr float_type = []() constexpr {
+    if constexpr (std::is_same_v<T, float>) {
+      return CUDA_R_32F;
+    } else if constexpr (std::is_same_v<T, double>) {
+      return CUDA_R_64F;
+    }
+  }();
+  CUSPARSE_CHECK(cusparseSetStream(handle, stream));
+  return cusparseSpMM_preprocess(
+    handle, opA, opB, alpha, matA, matB, beta, matC, float_type, alg, externalBuffer);
+}
+#endif
+
+// This cstr is used in pdhg and step size strategy
 // A_T is owned by the scaled problem
 // It was already transposed in the scaled_problem version
 template <typename i_t, typename f_t>
@@ -132,8 +163,10 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   rmm::device_uvector<f_t>& _tmp_primal,
   rmm::device_uvector<f_t>& _tmp_dual,
   rmm::device_uvector<f_t>& _potential_next_dual_solution,
-  rmm::device_uvector<f_t>& _reflected_primal_solution)
-  : handle_ptr_(handle_ptr),
+  rmm::device_uvector<f_t>& _reflected_primal_solution,
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies)
+  : batch_mode_(climber_strategies.size() > 1),
+    handle_ptr_(handle_ptr),
     A{},
     A_T{},
     c{},
@@ -151,9 +184,20 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     A_T_indices_{op_problem_scaled.reverse_constraints},
     buffer_non_transpose{0, handle_ptr->get_stream()},
     buffer_transpose{0, handle_ptr->get_stream()},
+    buffer_transpose_batch{0, handle_ptr->get_stream()},
+    buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     A_{op_problem_scaled.coefficients},
     A_offsets_{op_problem_scaled.offsets},
-    A_indices_{op_problem_scaled.variables}
+    A_indices_{op_problem_scaled.variables},
+    climber_strategies_(climber_strategies),
+    primal_solution_vector(climber_strategies.size()),
+    dual_solution_vector(climber_strategies.size()),
+    potential_next_dual_solution_vector(climber_strategies.size()),
+    next_AtYs_vector(climber_strategies.size()),
+    tmp_dual_vector(climber_strategies.size()),
+    dual_gradients_vector(climber_strategies.size()),
+    current_AtYs_vector(climber_strategies.size()),
+    tmp_primal_vector(climber_strategies.size())
 {
   raft::common::nvtx::range fun_scope("Initializing cuSparse view");
 
@@ -193,6 +237,86 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     &dual_solution,
     op_problem_scaled.n_constraints,
     current_saddle_point_state.get_dual_solution().data()));
+
+  if (batch_mode_) {
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_dual_solutions,
+      op_problem_scaled.n_constraints,
+      climber_strategies.size(),
+      op_problem_scaled.n_constraints,
+      current_saddle_point_state.get_dual_solution().data(),
+      CUSPARSE_ORDER_COL));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_current_AtYs,
+      op_problem_scaled.n_variables,
+      climber_strategies.size(),
+      op_problem_scaled.n_variables,
+      current_saddle_point_state.get_current_AtY().data(),
+      CUSPARSE_ORDER_COL));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_tmp_primals,
+      op_problem_scaled.n_variables,
+      climber_strategies.size(),
+      op_problem_scaled.n_variables,
+      _tmp_primal.data(),
+      CUSPARSE_ORDER_COL));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_dual_gradients,
+      op_problem_scaled.n_constraints,
+      climber_strategies.size(),
+      op_problem_scaled.n_constraints,
+      current_saddle_point_state.get_dual_gradient().data(),
+      CUSPARSE_ORDER_COL));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_potential_next_dual_solution,
+      op_problem_scaled.n_constraints,
+      climber_strategies.size(),
+      op_problem_scaled.n_constraints,
+      _potential_next_dual_solution.data(),
+      CUSPARSE_ORDER_COL));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_next_AtYs,
+      op_problem_scaled.n_variables,
+      climber_strategies.size(),
+      op_problem_scaled.n_variables,
+      current_saddle_point_state.get_next_AtY().data(),
+      CUSPARSE_ORDER_COL));
+
+    // TODO batch mode: tmp for deterministm, how much of those are necessary with the current PDLP+ algorithM?
+    for (size_t i = 0; i < climber_strategies.size(); i++) {
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+        &dual_solution_vector[i],
+        op_problem_scaled.n_constraints,
+        current_saddle_point_state.get_dual_solution().data() + i * op_problem_scaled.n_constraints));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+        &current_AtYs_vector[i],
+        op_problem_scaled.n_variables,
+        current_saddle_point_state.get_current_AtY().data() + i * op_problem_scaled.n_variables));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+        &tmp_primal_vector[i],
+        op_problem_scaled.n_variables,
+        _tmp_primal.data() + i * op_problem_scaled.n_variables));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+        &dual_gradients_vector[i],
+        op_problem_scaled.n_constraints,
+        current_saddle_point_state.get_dual_gradient().data() + i * op_problem_scaled.n_constraints));
+      
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+        &potential_next_dual_solution_vector[i],
+        op_problem_scaled.n_constraints,
+        _potential_next_dual_solution.data() + i * op_problem_scaled.n_constraints));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+        &next_AtYs_vector[i],
+        op_problem_scaled.n_variables,
+        current_saddle_point_state.get_next_AtY().data() + i * op_problem_scaled.n_variables));
+        if (pdlp_hyper_params::use_reflected_primal_dual) {
+          cuopt_assert(_reflected_primal_solution.size() > 0, "Reflected primal solution empty");
+          RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(&reflected_primal_solution_vector[i],
+                                                                      op_problem_scaled.n_variables,
+                                                                      _reflected_primal_solution.data() + i * op_problem_scaled.n_variables));
+        }
+    }
+  }
 
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
     &primal_gradient,
@@ -257,6 +381,8 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
 
   buffer_transpose.resize(buffer_size_transpose, handle_ptr->get_stream());
 
+  // TODO batch mode: add SpMM vectors, buffer and call to preprocess
+
 #if CUDA_VER_12_4_UP
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
                              CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -279,6 +405,24 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
                              CUSPARSE_SPMV_CSR_ALG2,
                              buffer_transpose.data(),
                              handle_ptr->get_stream());
+  // TODO batch mode: add when swtich to SpMM
+  /*if (batch_mode_) {
+    my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
+                            CUSPARSE_OPERATION_NON_TRANSPOSE,
+                            CUSPARSE_OPERATION_NON_TRANSPOSE,
+                            alpha.data(),
+                            A_T,
+                            batch_dual_solutions,
+                            beta.data(), batch_current_AtYs, CUSPARSE_SPMM_CSR_ALG3, buffer_transpose_batch.data(), handle_ptr->get_stream());
+
+    my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
+                            CUSPARSE_OPERATION_NON_TRANSPOSE,
+                            CUSPARSE_OPERATION_NON_TRANSPOSE,
+                            alpha.data(),
+                            A,
+                            batch_tmp_primals,
+                            beta.data(), batch_dual_gradients, CUSPARSE_SPMM_CSR_ALG3, buffer_non_transpose_batch.data(), handle_ptr->get_stream());
+  }*/
 #endif
 }
 
@@ -295,8 +439,10 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
                                            rmm::device_uvector<f_t>& _potential_next_dual,
                                            const rmm::device_uvector<f_t>& _A_T,
                                            const rmm::device_uvector<i_t>& _A_T_offsets,
-                                           const rmm::device_uvector<i_t>& _A_T_indices)
-  : handle_ptr_(handle_ptr),
+                                           const rmm::device_uvector<i_t>& _A_T_indices,
+                                           const std::vector<pdlp_climber_strategy_t>& climber_strategies)
+  : batch_mode_(climber_strategies.size() > 1),
+    handle_ptr_(handle_ptr),
     A{},
     A_T{},
     c{},
@@ -311,9 +457,16 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
     A_T_indices_{_A_T_indices},
     buffer_non_transpose{0, handle_ptr->get_stream()},
     buffer_transpose{0, handle_ptr->get_stream()},
+    buffer_transpose_batch{0, handle_ptr->get_stream()},
+    buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     A_{op_problem.coefficients},
     A_offsets_{op_problem.offsets},
-    A_indices_{op_problem.variables}
+    A_indices_{op_problem.variables},
+    climber_strategies_(climber_strategies),
+    primal_solution_vector(climber_strategies.size()),
+    dual_solution_vector(climber_strategies.size()),
+    tmp_dual_vector(climber_strategies.size()),
+    tmp_primal_vector(climber_strategies.size())
 {
 #ifdef PDLP_DEBUG_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
@@ -361,6 +514,56 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
   RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
     &tmp_dual, op_problem.n_constraints, _tmp_dual.data()));
 
+  if (batch_mode_) {
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_primal_solutions,
+      op_problem.n_variables,
+      climber_strategies.size(),
+      op_problem.n_variables,
+      _primal_solution.data(),
+      CUSPARSE_ORDER_COL));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+        &batch_dual_solutions,
+        op_problem.n_constraints,
+        climber_strategies.size(),
+        op_problem.n_constraints,
+        _dual_solution.data(),
+        CUSPARSE_ORDER_COL));
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+      &batch_tmp_duals,
+      op_problem.n_constraints,
+      climber_strategies.size(),
+      op_problem.n_constraints,
+      _tmp_dual.data(),
+      CUSPARSE_ORDER_COL));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
+        &batch_tmp_primals,
+        op_problem.n_variables,
+        climber_strategies.size(),
+        op_problem.n_variables,
+        _tmp_primal.data(),
+        CUSPARSE_ORDER_COL));
+
+    for (size_t i = 0; i < climber_strategies.size(); i++) {
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+        &primal_solution_vector[i],
+        op_problem.n_variables,
+        _primal_solution.data() + i * op_problem.n_variables));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+        &dual_solution_vector[i],
+        op_problem.n_constraints,
+        _dual_solution.data() + i * op_problem.n_constraints));
+      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+            &tmp_dual_vector[i],
+            op_problem.n_constraints,
+            _tmp_dual.data() + i * op_problem.n_constraints));
+        RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
+        &tmp_primal_vector[i],
+        op_problem.n_variables,
+        _tmp_primal.data() + i * op_problem.n_variables));
+    }
+  }
+
   const rmm::device_scalar<f_t> alpha{1, handle_ptr->get_stream()};
   const rmm::device_scalar<f_t> beta{1, handle_ptr->get_stream()};
   size_t buffer_size_non_transpose = 0;
@@ -392,6 +595,36 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
 
   buffer_transpose.resize(buffer_size_transpose, handle_ptr->get_stream());
 
+  if (batch_mode_)
+  {
+    size_t buffer_size_transpose_batch = 0;
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm_bufferSize(handle_ptr_->get_cusparse_handle(),
+                                                                   CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                                   CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                                   alpha.data(),
+                                                                   A_T,
+                                                                   batch_dual_solutions,
+                                                                   beta.data(),
+                                                                   batch_tmp_primals,
+                                                                   CUSPARSE_SPMM_CSR_ALG3,
+                                                                   &buffer_size_transpose_batch,
+                                                                   handle_ptr->get_stream()));
+    buffer_transpose_batch.resize(buffer_size_transpose_batch, handle_ptr->get_stream());
+    size_t buffer_size_non_transpose_batch = 0;
+    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm_bufferSize(handle_ptr_->get_cusparse_handle(),
+                                                                   CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                                   CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                                   alpha.data(),
+                                                                   A,
+                                                                   batch_primal_solutions,
+                                                                   beta.data(),
+                                                                   batch_tmp_duals,
+                                                                   CUSPARSE_SPMM_CSR_ALG3,
+                                                                   &buffer_size_non_transpose_batch,
+                                                                   handle_ptr->get_stream()));
+    buffer_non_transpose_batch.resize(buffer_size_non_transpose_batch, handle_ptr->get_stream());
+  }
+
 #if CUDA_VER_12_4_UP
   my_cusparsespmv_preprocess(handle_ptr_->get_cusparse_handle(),
                              CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -414,6 +647,29 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
                              CUSPARSE_SPMV_CSR_ALG2,
                              buffer_transpose.data(),
                              handle_ptr->get_stream());
+
+  if (batch_mode_) {
+    my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
+                              CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              alpha.data(),
+                              A,
+                              batch_primal_solutions,
+                              beta.data(),
+                              batch_tmp_duals,
+                              CUSPARSE_SPMM_CSR_ALG3,
+                              buffer_non_transpose_batch.data(),
+                              handle_ptr->get_stream());
+
+    my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
+                              CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              CUSPARSE_OPERATION_NON_TRANSPOSE,
+                              alpha.data(),
+                              A_T,
+                              batch_dual_solutions,
+                              beta.data(), batch_tmp_primals, CUSPARSE_SPMM_CSR_ALG3, buffer_transpose_batch.data(), handle_ptr->get_stream());
+  
+  }
 #endif
 }
 
@@ -437,12 +693,15 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     tmp_dual(existing_cusparse_view.tmp_dual),
     buffer_non_transpose{0, handle_ptr->get_stream()},
     buffer_transpose{0, handle_ptr->get_stream()},
+    buffer_transpose_batch{0, handle_ptr->get_stream()},
+    buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     A_T_{existing_cusparse_view.A_T_},                  // Need to be init but not used
     A_T_offsets_{existing_cusparse_view.A_T_offsets_},  // Need to be init but not used
     A_T_indices_{existing_cusparse_view.A_T_indices_},  // Need to be init but not used
     A_{existing_cusparse_view.A_},
     A_offsets_{existing_cusparse_view.A_offsets_},
-    A_indices_{existing_cusparse_view.A_indices_}
+    A_indices_{existing_cusparse_view.A_indices_},
+    climber_strategies_(existing_cusparse_view.climber_strategies_)
 {
 #ifdef PDLP_DEBUG_MODE
   RAFT_CUDA_TRY(cudaDeviceSynchronize());
@@ -544,17 +803,20 @@ template <typename i_t, typename f_t>
 cusparse_view_t<i_t, f_t>::cusparse_view_t(
   raft::handle_t const* handle_ptr,
   const rmm::device_uvector<f_t>& dummy_float,  // Empty just to init the const&
-  const rmm::device_uvector<i_t>& dummy_int     // Empty just to init the const&
-  )
+  const rmm::device_uvector<i_t>& dummy_int,     // Empty just to init the const&
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies)
   : handle_ptr_(handle_ptr),
     buffer_non_transpose{0, handle_ptr->get_stream()},
     buffer_transpose{0, handle_ptr->get_stream()},
+    buffer_transpose_batch{0, handle_ptr->get_stream()},
+    buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     A_T_(dummy_float),
     A_T_offsets_(dummy_int),
     A_T_indices_(dummy_int),
     A_(dummy_float),
     A_offsets_(dummy_int),
-    A_indices_(dummy_int)
+    A_indices_(dummy_int),
+    climber_strategies_(climber_strategies)
 {
 }
 

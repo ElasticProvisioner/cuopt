@@ -16,7 +16,9 @@
  */
 
 #include <cuopt/error.hpp>
+
 #include <linear_programming/saddle_point.hpp>
+
 #include <mip/mip_constants.hpp>
 
 #include <thrust/fill.h>
@@ -25,18 +27,20 @@ namespace cuopt::linear_programming::detail {
 
 template <typename i_t, typename f_t>
 saddle_point_state_t<i_t, f_t>::saddle_point_state_t(raft::handle_t const* handle_ptr,
-                                                     i_t primal_size,
-                                                     i_t dual_size)
+                                                     const i_t primal_size,
+                                                     const i_t dual_size,
+                                                     const size_t batch_size)
   : primal_size_{primal_size},
     dual_size_{dual_size},
-    primal_solution_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    dual_solution_{static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
-    delta_primal_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    delta_dual_{static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
-    primal_gradient_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    dual_gradient_{static_cast<size_t>(dual_size_), handle_ptr->get_stream()},
-    current_AtY_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()},
-    next_AtY_{static_cast<size_t>(primal_size_), handle_ptr->get_stream()}
+    primal_solution_{batch_size * primal_size, handle_ptr->get_stream()},
+    dual_solution_{batch_size * dual_size, handle_ptr->get_stream()},
+    delta_primal_{batch_size * primal_size, handle_ptr->get_stream()},
+    delta_dual_{batch_size * dual_size, handle_ptr->get_stream()},
+    // Primal gradient is only used in trust region restart mode which does not support batch mode
+    primal_gradient_{static_cast<size_t>(primal_size), handle_ptr->get_stream()},
+    dual_gradient_{batch_size * dual_size, handle_ptr->get_stream()},
+    current_AtY_{batch_size * primal_size, handle_ptr->get_stream()},
+    next_AtY_{batch_size * primal_size, handle_ptr->get_stream()}
 {
   EXE_CUOPT_EXPECTS(primal_size > 0, "Size of the primal problem must be larger than 0");
   EXE_CUOPT_EXPECTS(dual_size > 0, "Size of the dual problem must be larger than 0");

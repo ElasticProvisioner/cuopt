@@ -69,7 +69,7 @@ class saddle_point_state_t {
    *
    * @throws cuopt::logic_error if the problem sizes are not larger than 0.
    */
-  saddle_point_state_t(raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size);
+  saddle_point_state_t(raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size, size_t batch_size);
 
   /**
    * @brief Copies the values of the solutions in another saddle_point_state_t

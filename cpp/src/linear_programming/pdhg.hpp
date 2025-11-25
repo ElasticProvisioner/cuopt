@@ -19,6 +19,7 @@
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/saddle_point.hpp>
 #include <linear_programming/utilities/ping_pong_graph.cuh>
+#include <linear_programming/pdlp_climber_strategy.hpp>
 #include <mip/problem/problem.cuh>
 
 #include <raft/core/handle.hpp>
@@ -32,8 +33,7 @@ template <typename i_t, typename f_t>
 class pdhg_solver_t {
  public:
   pdhg_solver_t(raft::handle_t const* handle_ptr,
-                problem_t<i_t, f_t>& op_problem,
-                bool is_batch_mode = false);
+                problem_t<i_t, f_t>& op_problem, bool is_legacy_batch_mode, const std::vector<pdlp_climber_strategy_t>& climber_strategies);
 
   saddle_point_state_t<i_t, f_t>& get_saddle_point_state();
   cusparse_view_t<i_t, f_t>& get_cusparse_view();
@@ -50,9 +50,11 @@ class pdhg_solver_t {
   rmm::device_scalar<i_t>& get_d_total_pdhg_iterations();
   rmm::device_uvector<f_t>& get_primal_solution();
   rmm::device_uvector<f_t>& get_dual_solution();
+  i_t get_primal_size() const;
+  i_t get_dual_size() const; // TODO put back things private
 
-  void take_step(rmm::device_scalar<f_t>& primal_step_size,
-                 rmm::device_scalar<f_t>& dual_step_size,
+  void take_step(rmm::device_uvector<f_t>& primal_step_size,
+                 rmm::device_uvector<f_t>& dual_step_size,
                  i_t iterations_since_last_restart,
                  bool last_restart_was_average,
                  i_t total_pdlp_iterations,
@@ -62,21 +64,22 @@ class pdhg_solver_t {
   i_t total_pdhg_iterations_;
 
  private:
-  void compute_next_primal_dual_solution(rmm::device_scalar<f_t>& primal_step_size,
+  void compute_next_primal_dual_solution(rmm::device_uvector<f_t>& primal_step_size,
                                          i_t iterations_since_last_restart,
                                          bool last_restart_was_average,
-                                         rmm::device_scalar<f_t>& dual_step_size,
+                                         rmm::device_uvector<f_t>& dual_step_size,
                                          i_t total_pdlp_iterations);
-  void compute_next_dual_solution(rmm::device_scalar<f_t>& dual_step_size);
-  void compute_next_primal_dual_solution_reflected(rmm::device_scalar<f_t>& primal_step_size,
-                                                   rmm::device_scalar<f_t>& dual_step_size,
+  void compute_next_dual_solution(rmm::device_uvector<f_t>& dual_step_size);
+  void compute_next_primal_dual_solution_reflected(rmm::device_uvector<f_t>& primal_step_size,
+                                                   rmm::device_uvector<f_t>& dual_step_size,
                                                    bool should_major);
 
-  void compute_primal_projection_with_gradient(rmm::device_scalar<f_t>& primal_step_size);
-  void compute_primal_projection(rmm::device_scalar<f_t>& primal_step_size);
+  void compute_primal_projection_with_gradient(rmm::device_uvector<f_t>& primal_step_size);
+  void compute_primal_projection(rmm::device_uvector<f_t>& primal_step_size);
   void compute_At_y();
   void compute_A_x();
 
+  bool batch_mode_{false};
   raft::handle_t const* handle_ptr_{nullptr};
   rmm::cuda_stream_view stream_view_;
 
@@ -114,6 +117,8 @@ class pdhg_solver_t {
   // Needed for faster graph launch
   // Passing the host value each time would require updating the graph each time
   rmm::device_scalar<i_t> d_total_pdhg_iterations_;
+
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies_;
 };
 
 }  // namespace cuopt::linear_programming::detail

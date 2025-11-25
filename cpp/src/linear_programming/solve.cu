@@ -101,7 +101,7 @@ static void set_Stable1()
   pdlp_hyper_params::bound_objective_rescaling                                  = false;
   pdlp_hyper_params::use_reflected_primal_dual                                  = false;
   pdlp_hyper_params::use_fixed_point_error                                      = false;
-  pdlp_hyper_params::reflection_coefficient                                     = 1.0;
+  pdlp_hyper_params::reflection_coefficient                                     = 1.0; // TODO test with other values
   pdlp_hyper_params::use_conditional_major                                      = false;
 }
 
@@ -350,23 +350,23 @@ optimization_problem_solution_t<i_t, f_t> convert_dual_simplex_sol(
   problem.handle_ptr->sync_stream();
 
   // Should be filled with more information from dual simplex
-  typename optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t info;
-  info.solved_by_pdlp                  = false;
-  info.primal_objective                = solution.user_objective;
-  info.dual_objective                  = solution.user_objective;
-  info.gap                             = 0.0;
-  info.relative_gap                    = 0.0;
-  info.solve_time                      = duration;
-  info.number_of_steps_taken           = solution.iterations;
-  info.total_number_of_attempted_steps = solution.iterations;
-  info.l2_primal_residual              = solution.l2_primal_residual;
-  info.l2_dual_residual                = solution.l2_dual_residual;
-  info.l2_relative_primal_residual     = solution.l2_primal_residual / (1.0 + norm_user_objective);
-  info.l2_relative_dual_residual       = solution.l2_dual_residual / (1.0 + norm_rhs);
-  info.max_primal_ray_infeasibility    = 0.0;
-  info.primal_ray_linear_objective     = 0.0;
-  info.max_dual_ray_infeasibility      = 0.0;
-  info.dual_ray_linear_objective       = 0.0;
+  std::vector<typename optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t> info(1);
+  info[0].solved_by_pdlp                  = false;
+  info[0].primal_objective                = solution.user_objective;
+  info[0].dual_objective                  = solution.user_objective;
+  info[0].gap                             = 0.0;
+  info[0].relative_gap                    = 0.0;
+  info[0].solve_time                      = duration;
+  info[0].number_of_steps_taken           = solution.iterations;
+  info[0].total_number_of_attempted_steps = solution.iterations;
+  info[0].l2_primal_residual              = solution.l2_primal_residual;
+  info[0].l2_dual_residual                = solution.l2_dual_residual;
+  info[0].l2_relative_primal_residual     = solution.l2_primal_residual / (1.0 + norm_user_objective);
+  info[0].l2_relative_dual_residual       = solution.l2_dual_residual / (1.0 + norm_rhs);
+  info[0].max_primal_ray_infeasibility    = 0.0;
+  info[0].primal_ray_linear_objective     = 0.0;
+  info[0].max_dual_ray_infeasibility      = 0.0;
+  info[0].dual_ray_linear_objective       = 0.0;
 
   pdlp_termination_status_t termination_status = to_termination_status(status);
   auto sol = optimization_problem_solution_t<i_t, f_t>(final_primal_solution,
@@ -607,13 +607,13 @@ optimization_problem_solution_t<i_t, f_t> run_pdlp(detail::problem_t<i_t, f_t>& 
       cuopt::device_copy(vertex_solution.z, problem.handle_ptr->get_stream());
 
     // Should be filled with more information from dual simplex
-    typename optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t info;
-    info.primal_objective      = vertex_solution.user_objective;
-    info.number_of_steps_taken = vertex_solution.iterations;
+    std::vector<typename optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t> info;
+    info[0].primal_objective      = vertex_solution.user_objective;
+    info[0].number_of_steps_taken = vertex_solution.iterations;
     auto crossover_end         = std::chrono::high_resolution_clock::now();
     auto crossover_duration =
       std::chrono::duration_cast<std::chrono::milliseconds>(crossover_end - start_solver);
-    info.solve_time    = crossover_duration.count() / 1000.0;
+    info[0].solve_time    = crossover_duration.count() / 1000.0;
     auto sol_crossover = optimization_problem_solution_t<i_t, f_t>(final_primal_solution,
                                                                    final_dual_solution,
                                                                    final_reduced_cost,
@@ -898,7 +898,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(optimization_problem_t<i_t, f
                    reduced_costs.data() + reduced_costs.size(),
                    std::numeric_limits<f_t>::signaling_NaN());
 
-      auto full_stats = solution.get_additional_termination_information();
+      auto full_stats = solution.get_additional_termination_informations();
 
       // Create a new solution with the full problem solution
       solution = optimization_problem_solution_t<i_t, f_t>(primal_solution,

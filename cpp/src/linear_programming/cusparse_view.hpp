@@ -17,6 +17,7 @@
 #pragma once
 
 #include <linear_programming/saddle_point.hpp>
+#include <linear_programming/pdlp_climber_strategy.hpp>
 
 #include <mip/problem/problem.cuh>
 
@@ -35,7 +36,8 @@ class cusparse_view_t {
                   rmm::device_uvector<f_t>& _tmp_primal,
                   rmm::device_uvector<f_t>& _tmp_dual,
                   rmm::device_uvector<f_t>& _potential_next_dual_solution,
-                  rmm::device_uvector<f_t>& _reflected_primal_solution);
+                  rmm::device_uvector<f_t>& _reflected_primal_solution,
+                  const std::vector<pdlp_climber_strategy_t>& climber_strategies);
 
   cusparse_view_t(raft::handle_t const* handle_ptr,
                   const problem_t<i_t, f_t>& op_problem,
@@ -47,7 +49,8 @@ class cusparse_view_t {
                   rmm::device_uvector<f_t>& _potential_next_dual,
                   const rmm::device_uvector<f_t>& _A_T,
                   const rmm::device_uvector<i_t>& _A_T_offsets,
-                  const rmm::device_uvector<i_t>& _A_T_indices);
+                  const rmm::device_uvector<i_t>& _A_T_indices,
+                  const std::vector<pdlp_climber_strategy_t>& climber_strategies);
 
   cusparse_view_t(raft::handle_t const* handle_ptr,
                   const problem_t<i_t, f_t>& op_problem,
@@ -59,8 +62,10 @@ class cusparse_view_t {
 
   cusparse_view_t(raft::handle_t const* handle_ptr,
                   const rmm::device_uvector<f_t>&,  // Empty just to init the const&
-                  const rmm::device_uvector<i_t>&   // Empty just to init the const&
-  );
+                  const rmm::device_uvector<i_t>&,   // Empty just to init the const&
+                  const std::vector<pdlp_climber_strategy_t>&); // Empty just to init the const&
+
+  const bool batch_mode_{false};
 
   raft::handle_t const* handle_ptr_{nullptr};
 
@@ -77,6 +82,31 @@ class cusparse_view_t {
   cusparseDnVecDescr_t primal_gradient;
   cusparseDnVecDescr_t dual_gradient;
 
+  // cusparse view of batch gradients
+  cusparseDnMatDescr_t batch_dual_gradients;
+  std::vector<cusparseDnVecDescr_t> dual_gradients_vector;
+
+  // cusparse view of batch solutions
+  cusparseDnMatDescr_t batch_primal_solutions;
+  cusparseDnMatDescr_t batch_dual_solutions;
+  cusparseDnMatDescr_t batch_potential_next_dual_solution;
+  cusparseDnMatDescr_t batch_next_AtYs;
+  cusparseDnMatDescr_t batch_tmp_duals;
+  std::vector<cusparseDnVecDescr_t> primal_solution_vector;
+  std::vector<cusparseDnVecDescr_t> dual_solution_vector;
+  std::vector<cusparseDnVecDescr_t> potential_next_dual_solution_vector;
+  std::vector<cusparseDnVecDescr_t> next_AtYs_vector;
+  std::vector<cusparseDnVecDescr_t> tmp_dual_vector;
+  std::vector<cusparseDnVecDescr_t> reflected_primal_solution_vector;
+
+  // cusparse view of At * Y batch computation
+  cusparseDnMatDescr_t batch_current_AtYs;
+  std::vector<cusparseDnVecDescr_t> current_AtYs_vector;
+
+  // cusparse view of auxillirary space needed for some spmm computations
+  cusparseDnMatDescr_t batch_tmp_primals;
+  std::vector<cusparseDnVecDescr_t> tmp_primal_vector;
+
   // cusparse view of At * Y computation
   cusparseDnVecDescr_t
     current_AtY;  // Only used at very first iteration and after each restart to average
@@ -91,6 +121,10 @@ class cusparse_view_t {
   // reuse buffers for cusparse spmv
   rmm::device_uvector<uint8_t> buffer_non_transpose;
   rmm::device_uvector<uint8_t> buffer_transpose;
+
+  // reuse buffers for cusparse spmm
+  rmm::device_uvector<uint8_t> buffer_transpose_batch;
+  rmm::device_uvector<uint8_t> buffer_non_transpose_batch;
 
   // Only when using reflection
   cusparseDnVecDescr_t reflected_primal_solution;
@@ -108,5 +142,7 @@ class cusparse_view_t {
   const rmm::device_uvector<f_t>& A_;
   const rmm::device_uvector<i_t>& A_offsets_;
   const rmm::device_uvector<i_t>& A_indices_;
+
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies_;
 };
 }  // namespace cuopt::linear_programming::detail

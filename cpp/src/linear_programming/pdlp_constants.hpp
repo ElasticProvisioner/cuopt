@@ -19,8 +19,17 @@
 
 #include <raft/util/cuda_utils.cuh>
 
+#include <cuda/cmath>
+
 namespace cuopt::linear_programming::detail {
 inline constexpr int block_size = 128;
+
+static std::pair<size_t, size_t> inline kernel_config_from_batch_size(const size_t batch_size)
+{
+  const size_t block_size = std::min(static_cast<size_t>(256), batch_size);
+  const size_t grid_size = cuda::ceil_div(batch_size, block_size);
+  return std::make_pair(grid_size, block_size);
+}
 
 // When using APIs that handle variable stride sizes these are used to express that we assume that
 // the data accessed has a contigous layout in memory for both solutions

@@ -142,7 +142,7 @@ class optimization_problem_solution_t : public base_solution_t {
                                   const std::string objective_name,
                                   const std::vector<std::string>& var_names,
                                   const std::vector<std::string>& row_names,
-                                  additional_termination_information_t& termination_stats,
+                                  std::vector<additional_termination_information_t>& termination_stats,
                                   pdlp_termination_status_t termination_status_);
 
   optimization_problem_solution_t(rmm::device_uvector<f_t>& final_primal_solution,
@@ -151,7 +151,7 @@ class optimization_problem_solution_t : public base_solution_t {
                                   const std::string objective_name,
                                   const std::vector<std::string>& var_names,
                                   const std::vector<std::string>& row_names,
-                                  additional_termination_information_t& termination_stats,
+                                  std::vector<additional_termination_information_t>& termination_stats,
                                   pdlp_termination_status_t termination_status_);
 
   /**
@@ -173,7 +173,7 @@ class optimization_problem_solution_t : public base_solution_t {
                                   const std::string objective_name,
                                   const std::vector<std::string>& var_names,
                                   const std::vector<std::string>& row_names,
-                                  additional_termination_information_t& termination_stats,
+                                  std::vector<additional_termination_information_t>& termination_stats,
                                   pdlp_termination_status_t termination_status,
                                   const raft::handle_t* handler_ptr,
                                   bool deep_copy);
@@ -261,7 +261,8 @@ class optimization_problem_solution_t : public base_solution_t {
    * statistics regarding the solution and solver state at the end of solving.
    * @return Additional termination information
    */
-  additional_termination_information_t get_additional_termination_information() const;
+  additional_termination_information_t get_additional_termination_information(i_t id = 0) const;
+  std::vector<additional_termination_information_t> get_additional_termination_informations() const;
 
   pdlp_warm_start_data_t<i_t, f_t>& get_pdlp_warm_start_data();
 
@@ -302,7 +303,7 @@ class optimization_problem_solution_t : public base_solution_t {
 
   pdlp_termination_status_t termination_status_;
 
-  additional_termination_information_t termination_stats_;
+  std::vector<additional_termination_information_t> termination_stats_;
 
   /** name of the objective (only a single objective is currently allowed) */
   std::string objective_name_;

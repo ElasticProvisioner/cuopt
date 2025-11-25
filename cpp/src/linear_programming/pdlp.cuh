@@ -26,6 +26,7 @@
 #include <linear_programming/restart_strategy/pdlp_restart_strategy.cuh>
 #include <linear_programming/step_size_strategy/adaptive_step_size_strategy.hpp>
 #include <linear_programming/termination_strategy/termination_strategy.hpp>
+#include <linear_programming/pdlp_climber_strategy.hpp>
 
 #include <mip/problem/problem.cuh>
 
@@ -131,6 +132,9 @@ class pdlp_solver_t {
   void update_primal_dual_solutions(std::optional<const rmm::device_uvector<f_t>*> primal,
                                     std::optional<const rmm::device_uvector<f_t>*> dual);
 
+  std::vector<pdlp_climber_strategy_t> climber_strategies_;
+  bool batch_mode_{false};
+
   raft::handle_t const* handle_ptr_;
   rmm::cuda_stream_view stream_view_;
 
@@ -145,8 +149,8 @@ class pdlp_solver_t {
   i_t primal_size_h_;
   i_t dual_size_h_;
 
-  rmm::device_scalar<f_t> primal_step_size_;
-  rmm::device_scalar<f_t> dual_step_size_;
+  rmm::device_uvector<f_t> primal_step_size_;
+  rmm::device_uvector<f_t> dual_step_size_;
 
   /**
   The primal and dual step sizes are parameterized as:
@@ -160,9 +164,9 @@ class pdlp_solver_t {
   The parameter primal_weight is adjusted smoothly at each restart; to balance the
   primal and dual distances traveled since the last restart.
   */
-  rmm::device_scalar<f_t> primal_weight_;
-  rmm::device_scalar<f_t> best_primal_weight_;
-  rmm::device_scalar<f_t> step_size_;
+  rmm::device_uvector<f_t> primal_weight_;
+  rmm::device_uvector<f_t> best_primal_weight_;
+  rmm::device_uvector<f_t> step_size_;
 
   // Step size strategy
   detail::adaptive_step_size_strategy_t<i_t, f_t> step_size_strategy_;
@@ -176,7 +180,7 @@ class pdlp_solver_t {
   // Intentionnaly take a copy to avoid an unintentional modification in the calling context
   const pdlp_solver_settings_t<i_t, f_t> settings_;
 
-  void compute_fixed_error(bool& has_restarted);
+  void compute_fixed_error(std::vector<int>& has_restarted);
 
   pdlp_warm_start_data_t<i_t, f_t> get_filled_warmed_start_data();
 

@@ -19,6 +19,7 @@
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/pdhg.hpp>
 #include <linear_programming/saddle_point.hpp>
+#include <linear_programming/pdlp_climber_strategy.hpp>
 
 #include <cuopt/linear_programming/pdlp/solver_settings.hpp>
 
@@ -39,7 +40,8 @@ class convergence_information_t {
                             problem_t<i_t, f_t>& op_problem,
                             cusparse_view_t<i_t, f_t>& cusparse_view,
                             i_t primal_size,
-                            i_t dual_size);
+                            i_t dual_size,
+                            const std::vector<pdlp_climber_strategy_t>& climber_strategies);
 
   void compute_convergence_information(
     pdhg_solver_t<i_t, f_t>& current_pdhg_solver,
@@ -54,16 +56,16 @@ class convergence_information_t {
   rmm::device_uvector<f_t>& get_reduced_cost();
 
   // Needed for kkt restart & debug prints
-  const rmm::device_scalar<f_t>& get_primal_objective() const;
-  const rmm::device_scalar<f_t>& get_dual_objective() const;
-  const rmm::device_scalar<f_t>& get_l2_primal_residual() const;
-  const rmm::device_scalar<f_t>& get_l2_dual_residual() const;
+  const rmm::device_uvector<f_t>& get_primal_objective() const;
+  const rmm::device_uvector<f_t>& get_dual_objective() const;
+  const rmm::device_uvector<f_t>& get_l2_primal_residual() const;
+  const rmm::device_uvector<f_t>& get_l2_dual_residual() const;
   const rmm::device_scalar<f_t>& get_relative_linf_primal_residual() const;
   const rmm::device_scalar<f_t>& get_relative_linf_dual_residual() const;
-  const rmm::device_scalar<f_t>& get_gap() const;
-  f_t get_relative_gap_value() const;
-  f_t get_relative_l2_primal_residual_value() const;
-  f_t get_relative_l2_dual_residual_value() const;
+  const rmm::device_uvector<f_t>& get_gap() const;
+  f_t get_relative_gap_value(i_t climber_strategy_id = 0) const;
+  f_t get_relative_l2_primal_residual_value(i_t climber_strategy_id = 0) const;
+  f_t get_relative_l2_dual_residual_value(i_t climber_strategy_id = 0) const;
 
   void set_relative_dual_tolerance_factor(f_t dual_tolerance_factor);
   void set_relative_primal_tolerance_factor(f_t primal_tolerance_factor);
@@ -81,21 +83,21 @@ class convergence_information_t {
     f_t* l2_norm_primal_linear_objective;
     f_t* l2_norm_primal_right_hand_side;
 
-    f_t* primal_objective;
-    f_t* dual_objective;
-    f_t* l2_primal_residual;
-    f_t* l2_dual_residual;
+    raft::device_span<f_t> primal_objective;
+    raft::device_span<f_t> dual_objective;
+    raft::device_span<f_t> l2_primal_residual;
+    raft::device_span<f_t> l2_dual_residual;
 
     f_t* relative_l_inf_primal_residual;
     f_t* relative_l_inf_dual_residual;
 
-    f_t* gap;
-    f_t* abs_objective;
+    raft::device_span<f_t> gap;
+    raft::device_span<f_t> abs_objective;
 
-    f_t* primal_residual;
-    f_t* dual_residual;
-    f_t* reduced_cost;
-    f_t* bound_value;
+    raft::device_span<f_t> primal_residual;
+    raft::device_span<f_t> dual_residual;
+    raft::device_span<f_t> reduced_cost;
+    raft::device_span<f_t> bound_value;
   };  // struct view_t
 
   /**
@@ -144,6 +146,8 @@ class convergence_information_t {
 
   void compute_reduced_costs_dual_objective_contribution();
 
+  const bool batch_mode_{false};
+
   raft::handle_t const* handle_ptr_{nullptr};
 
   rmm::cuda_stream_view stream_view_;
@@ -157,11 +161,11 @@ class convergence_information_t {
   rmm::device_scalar<f_t> l2_norm_primal_linear_objective_;
   rmm::device_scalar<f_t> l2_norm_primal_right_hand_side_;
 
-  rmm::device_scalar<f_t> primal_objective_;
-  rmm::device_scalar<f_t> dual_objective_;
+  rmm::device_uvector<f_t> primal_objective_;
+  rmm::device_uvector<f_t> dual_objective_;
   rmm::device_scalar<f_t> reduced_cost_dual_objective_;
-  rmm::device_scalar<f_t> l2_primal_residual_;
-  rmm::device_scalar<f_t> l2_dual_residual_;
+  rmm::device_uvector<f_t> l2_primal_residual_;
+  rmm::device_uvector<f_t> l2_dual_residual_;
   // Useful in per constraint mode
   // To compute residual we check: residual[i] < absolute_tolerance + relative_tolerance * rhs[i]
   // Which can be rewritten as: residual[i] - relative_tolerance * rhs[i] < absolute_tolerance
@@ -171,8 +175,8 @@ class convergence_information_t {
   // Useful for best_primal_so_far
   rmm::device_scalar<i_t> nb_violated_constraints_;
 
-  rmm::device_scalar<f_t> gap_;
-  rmm::device_scalar<f_t> abs_objective_;
+  rmm::device_uvector<f_t> gap_;
+  rmm::device_uvector<f_t> abs_objective_;
 
   // used for computations and can be reused
   rmm::device_uvector<f_t> primal_residual_;
@@ -189,8 +193,14 @@ class convergence_information_t {
   const rmm::device_scalar<f_t> reusable_device_scalar_value_1_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_0_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_neg_1_;
+  rmm::device_buffer dot_product_storage_;
+  size_t dot_product_bytes_;
 
-  rmm::device_scalar<f_t> dual_dot_;
-  rmm::device_scalar<f_t> sum_primal_slack_;
+
+  rmm::device_uvector<f_t> dual_dot_;
+  rmm::device_uvector<f_t> sum_primal_slack_;
+
+
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies_;
 };
 }  // namespace cuopt::linear_programming::detail

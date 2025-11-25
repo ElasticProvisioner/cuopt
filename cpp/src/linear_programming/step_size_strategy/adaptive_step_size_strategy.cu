@@ -18,6 +18,8 @@
 #include <cuopt/linear_programming/pdlp/pdlp_hyper_params.cuh>
 #include <linear_programming/pdlp_constants.hpp>
 #include <linear_programming/step_size_strategy/adaptive_step_size_strategy.hpp>
+#include <linear_programming/pdlp_climber_strategy.hpp>
+#include <linear_programming/utils.cuh>
 #include <mip/mip_constants.hpp>
 #include <utilities/unique_pinned_ptr.hpp>
 
@@ -30,6 +32,8 @@
 #include <raft/util/cuda_utils.cuh>
 #include <raft/util/cudart_utils.hpp>
 
+#include <cub/cub.cuh>
+
 #include <limits>
 
 namespace cuopt::linear_programming::detail {
@@ -39,27 +43,62 @@ constexpr int parallel_stream_computation = 2;
 template <typename i_t, typename f_t>
 adaptive_step_size_strategy_t<i_t, f_t>::adaptive_step_size_strategy_t(
   raft::handle_t const* handle_ptr,
-  rmm::device_scalar<f_t>* primal_weight,
-  rmm::device_scalar<f_t>* step_size,
-  bool is_batch_mode)
-  : stream_pool_(parallel_stream_computation),
+  rmm::device_uvector<f_t>* primal_weight,
+  rmm::device_uvector<f_t>* step_size,
+  bool is_legacy_batch_mode,
+  i_t primal_size,
+  i_t dual_size,
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies)
+  : batch_mode_(climber_strategies.size() > 1),
+    stream_pool_(parallel_stream_computation),
     dot_delta_X_(cudaEventDisableTiming),
     dot_delta_Y_(cudaEventDisableTiming),
     deltas_are_done_(cudaEventDisableTiming),
     handle_ptr_(handle_ptr),
     stream_view_(handle_ptr_->get_stream()),
+    primal_size_(primal_size),
+    dual_size_(dual_size),
     primal_weight_(primal_weight),
     step_size_(step_size),
-    interaction_{stream_view_},
-    movement_{stream_view_},
-    norm_squared_delta_primal_{stream_view_},
-    norm_squared_delta_dual_{stream_view_},
+    valid_step_size_(1),
+    interaction_{climber_strategies.size(), stream_view_},
+    norm_squared_delta_primal_{climber_strategies.size(), stream_view_},
+    norm_squared_delta_dual_{climber_strategies.size(), stream_view_},
     reusable_device_scalar_value_1_{f_t(1.0), stream_view_},
     reusable_device_scalar_value_0_{f_t(0.0), stream_view_},
-    graph(stream_view_, is_batch_mode)
+    dot_product_storage(0, stream_view_),
+    graph(stream_view_, is_legacy_batch_mode),
+    climber_strategies_(climber_strategies)
 {
-  valid_step_size_  = make_unique_cuda_host_pinned<i_t>();
-  *valid_step_size_ = 0;
+  valid_step_size_[0] = 0;
+
+  if (batch_mode_)
+  {
+    // Pass down any input pointer of the right type, actual pointer does not matter
+  size_t byte_needed = 0;
+  cub::DeviceSegmentedReduce::Sum(
+  nullptr, byte_needed, 
+  thrust::make_transform_iterator(thrust::make_zip_iterator(norm_squared_delta_primal_.data(), norm_squared_delta_primal_.data()),
+  tuple_multiplies<f_t>{}),
+  interaction_.data(), climber_strategies_.size(), primal_size_, stream_view_);
+  dot_product_bytes = std::max(dot_product_bytes, byte_needed);
+
+    cub::DeviceSegmentedReduce::Sum(
+  nullptr, byte_needed, 
+  thrust::make_transform_iterator(norm_squared_delta_primal_.data(),
+  power_two_func_t<f_t>{}),
+  norm_squared_delta_primal_.data(), climber_strategies_.size(), primal_size_, stream_view_);
+  dot_product_bytes = std::max(dot_product_bytes, byte_needed);
+
+  cub::DeviceSegmentedReduce::Sum(
+  nullptr, byte_needed, 
+  thrust::make_transform_iterator(norm_squared_delta_dual_.data(),
+  power_two_func_t<f_t>{}),
+  norm_squared_delta_dual_.data(), climber_strategies_.size(), dual_size_, stream_view_);
+  dot_product_bytes = std::max(dot_product_bytes, byte_needed);
+
+  dot_product_storage.resize(dot_product_bytes, stream_view_);
+  }
 }
 
 void set_adaptive_step_size_hyper_parameters(rmm::cuda_stream_view stream_view)
@@ -99,11 +138,13 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
 {
   if (threadIdx.x + blockIdx.x * blockDim.x > 0) { return; }
 
-  f_t primal_weight_ = *step_size_strategy_view.primal_weight;
+  cuopt_assert(step_size_strategy_view.primal_weight.size() == 1, "compute_step_sizes_from_movement_and_interaction not supported in batch");
 
-  f_t movement = pdlp_hyper_params::primal_distance_smoothing * primal_weight_ *
+  const f_t primal_weight = step_size_strategy_view.primal_weight[0];
+
+  const f_t movement = pdlp_hyper_params::primal_distance_smoothing * primal_weight *
                    *step_size_strategy_view.norm_squared_delta_primal +
-                 (pdlp_hyper_params::dual_distance_smoothing / primal_weight_) *
+                 (pdlp_hyper_params::dual_distance_smoothing / primal_weight) *
                    *step_size_strategy_view.norm_squared_delta_dual;
 
 #ifdef PDLP_DEBUG_MODE
@@ -117,8 +158,8 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
     return;
   }
 
-  f_t interaction_ = raft::abs(*step_size_strategy_view.interaction);
-  f_t step_size_   = *step_size_strategy_view.step_size;
+  const f_t interaction = raft::abs(*step_size_strategy_view.interaction);
+  f_t step_size   = step_size_strategy_view.step_size[0];
 
   // Increase PDHG iteration
   *pdhg_iteration += 1;
@@ -126,10 +167,10 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   f_t iteration_coefficient_ = *pdhg_iteration;
 
   // proof of thm 1 requires movement / step_size >= interaction.
-  f_t step_size_limit = interaction_ > 0.0 ? movement / interaction_ : raft::myInf<f_t>();
+  f_t step_size_limit = interaction > 0.0 ? movement / interaction : raft::myInf<f_t>();
 
 #ifdef PDLP_DEBUG_MODE
-  printf("    interaction_=%lf movement=%lf\n", interaction_, movement);
+  printf("    interaction=%lf movement=%lf\n", interaction, movement);
   printf("    step_size_=%lf step_size_limit=%lf pdhg_iteration=%d iteration_coefficient_=%lf\n",
          step_size_,
          step_size_limit,
@@ -137,7 +178,7 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
          iteration_coefficient_);
 #endif
 
-  if (step_size_ <= step_size_limit) {
+  if (step_size <= step_size_limit) {
     *step_size_strategy_view.valid_step_size = 1;
 
 #ifdef PDLP_DEBUG_MODE
@@ -154,7 +195,7 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
   const f_t potential_new_step_size_2 =
     (f_t(1.0) + raft::pow<f_t>(iteration_coefficient_ + f_t(1.0),
                                -pdlp_hyper_params::default_growth_exponent)) *
-    step_size_;
+    step_size;
 
 #ifdef PDLP_DEBUG_MODE
   printf(
@@ -175,58 +216,60 @@ __global__ void compute_step_sizes_from_movement_and_interaction(
     potential_new_step_size_2);
 #endif
 
-  step_size_ = raft::min<f_t>(potential_new_step_size_1, potential_new_step_size_2);
+  step_size = raft::min<f_t>(potential_new_step_size_1, potential_new_step_size_2);
 
 #ifdef PDLP_DEBUG_MODE
-  printf("Compute adaptative step size: min_step_size_picked=%lf\n", step_size_);
+  printf("Compute adaptative step size: min_step_size_picked=%lf\n", step_size);
 #endif
 
-  *primal_step_size = step_size_ / primal_weight_;
-  *dual_step_size   = step_size_ * primal_weight_;
+  *primal_step_size = step_size / primal_weight;
+  *dual_step_size   = step_size * primal_weight;
 
-  *step_size_strategy_view.step_size = step_size_;
-  cuopt_assert(!isnan(step_size_), "step size can't be nan");
-  cuopt_assert(!isinf(step_size_), "step size can't be inf");
+  step_size_strategy_view.step_size[0] = step_size;
+  cuopt_assert(!isnan(step_size), "step size can't be nan");
+  cuopt_assert(!isinf(step_size), "step size can't be inf");
 }
 
 template <typename i_t, typename f_t>
 i_t adaptive_step_size_strategy_t<i_t, f_t>::get_valid_step_size() const
 {
-  return *valid_step_size_;
+  return valid_step_size_[0];
 }
 
 template <typename i_t, typename f_t>
-f_t adaptive_step_size_strategy_t<i_t, f_t>::get_interaction() const
+f_t adaptive_step_size_strategy_t<i_t, f_t>::get_interaction(i_t i) const
 {
-  return interaction_.value(stream_view_);
+  return interaction_.element(i, stream_view_);
 }
 
 template <typename i_t, typename f_t>
-f_t adaptive_step_size_strategy_t<i_t, f_t>::get_norm_squared_delta_primal() const
+f_t adaptive_step_size_strategy_t<i_t, f_t>::get_norm_squared_delta_primal(i_t i) const
 {
-  return norm_squared_delta_primal_.value(stream_view_);
+  return norm_squared_delta_primal_.element(i, stream_view_);
 }
 
 template <typename i_t, typename f_t>
-f_t adaptive_step_size_strategy_t<i_t, f_t>::get_norm_squared_delta_dual() const
+f_t adaptive_step_size_strategy_t<i_t, f_t>::get_norm_squared_delta_dual(i_t i) const
 {
-  return norm_squared_delta_dual_.value(stream_view_);
+  return norm_squared_delta_dual_.element(i, stream_view_);
 }
 
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::set_valid_step_size(i_t valid)
 {
-  *valid_step_size_ = valid;
+  valid_step_size_[0] = valid;
 }
 
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::compute_step_sizes(
   pdhg_solver_t<i_t, f_t>& pdhg_solver,
-  rmm::device_scalar<f_t>& primal_step_size,
-  rmm::device_scalar<f_t>& dual_step_size,
+  rmm::device_uvector<f_t>& primal_step_size,
+  rmm::device_uvector<f_t>& dual_step_size,
   i_t total_pdlp_iterations)
 {
   raft::common::nvtx::range fun_scope("compute_step_sizes");
+
+  cuopt_assert(!(climber_strategies_.size() > 1), "Batch mode is not supported for compute_step_sizes");
 
   if (!graph.is_initialized(total_pdlp_iterations)) {
     graph.start_capture(total_pdlp_iterations);
@@ -282,7 +325,8 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   // We need to make sure both dot products happens after previous operations (next_primal/dual)
   // Thus, we add another node in the main stream before starting the SpMVs
 
-  deltas_are_done_.record(stream_view_);
+  if (!batch_mode_)
+    deltas_are_done_.record(stream_view_);
 
   // primal_dual_interaction computation => we purposly diverge from the paper (delta_y . (A @ x' -
   // A@x)) to save one SpMV
@@ -295,7 +339,9 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   // Compute A_t @ (y' - y) = A_t @ y' - 1 * current_AtY
 
   // First compute Ay' to be reused as Ay in next PDHG iteration (if found step size if valid)
-  RAFT_CUSPARSE_TRY(
+  if (!batch_mode_)
+  {
+    RAFT_CUSPARSE_TRY(
     raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
                                        reusable_device_scalar_value_1_.data(),  // alpha
@@ -306,17 +352,50 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
                                        CUSPARSE_SPMV_CSR_ALG2,
                                        (f_t*)cusparse_view.buffer_transpose.data(),
                                        stream_view_));
+  }
+  else
+  {
+    // TODO batch mode: tmp for determinism
+    // For the SpMM version, could use a mask batch operation again but with different buffer views
+    for (size_t i = 0; i < climber_strategies_.size(); ++i)
+    {
+      RAFT_CUSPARSE_TRY(
+      raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
+                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                        reusable_device_scalar_value_1_.data(),  // alpha
+                                        cusparse_view.A_T,
+                                        cusparse_view.potential_next_dual_solution_vector[i],
+                                        reusable_device_scalar_value_0_.data(),  // beta
+                                        cusparse_view.next_AtYs_vector[i],
+                                        CUSPARSE_SPMV_CSR_ALG2,
+                                        (f_t*)cusparse_view.buffer_transpose.data(),
+                                        stream_view_));
+    }
+  }
 
   // Compute Ay' - Ay = next_Aty - current_Aty
+  /* TODO batch mode: re-add this, for now we will suppose everyone restarts
+  batched_dot_product_handler_.batch_masked_transform_reduce([&](i_t climber, rmm::cuda_stream_view stream){
+    cub::DeviceTransform::Transform(
+      cuda::std::make_tuple(current_saddle_point_state.get_next_AtY().data() + climber * primal_size_,
+                            current_saddle_point_state.get_current_AtY().data() + climber * primal_size_),
+      tmp_primal.data() + climber * primal_size_,
+      primal_size_,
+      cuda::std::minus<>{},
+      stream);
+  }, mask);*/
+  // TODO batch mode: remove this once you want to do per climber solution
   cub::DeviceTransform::Transform(
     cuda::std::make_tuple(current_saddle_point_state.get_next_AtY().data(),
                           current_saddle_point_state.get_current_AtY().data()),
     tmp_primal.data(),
-    current_saddle_point_state.get_primal_size(),
-    raft::sub_op(),
+    tmp_primal.size(),
+    cuda::std::minus<>{},
     stream_view_);
 
-  // compute interaction (x'-x) . (A(y'-y))
+  if (!batch_mode_)
+  {
+      // compute interaction (x'-x) . (A(y'-y))
   RAFT_CUBLAS_TRY(
     raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
                                     current_saddle_point_state.get_primal_size(),
@@ -362,28 +441,54 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   // Wait on main stream for both dot to be done before launching the next kernel
   dot_delta_X_.stream_wait(stream_view_);
   dot_delta_Y_.stream_wait(stream_view_);
+  }
+  else
+  {
+  // TODO batch mode: remove this once you want to do per climber solution
+        cub::DeviceSegmentedReduce::Sum(
+  dot_product_storage.data(), dot_product_bytes, 
+  thrust::make_transform_iterator(thrust::make_zip_iterator(tmp_primal.data(), current_saddle_point_state.get_delta_primal().data()),
+  tuple_multiplies<f_t>{}),
+  interaction_.data(), climber_strategies_.size(), primal_size_, stream_view_);
+
+    cub::DeviceSegmentedReduce::Sum(
+  dot_product_storage.data(), dot_product_bytes, 
+  thrust::make_transform_iterator(current_saddle_point_state.get_delta_primal().data(),
+  power_two_func_t<f_t>{}),
+  norm_squared_delta_primal_.data(), climber_strategies_.size(), primal_size_, stream_view_);
+
+  cub::DeviceSegmentedReduce::Sum(
+  dot_product_storage.data(), dot_product_bytes, 
+  thrust::make_transform_iterator(current_saddle_point_state.get_delta_dual().data(),
+  power_two_func_t<f_t>{}),
+  norm_squared_delta_dual_.data(), climber_strategies_.size(), dual_size_, stream_view_);
+  }
 }
 
 template <typename i_t, typename f_t>
 __global__ void compute_actual_stepsizes(
   const typename adaptive_step_size_strategy_t<i_t, f_t>::view_t step_size_strategy_view,
-  f_t* primal_step_size,
-  f_t* dual_step_size)
+  raft::device_span<f_t> primal_step_size,
+  raft::device_span<f_t> dual_step_size,
+  i_t batch_size)
 {
-  if (threadIdx.x + blockIdx.x * blockDim.x > 0) { return; }
-  f_t step_size_     = *step_size_strategy_view.step_size;
-  f_t primal_weight_ = *step_size_strategy_view.primal_weight;
+  const int idx = threadIdx.x + blockIdx.x * blockDim.x;
+  if (idx >= batch_size) { return; }
 
-  *primal_step_size = step_size_ / primal_weight_;
-  *dual_step_size   = step_size_ * primal_weight_;
+  const f_t step_size     = step_size_strategy_view.step_size[idx];
+  const f_t primal_weight = step_size_strategy_view.primal_weight[idx];
+
+  primal_step_size[idx] = step_size / primal_weight;
+  dual_step_size[idx]   = step_size * primal_weight;
 }
 
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::get_primal_and_dual_stepsizes(
-  rmm::device_scalar<f_t>& primal_step_size, rmm::device_scalar<f_t>& dual_step_size)
+  rmm::device_uvector<f_t>& primal_step_size, rmm::device_uvector<f_t>& dual_step_size)
 {
+  const auto [grid_size, block_size] = kernel_config_from_batch_size(climber_strategies_.size());
   compute_actual_stepsizes<i_t, f_t>
-    <<<1, 1, 0, stream_view_>>>(this->view(), primal_step_size.data(), dual_step_size.data());
+    <<<grid_size, block_size, 0, stream_view_>>>(this->view(), make_span(primal_step_size), make_span(dual_step_size), climber_strategies_.size());
   RAFT_CUDA_TRY(cudaPeekAtLastError());
 }
 
@@ -393,12 +498,11 @@ adaptive_step_size_strategy_t<i_t, f_t>::view()
 {
   adaptive_step_size_strategy_t<i_t, f_t>::view_t v{};
 
-  v.primal_weight   = primal_weight_->data();
-  v.step_size       = step_size_->data();
-  v.valid_step_size = valid_step_size_.get();
+  v.primal_weight   = make_span(*primal_weight_);
+  v.step_size       = make_span(*step_size_);
+  v.valid_step_size = thrust::raw_pointer_cast(valid_step_size_.data());
 
   v.interaction = interaction_.data();
-  v.movement    = movement_.data();
 
   v.norm_squared_delta_primal = norm_squared_delta_primal_.data();
   v.norm_squared_delta_dual   = norm_squared_delta_dual_.data();
@@ -410,8 +514,9 @@ adaptive_step_size_strategy_t<i_t, f_t>::view()
   template class adaptive_step_size_strategy_t<int, F_TYPE>;                                   \
   template __global__ void compute_actual_stepsizes<int, F_TYPE>(                              \
     const typename adaptive_step_size_strategy_t<int, F_TYPE>::view_t step_size_strategy_view, \
-    F_TYPE* primal_step_size,                                                                  \
-    F_TYPE* dual_step_size);                                                                   \
+    raft::device_span<F_TYPE> primal_step_size,                                                                  \
+    raft::device_span<F_TYPE> dual_step_size,                                                                   \
+    int size);                                                                   \
                                                                                                \
   template __global__ void compute_step_sizes_from_movement_and_interaction<int, F_TYPE>(      \
     typename adaptive_step_size_strategy_t<int, F_TYPE>::view_t step_size_strategy_view,       \

@@ -59,7 +59,7 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
   const std::string objective_name,
   const std::vector<std::string>& var_names,
   const std::vector<std::string>& row_names,
-  additional_termination_information_t& termination_stats,
+  std::vector<additional_termination_information_t>& termination_stats,
   pdlp_termination_status_t termination_status)
   : primal_solution_(std::move(final_primal_solution)),
     dual_solution_(std::move(final_dual_solution)),
@@ -82,7 +82,7 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
   const std::string objective_name,
   const std::vector<std::string>& var_names,
   const std::vector<std::string>& row_names,
-  additional_termination_information_t& termination_stats,
+  std::vector<additional_termination_information_t>& termination_stats,
   pdlp_termination_status_t termination_status)
   : primal_solution_(std::move(final_primal_solution)),
     dual_solution_(std::move(final_dual_solution)),
@@ -104,7 +104,7 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
   const std::string objective_name,
   const std::vector<std::string>& var_names,
   const std::vector<std::string>& row_names,
-  additional_termination_information_t& termination_stats,
+  std::vector<additional_termination_information_t>& termination_stats,
   pdlp_termination_status_t termination_status,
   const raft::handle_t* handler_ptr,
   [[maybe_unused]] bool deep_copy)
@@ -155,41 +155,43 @@ template <typename i_t, typename f_t>
 void optimization_problem_solution_t<i_t, f_t>::write_additional_termination_statistics_to_file(
   std::ofstream& myfile)
 {
+  cuopt_expects(termination_stats_.size() == 1, error_type_t::ValidationError, "Write to file only supported in non batch mode");
+
   myfile << "\t\"Additional termination information\" : { " << std::endl;
-  myfile << "\t\"Number of steps taken\" : " << termination_stats_.number_of_steps_taken << ","
+  myfile << "\t\"Number of steps taken\" : " << termination_stats_[0].number_of_steps_taken << ","
          << std::endl;
-  if (termination_stats_.solved_by_pdlp) {
+  if (termination_stats_[0].solved_by_pdlp) {
     myfile << "\t\"Total number of attempted steps\" : "
-           << termination_stats_.total_number_of_attempted_steps << "," << std::endl;
+           << termination_stats_[0].total_number_of_attempted_steps << "," << std::endl;
   }
-  myfile << "\t\"Total solve time\" : " << termination_stats_.solve_time;
-  if (termination_stats_.solved_by_pdlp) {
+  myfile << "\t\"Total solve time\" : " << termination_stats_[0].solve_time;
+  if (termination_stats_[0].solved_by_pdlp) {
     myfile << "," << std::endl;
     myfile << "\t\t\"Convergence measures\" : { " << std::endl;
-    myfile << "\t\t\t\"Absolute primal residual\" : " << termination_stats_.l2_primal_residual
+    myfile << "\t\t\t\"Absolute primal residual\" : " << termination_stats_[0].l2_primal_residual
            << "," << std::endl;
     myfile << "\t\t\t\"Relative primal residual\" : "
-           << termination_stats_.l2_relative_primal_residual << "," << std::endl;
-    myfile << "\t\t\t\"Absolute dual residual\" : " << termination_stats_.l2_dual_residual << ","
+           << termination_stats_[0].l2_relative_primal_residual << "," << std::endl;
+    myfile << "\t\t\t\"Absolute dual residual\" : " << termination_stats_[0].l2_dual_residual << ","
            << std::endl;
-    myfile << "\t\t\t\"Relative dual residual\" : " << termination_stats_.l2_relative_dual_residual
+    myfile << "\t\t\t\"Relative dual residual\" : " << termination_stats_[0].l2_relative_dual_residual
            << "," << std::endl;
-    myfile << "\t\t\t\"Primal objective value\" : " << termination_stats_.primal_objective << ","
+    myfile << "\t\t\t\"Primal objective value\" : " << termination_stats_[0].primal_objective << ","
            << std::endl;
-    myfile << "\t\t\t\"Dual objective value\" : " << termination_stats_.dual_objective << ","
+    myfile << "\t\t\t\"Dual objective value\" : " << termination_stats_[0].dual_objective << ","
            << std::endl;
-    myfile << "\t\t\t\"Gap\" : " << termination_stats_.gap << "," << std::endl;
-    myfile << "\t\t\t\"Relative gap\" : " << termination_stats_.relative_gap << std::endl;
+    myfile << "\t\t\t\"Gap\" : " << termination_stats_[0].gap << "," << std::endl;
+    myfile << "\t\t\t\"Relative gap\" : " << termination_stats_[0].relative_gap << std::endl;
     myfile << "\t\t}, " << std::endl;
     myfile << "\t\t\"Infeasibility measures\" : {" << std::endl;
     myfile << "\t\t\t\"Maximum error for the linear constraints and sign constraints\" : "
-           << termination_stats_.max_primal_ray_infeasibility << "," << std::endl;
+           << termination_stats_[0].max_primal_ray_infeasibility << "," << std::endl;
     myfile << "\t\t\t\"Objective value for the extreme primal ray\" : "
-           << termination_stats_.primal_ray_linear_objective << "," << std::endl;
+           << termination_stats_[0].primal_ray_linear_objective << "," << std::endl;
     myfile << "\t\t\t\"Maximum constraint error\" : "
-           << termination_stats_.max_dual_ray_infeasibility << "," << std::endl;
+           << termination_stats_[0].max_dual_ray_infeasibility << "," << std::endl;
     myfile << "\t\t\t\"Objective value for the extreme dual ray\" : "
-           << termination_stats_.dual_ray_linear_objective << std::endl;
+           << termination_stats_[0].dual_ray_linear_objective << std::endl;
     myfile << "\t\t} " << std::endl;
   } else
     myfile << std::endl;
@@ -203,6 +205,8 @@ void optimization_problem_solution_t<i_t, f_t>::write_to_file(std::string_view f
                                                               bool generate_variable_values)
 {
   raft::common::nvtx::range fun_scope("write final solution to file");
+
+  cuopt_expects(termination_stats_.size() == 1, error_type_t::ValidationError, "Write to file only supported in non batch mode");
 
   std::ofstream myfile(filename.data());
   myfile.precision(std::numeric_limits<f_t>::digits10 + 1);
@@ -264,7 +268,8 @@ void optimization_problem_solution_t<i_t, f_t>::write_to_file(std::string_view f
 template <typename i_t, typename f_t>
 void optimization_problem_solution_t<i_t, f_t>::set_solve_time(double ms)
 {
-  termination_stats_.solve_time = ms;
+  // TODO batch mode: shouldn't we have a different solve time per climber?
+  std::for_each(termination_stats_.begin(), termination_stats_.end(), [ms](auto& termination) { termination.solve_time = ms; });
 }
 
 template <typename i_t, typename f_t>
@@ -277,7 +282,8 @@ void optimization_problem_solution_t<i_t, f_t>::set_termination_status(
 template <typename i_t, typename f_t>
 double optimization_problem_solution_t<i_t, f_t>::get_solve_time() const
 {
-  return termination_stats_.solve_time;
+  // TODO batch mode: is that ok?
+  return termination_stats_[0].solve_time;
 }
 
 template <typename i_t, typename f_t>
@@ -306,13 +312,15 @@ std::string optimization_problem_solution_t<i_t, f_t>::get_termination_status_st
 template <typename i_t, typename f_t>
 f_t optimization_problem_solution_t<i_t, f_t>::get_objective_value() const
 {
-  return termination_stats_.primal_objective;
+  // TODO batch mode: is that ok?
+  return termination_stats_[0].primal_objective;
 }
 
 template <typename i_t, typename f_t>
 f_t optimization_problem_solution_t<i_t, f_t>::get_dual_objective_value() const
 {
-  return termination_stats_.dual_objective;
+  // TODO batch mode: is that ok?
+  return termination_stats_[0].dual_objective;
 }
 
 template <typename i_t, typename f_t>
@@ -359,8 +367,15 @@ cuopt::logic_error optimization_problem_solution_t<i_t, f_t>::get_error_status()
 }
 
 template <typename i_t, typename f_t>
-optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t
-optimization_problem_solution_t<i_t, f_t>::get_additional_termination_information() const
+typename optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t
+optimization_problem_solution_t<i_t, f_t>::get_additional_termination_information(i_t id) const
+{
+  return termination_stats_[id];
+}
+
+template <typename i_t, typename f_t>
+std::vector<typename optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t>
+optimization_problem_solution_t<i_t, f_t>::get_additional_termination_informations() const
 {
   return termination_stats_;
 }

@@ -17,6 +17,7 @@
 
 #include <linear_programming/restart_strategy/localized_duality_gap_container.hpp>
 #include <linear_programming/restart_strategy/pdlp_restart_strategy.cuh>
+#include <linear_programming/pdlp_climber_strategy.hpp>
 
 #include <mip/mip_constants.hpp>
 
@@ -25,15 +26,15 @@
 namespace cuopt::linear_programming::detail {
 template <typename i_t, typename f_t>
 localized_duality_gap_container_t<i_t, f_t>::localized_duality_gap_container_t(
-  raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size)
+  raft::handle_t const* handle_ptr, i_t primal_size, i_t dual_size, const std::vector<pdlp_climber_strategy_t>& climber_strategies)
   : primal_size_h_(primal_size),
     dual_size_h_(dual_size),
     lagrangian_value_{handle_ptr->get_stream()},
     lower_bound_value_{handle_ptr->get_stream()},
     upper_bound_value_{handle_ptr->get_stream()},
     distance_traveled_{handle_ptr->get_stream()},
-    primal_distance_traveled_{handle_ptr->get_stream()},
-    dual_distance_traveled_{handle_ptr->get_stream()},
+    primal_distance_traveled_(climber_strategies.size(), handle_ptr->get_stream()),
+    dual_distance_traveled_(climber_strategies.size(), handle_ptr->get_stream()),
     normalized_gap_{handle_ptr->get_stream()},
     primal_solution_{static_cast<size_t>(primal_size),
                      handle_ptr->get_stream()},                                // Needed even in kkt
@@ -69,8 +70,8 @@ localized_duality_gap_container_t<i_t, f_t>::view()
   v.lower_bound_value        = lower_bound_value_.data();
   v.upper_bound_value        = upper_bound_value_.data();
   v.distance_traveled        = distance_traveled_.data();
-  v.primal_distance_traveled = primal_distance_traveled_.data();
-  v.dual_distance_traveled   = dual_distance_traveled_.data();
+  v.primal_distance_traveled = make_span(primal_distance_traveled_);
+  v.dual_distance_traveled   = make_span(dual_distance_traveled_);
   v.normalized_gap           = normalized_gap_.data();
 
   v.primal_solution    = primal_solution_.data();
