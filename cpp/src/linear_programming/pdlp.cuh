@@ -13,6 +13,7 @@
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/initial_scaling_strategy/initial_scaling.cuh>
 #include <linear_programming/pdhg.hpp>
+#include <linear_programming/pdlp_features.hpp>
 #include <linear_programming/restart_strategy/pdlp_restart_strategy.cuh>
 #include <linear_programming/step_size_strategy/adaptive_step_size_strategy.hpp>
 #include <linear_programming/termination_strategy/termination_strategy.hpp>
@@ -26,6 +27,7 @@
 #include <rmm/device_scalar.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <chrono>
 #include <optional>
 #include "linear_programming/termination_strategy/convergence_information.hpp"
 
@@ -200,6 +202,10 @@ class pdlp_solver_t {
 
   // Iteration metrics for performance tracking
   int64_t total_spmv_ops_{0};  // Total SpMV operations performed
+
+  // Feature tracking for runtime prediction (Stable3 mode)
+  pdlp_features_t<i_t, f_t> features_;
+  std::chrono::high_resolution_clock::time_point interval_start_time_;
 
   // Cached sparsity metrics (computed once at start of solve)
   double cached_sparsity_{0.0};
