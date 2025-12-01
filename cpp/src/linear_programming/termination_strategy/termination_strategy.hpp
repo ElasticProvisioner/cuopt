@@ -36,15 +36,18 @@ class pdlp_termination_strategy_t {
                               const i_t primal_size,
                               const i_t dual_size,
                               const pdlp_solver_settings_t<i_t, f_t>& settings,
+                              cusparse_view_t<i_t, f_t>& last_restart_cusparse_view,
                               const std::vector<pdlp_climber_strategy_t>& climber_strategies);
 
   void evaluate_termination_criteria(
     pdhg_solver_t<i_t, f_t>& current_pdhg_solver,
     rmm::device_uvector<f_t>& primal_iterate,
     rmm::device_uvector<f_t>& dual_iterate,
-    [[maybe_unused]] const rmm::device_uvector<f_t>& dual_slack,
-    const rmm::device_uvector<f_t>& combined_bounds,  // Only useful if per_constraint_residual
-    const rmm::device_uvector<f_t>&
+    [[maybe_unused]] const rmm::device_uvector<f_t>& dual_slack, // // Only useful in cuPDLPx restart mode
+    [[maybe_unused]] rmm::device_uvector<f_t>& last_restart_primal_iterate, // Only useful for infeasiblity detection
+  [[maybe_unused]] rmm::device_uvector<f_t>& last_restart_dual_iterate, // Only useful for infeasiblity detection
+    [[maybe_unused]] const rmm::device_uvector<f_t>& combined_bounds,  // Only useful if per_constraint_residual
+    [[maybe_unused]] const rmm::device_uvector<f_t>&
       objective_coefficients  // Only useful if per_constraint_residual
   );
 

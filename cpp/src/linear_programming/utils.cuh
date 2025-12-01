@@ -628,11 +628,11 @@ struct abs_t {
 
 template <typename f_t>
 void inline my_inf_norm(const rmm::device_uvector<f_t>& input_vector,
-                        rmm::device_scalar<f_t>& result,
+                        f_t* result,
                         raft::handle_t const* handle_ptr)
 {
   const f_t neutral = f_t(0.0);
-  thrust::device_ptr<f_t> result_ptr(result.data());
+  thrust::device_ptr<f_t> result_ptr(result);
 
   *result_ptr = thrust::transform_reduce(handle_ptr->get_thrust_policy(),
                                          input_vector.data(),
@@ -640,6 +640,22 @@ void inline my_inf_norm(const rmm::device_uvector<f_t>& input_vector,
                                          abs_t<f_t>{},
                                          neutral,
                                          thrust::maximum<f_t>());
+}
+
+template <typename f_t>
+void inline my_inf_norm(const rmm::device_uvector<f_t>& input_vector,
+                        rmm::device_scalar<f_t>& result,
+                        raft::handle_t const* handle_ptr)
+{
+  my_inf_norm(input_vector, result.data(), handle_ptr);
+}
+
+template <typename f_t>
+void inline my_inf_norm(const rmm::device_uvector<f_t>& input_vector,
+                        rmm::device_uvector<f_t>& result,
+                        raft::handle_t const* handle_ptr)
+{
+  my_inf_norm(input_vector, result.data(), handle_ptr);
 }
 
 }  // namespace cuopt::linear_programming::detail

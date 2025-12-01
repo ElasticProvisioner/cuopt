@@ -8,6 +8,8 @@
 #include <linear_programming/pdlp_constants.hpp>
 #include <linear_programming/termination_strategy/infeasibility_information.hpp>
 #include <linear_programming/utils.cuh>
+#include <cuopt/linear_programming/utilities/segmented_sum_handler.cuh>
+
 #include <mip/mip_constants.hpp>
 
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -27,19 +29,22 @@ infeasibility_information_t<i_t, f_t>::infeasibility_information_t(
   cusparse_view_t<i_t, f_t>& cusparse_view,
   i_t primal_size,
   i_t dual_size,
-  bool infeasibility_detection)
+  bool infeasibility_detection,
+  cusparse_view_t<i_t, f_t>& last_restart_cusparse_view,
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies)
   : handle_ptr_(handle_ptr),
     stream_view_(handle_ptr_->get_stream()),
     primal_size_h_(primal_size),
     dual_size_h_(dual_size),
     problem_ptr(&op_problem),
     op_problem_cusparse_view_(cusparse_view),
-    primal_ray_inf_norm_{0.0, stream_view_},
+    last_restart_cusparse_view_(last_restart_cusparse_view),
+    primal_ray_inf_norm_(climber_strategies.size(), stream_view_),
     primal_ray_inf_norm_inverse_{stream_view_},
     neg_primal_ray_inf_norm_inverse_{stream_view_},
     primal_ray_max_violation_{stream_view_},
     max_primal_ray_infeasibility_{0.0, stream_view_},
-    primal_ray_linear_objective_{0.0, stream_view_},
+    primal_ray_linear_objective_(climber_strategies.size(), stream_view_),
     dual_ray_inf_norm_{0.0, stream_view_},
     max_dual_ray_infeasibility_{0.0, stream_view_},
     dual_ray_linear_objective_{0.0, stream_view_},
@@ -61,7 +66,8 @@ infeasibility_information_t<i_t, f_t>::infeasibility_information_t(
       (!infeasibility_detection) ? 0 : static_cast<size_t>(dual_size_h_), stream_view_},
     reusable_device_scalar_value_1_{1.0, stream_view_},
     reusable_device_scalar_value_0_{0.0, stream_view_},
-    reusable_device_scalar_value_neg_1_{-1.0, stream_view_}
+    reusable_device_scalar_value_neg_1_{-1.0, stream_view_},
+    climber_strategies_(climber_strategies)
 {
   if (infeasibility_detection) {
     RAFT_CUDA_TRY(cudaMemsetAsync(homogenous_primal_residual_.data(),
@@ -162,6 +168,18 @@ __global__ void compute_remaining_stats_kernel(
 #endif
 }
 
+template <typename f_t>
+struct max_abs_t {
+  HDI f_t operator()(f_t a, f_t b) { return cuda::std::max(cuda::std::abs(a), cuda::std::abs(a)); }
+};
+
+template <typename f_t>
+struct scalar_divide_t {
+  scalar_divide_t(const f_t scalar): scalar_(scalar){}
+  const f_t scalar_;
+  HDI f_t operator()(f_t a) { cuopt_assert(scalar_ != f_t(0.0), "Scalar should never be 0"); return a / scalar_; }
+};
+
 template <typename i_t, typename f_t>
 void infeasibility_information_t<i_t, f_t>::compute_infeasibility_information(
   pdhg_solver_t<i_t, f_t>& current_pdhg_solver,
@@ -169,47 +187,150 @@ void infeasibility_information_t<i_t, f_t>::compute_infeasibility_information(
   rmm::device_uvector<f_t>& dual_ray)
 {
   raft::common::nvtx::range fun_scope("compute_infeasibility_information");
+  using f_t2                = typename type_2<f_t>::type;
 
-  my_inf_norm(primal_ray, primal_ray_inf_norm_, handle_ptr_);
+  if (true)
+  {
+    cub::DeviceTransform::Transform(
+      cuda::std::make_tuple(primal_ray.data(),
+      problem_wrap_container(problem_ptr->variable_bounds)),
+      primal_ray.size(),
+      primal_ray.data(),
+      [] HD (f_t primal, f_t2 bounds){
+          const f_t lower   = get_lower(bounds);
+          const f_t upper   = get_upper(bounds);
+          f_t primal_to_return = primal;
+          if (isfinite(lower))
+            primal_to_return = cuda::std::max(primal_to_return, f_t(0.0));
+          if (isfinite(upper))
+            primal_to_return = cuda::std::min(primal_to_return, f_t(0.0));
+          return primal_to_return;        
+        },
+      stream_view_);
 
-  raft::linalg::eltwiseDivideCheckZero(primal_ray_inf_norm_inverse_.data(),
+    segmented_sum_handler_.segmented_reduce_helper(primal_ray.data(), primal_ray_inf_norm_.data(), climber_strategies_.size(), primal_size_h_, max_abs_t<f_t>{}, f_t(0.0));
+
+      cub::DeviceTransform::Transform(
+        cuda::std::make_tuple(dual_ray.data(),
+                                problem_wrap_container(problem_ptr->constraint_lower_bounds),
+                                problem_wrap_container(problem_ptr->constraint_upper_bounds)),
+        dual_ray.data(),
+        dual_ray.size(),
+          [] HD (f_t dual, f_t lower, f_t upper){
+            f_t dual_to_return = dual;
+            if (!isfinite(lower))
+              dual_to_return = cuda::std::max(dual_to_return, f_t(0.0));
+            if (!isfinite(upper))
+              dual_to_return = cuda::std::min(dual_to_return, f_t(0.0));
+            return dual_to_return;        
+          },
+        stream_view_);
+
+      segmented_sum_handler_.segmented_reduce_helper(dual_ray.data(), dual_ray_inf_norm_.data(), climber_strategies_.size(), dual_size_h_, max_abs_t<f_t>{}, f_t(0.0));
+
+      // TODO batch mode: would be better in a kernel
+      for (size_t i = 0; i < climber_strategies_.size(); ++i)
+      {
+        const f_t primal_ray_inf_norm_val = primal_ray_inf_norm_.element(i, stream_view_);
+        if (primal_ray_inf_norm_val > f_t(0.0))
+        {
+          cub::DeviceTransform::Transform(
+            primal_ray.data() + i * primal_size_h_,
+            primal_ray.data() + i * primal_size_h_,
+            primal_size_h_,
+            scalar_divide_t<f_t>{primal_ray_inf_norm_val},
+            stream_view_);
+        }
+      }
+
+      // TODO batch mode: for not deterministic mode use SpMM
+      for (size_t i = 0; i < climber_strategies_.size(); ++i)
+      {
+          RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
+                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
                                        reusable_device_scalar_value_1_.data(),
-                                       primal_ray_inf_norm_.data(),
-                                       1,
-                                       stream_view_);
-  raft::linalg::eltwiseMultiply(neg_primal_ray_inf_norm_inverse_.data(),
-                                primal_ray_inf_norm_inverse_.data(),
-                                reusable_device_scalar_value_neg_1_.data(),
-                                1,
-                                stream_view_);
+                                       last_restart_cusparse_view_.A,
+                                       last_restart_cusparse_view_.primal_solution,
+                                       reusable_device_scalar_value_0_.data(),
+                                       last_restart_cusparse_view_.tmp_dual,
+                                       CUSPARSE_SPMV_CSR_ALG2,
+                                       (f_t*)last_restart_cusparse_view_.buffer_non_transpose.data(),
+                                       stream_view_));
+            RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
+                                                       CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                       reusable_device_scalar_value_neg_1_.data(),
+                                                       last_restart_cusparse_view_.A_T,
+                                                       last_restart_cusparse_view_.dual_solution,
+                                                       reusable_device_scalar_value_0_.data(),
+                                                       last_restart_cusparse_view_.tmp_primal,
+                                                       CUSPARSE_SPMV_CSR_ALG2,
+                                                       (f_t*)last_restart_cusparse_view_.buffer_transpose.data(),
+                                                       stream_view_));
+      }
 
-  compute_homogenous_primal_residual(op_problem_cusparse_view_,
-                                     current_pdhg_solver.get_dual_tmp_resource());
-  compute_max_violation(primal_ray);
-  compute_homogenous_primal_objective(primal_ray);
-  my_inf_norm(homogenous_primal_residual_, max_primal_ray_infeasibility_, handle_ptr_);
+      // Dot product on each objective . delta primal = primal_ray_linear_objective
+      segmented_sum_handler_.segmented_sum_helper(cuda::std::make_tuple(
+        problem_wrap_container(problem_ptr->objective_coefficients), primal_ray, cuda::std::multiplies<>),
+        primal_ray_linear_objective_.data(),
+        climber_strategies_.size(),
+        primal_size_h_
+      );
 
-  // QP would need this
-  // primal_ray_quadratic_norm = norm(problem.objective_matrix * primal_ray_estimate, Inf)
+      // TODO now: can't I just unscale ouais y a une grosse question de qu'est ce qui est scale unscale dans tout ça, compare avec lui et voir
+      // Unscale?
+      //cub::DeviceTransform::Transform(primal_ray_linear_objective_.data(), primal_ray_linear_objective_.data(), primal_ray_linear_objective_.size(), 
+      //[])
+      cub::DeviceTransform::Transform(
+            cuda::std::make_tuple()
+            primal_ray.data() + i * primal_size_h_,
+            primal_size_h_,
+            scalar_divide_t<f_t>{primal_ray_inf_norm_val},
+            stream_view_);
+      
+  }
+  else
+  {
+    my_inf_norm(primal_ray, primal_ray_inf_norm_, handle_ptr_);
 
-  compute_homogenous_dual_residual(
-    op_problem_cusparse_view_, current_pdhg_solver.get_primal_tmp_resource(), primal_ray);
-  compute_homogenous_dual_objective(dual_ray);
+    raft::linalg::eltwiseDivideCheckZero(primal_ray_inf_norm_inverse_.data(),
+                                        reusable_device_scalar_value_1_.data(),
+                                        primal_ray_inf_norm_.data(),
+                                        1,
+                                        stream_view_);
+    raft::linalg::eltwiseMultiply(neg_primal_ray_inf_norm_inverse_.data(),
+                                  primal_ray_inf_norm_inverse_.data(),
+                                  reusable_device_scalar_value_neg_1_.data(),
+                                  1,
+                                  stream_view_);
 
-  my_inf_norm(homogenous_dual_residual_, max_dual_ray_infeasibility_, handle_ptr_);
-  my_inf_norm(dual_ray, dual_ray_inf_norm_, handle_ptr_);
-  my_inf_norm(reduced_cost_, reduced_cost_inf_norm_, handle_ptr_);
+    compute_homogenous_primal_residual(op_problem_cusparse_view_,
+                                      current_pdhg_solver.get_dual_tmp_resource());
+    compute_max_violation(primal_ray);
+    compute_homogenous_primal_objective(primal_ray);
+    my_inf_norm(homogenous_primal_residual_, max_primal_ray_infeasibility_, handle_ptr_);
 
-  compute_remaining_stats_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(this->view());
-  RAFT_CUDA_TRY(cudaPeekAtLastError());
+    // QP would need this
+    // primal_ray_quadratic_norm = norm(problem.objective_matrix * primal_ray_estimate, Inf)
 
-  // reset for next round
-  RAFT_CUDA_TRY(cudaMemsetAsync(homogenous_primal_residual_.data(),
-                                0.0,
-                                sizeof(f_t) * homogenous_primal_residual_.size(),
-                                stream_view_));
-  RAFT_CUDA_TRY(cudaMemsetAsync(
-    homogenous_dual_residual_.data(), 0.0, sizeof(f_t) * homogenous_dual_residual_.size()));
+    compute_homogenous_dual_residual(
+      op_problem_cusparse_view_, current_pdhg_solver.get_primal_tmp_resource(), primal_ray);
+    compute_homogenous_dual_objective(dual_ray);
+
+    my_inf_norm(homogenous_dual_residual_, max_dual_ray_infeasibility_, handle_ptr_);
+    my_inf_norm(dual_ray, dual_ray_inf_norm_, handle_ptr_);
+    my_inf_norm(reduced_cost_, reduced_cost_inf_norm_, handle_ptr_);
+
+    compute_remaining_stats_kernel<i_t, f_t><<<1, 1, 0, stream_view_>>>(this->view());
+    RAFT_CUDA_TRY(cudaPeekAtLastError());
+
+    // reset for next round
+    RAFT_CUDA_TRY(cudaMemsetAsync(homogenous_primal_residual_.data(),
+                                  0.0,
+                                  sizeof(f_t) * homogenous_primal_residual_.size(),
+                                  stream_view_));
+    RAFT_CUDA_TRY(cudaMemsetAsync(
+      homogenous_dual_residual_.data(), 0.0, sizeof(f_t) * homogenous_dual_residual_.size()));
+  }
 }
 
 template <typename i_t, typename f_t>

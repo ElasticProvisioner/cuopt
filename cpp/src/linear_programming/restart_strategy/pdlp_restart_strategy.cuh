@@ -364,6 +364,13 @@ bool is_trust_region_restart()
 }
 
 template <typename i_t, typename f_t>
+bool is_kkt_restart()
+{
+  return pdlp_hyper_params::restart_strategy ==
+           static_cast<int>(pdlp_restart_strategy_t<i_t, f_t>::restart_strategy_t::KKT_RESTART);
+}
+
+template <typename i_t, typename f_t>
 bool is_cupdlpx_restart()
 {
   return pdlp_hyper_params::restart_strategy ==

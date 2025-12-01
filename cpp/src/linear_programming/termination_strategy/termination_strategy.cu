@@ -12,6 +12,7 @@
 
 #include <cuopt/linear_programming/pdlp/pdlp_warm_start_data.hpp>
 #include <cuopt/linear_programming/pdlp/solver_settings.hpp>
+#include <cuopt/linear_programming/pdlp/pdlp_hyper_params.cuh>
 
 #include <raft/common/nvtx.hpp>
 #include <raft/util/cuda_utils.cuh>
@@ -26,6 +27,7 @@ pdlp_termination_strategy_t<i_t, f_t>::pdlp_termination_strategy_t(
   const i_t primal_size,
   const i_t dual_size,
   const pdlp_solver_settings_t<i_t, f_t>& settings,
+  cusparse_view_t<i_t, f_t>& last_restart_cusparse_view,
   const std::vector<pdlp_climber_strategy_t>& climber_strategies)
   : handle_ptr_(handle_ptr),
     stream_view_(handle_ptr_->get_stream()),
@@ -36,7 +38,9 @@ pdlp_termination_strategy_t<i_t, f_t>::pdlp_termination_strategy_t(
                               cusparse_view,
                               primal_size,
                               dual_size,
-                              settings.detect_infeasibility},
+                              settings.detect_infeasibility,
+                              last_restart_cusparse_view,
+                              climber_strategies},
     termination_status_(climber_strategies.size()),
     settings_(settings),
     climber_strategies_(climber_strategies)
@@ -117,8 +121,10 @@ void pdlp_termination_strategy_t<i_t, f_t>::evaluate_termination_criteria(
   rmm::device_uvector<f_t>& primal_iterate,
   rmm::device_uvector<f_t>& dual_iterate,
   [[maybe_unused]] const rmm::device_uvector<f_t>& dual_slack,
-  const rmm::device_uvector<f_t>& combined_bounds,
-  const rmm::device_uvector<f_t>& objective_coefficients)
+  [[maybe_unused]] rmm::device_uvector<f_t>& last_restart_primal_iterate,
+  [[maybe_unused]] rmm::device_uvector<f_t>& last_restart_dual_iterate,
+  [[maybe_unused]] const rmm::device_uvector<f_t>& combined_bounds,
+  [[maybe_unused]] const rmm::device_uvector<f_t>& objective_coefficients)
 {
   raft::common::nvtx::range fun_scope("Evaluate termination criteria");
 
@@ -130,9 +136,11 @@ void pdlp_termination_strategy_t<i_t, f_t>::evaluate_termination_criteria(
                                                            objective_coefficients,
                                                            settings_);
   if (settings_.detect_infeasibility) {
-    cuopt_expects(!(climber_strategies_.size() > 1), error_type_t::ValidationError, "Infeasibility detection is not supported in batch mode");
+    // TODO PDLP infeasible: looks like he is not checking as often as we do
     infeasibility_information_.compute_infeasibility_information(
-      current_pdhg_solver, primal_iterate, dual_iterate);
+      current_pdhg_solver, 
+      (pdlp_hyper_params::use_reflected_primal_dual) ? last_restart_dual_iterate :  primal_iterate,
+      (pdlp_hyper_params::use_reflected_primal_dual) ? last_restart_dual_iterate :  dual_iterate);
   }
 
   check_termination_criteria();

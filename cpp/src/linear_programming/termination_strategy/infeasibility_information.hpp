@@ -10,6 +10,8 @@
 #include <linear_programming/pdhg.hpp>
 #include <linear_programming/saddle_point.hpp>
 
+#include <cuopt/linear_programming/utilities/segmented_sum_handler.cuh>
+
 #include <mip/problem/problem.cuh>
 
 #include <raft/core/handle.hpp>
@@ -28,7 +30,9 @@ class infeasibility_information_t {
                               cusparse_view_t<i_t, f_t>& cusparse_view,
                               i_t primal_size,
                               i_t dual_size,
-                              bool infeasibility_detection);
+                              bool infeasibility_detection,
+  cusparse_view_t<i_t, f_t>& last_restart_cusparse_view,
+                              const std::vector<pdlp_climber_strategy_t>& climber_strategies);
 
   void compute_infeasibility_information(pdhg_solver_t<i_t, f_t>& current_pdhg_solver,
                                          rmm::device_uvector<f_t>& primal_ray,
@@ -81,13 +85,14 @@ class infeasibility_information_t {
 
   problem_t<i_t, f_t>* problem_ptr;
   cusparse_view_t<i_t, f_t>& op_problem_cusparse_view_;
+  cusparse_view_t<i_t, f_t>& last_restart_cusparse_view_;
 
-  rmm::device_scalar<f_t> primal_ray_inf_norm_;
+  rmm::device_uvector<f_t> primal_ray_inf_norm_;
   rmm::device_scalar<f_t> primal_ray_inf_norm_inverse_;
   rmm::device_scalar<f_t> neg_primal_ray_inf_norm_inverse_;
   rmm::device_scalar<f_t> primal_ray_max_violation_;
   rmm::device_scalar<f_t> max_primal_ray_infeasibility_;
-  rmm::device_scalar<f_t> primal_ray_linear_objective_;
+  rmm::device_uvector<f_t> primal_ray_linear_objective_;
 
   rmm::device_scalar<f_t> dual_ray_inf_norm_;
   rmm::device_scalar<f_t> max_dual_ray_infeasibility_;
@@ -110,5 +115,8 @@ class infeasibility_information_t {
   const rmm::device_scalar<f_t> reusable_device_scalar_value_1_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_0_;
   const rmm::device_scalar<f_t> reusable_device_scalar_value_neg_1_;
+
+  segmented_sum_handler_t<i_t, f_t> segmented_sum_handler_;
+  const std::vector<pdlp_climber_strategy_t>& climber_strategies_;
 };
 }  // namespace cuopt::linear_programming::detail
