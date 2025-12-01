@@ -120,11 +120,12 @@ void pdlp_termination_strategy_t<i_t, f_t>::evaluate_termination_criteria(
   pdhg_solver_t<i_t, f_t>& current_pdhg_solver,
   rmm::device_uvector<f_t>& primal_iterate,
   rmm::device_uvector<f_t>& dual_iterate,
-  [[maybe_unused]] const rmm::device_uvector<f_t>& dual_slack,
-  [[maybe_unused]] rmm::device_uvector<f_t>& last_restart_primal_iterate,
-  [[maybe_unused]] rmm::device_uvector<f_t>& last_restart_dual_iterate,
-  [[maybe_unused]] const rmm::device_uvector<f_t>& combined_bounds,
-  [[maybe_unused]] const rmm::device_uvector<f_t>& objective_coefficients)
+  const rmm::device_uvector<f_t>& dual_slack,
+  rmm::device_uvector<f_t>& last_restart_primal_iterate,
+  rmm::device_uvector<f_t>& last_restart_dual_iterate,
+  i_t total_pdlp_iterations,
+  const rmm::device_uvector<f_t>& combined_bounds,
+  const rmm::device_uvector<f_t>& objective_coefficients)
 {
   raft::common::nvtx::range fun_scope("Evaluate termination criteria");
 
@@ -137,12 +138,22 @@ void pdlp_termination_strategy_t<i_t, f_t>::evaluate_termination_criteria(
                                                            settings_);
   if (settings_.detect_infeasibility) {
     // TODO PDLP infeasible: looks like he is not checking as often as we do
-    infeasibility_information_.compute_infeasibility_information(
-      current_pdhg_solver, 
-      (pdlp_hyper_params::use_reflected_primal_dual) ? last_restart_dual_iterate :  primal_iterate,
-      (pdlp_hyper_params::use_reflected_primal_dual) ? last_restart_dual_iterate :  dual_iterate);
+    if (pdlp_hyper_params::use_reflected_primal_dual) {
+      if (total_pdlp_iterations % pdlp_hyper_params::major_iteration == 0 && total_pdlp_iterations < 3 * pdlp_hyper_params::major_iteration)
+      {
+        infeasibility_information_.compute_infeasibility_information(
+        current_pdhg_solver,
+        last_restart_dual_iterate,
+        last_restart_primal_iterate);
+      }
+    }
+    else {
+      infeasibility_information_.compute_infeasibility_information(
+        current_pdhg_solver,
+        primal_iterate,
+        dual_iterate);
+    }
   }
-
   check_termination_criteria();
 
   // Sync to make sure the termination status is updated

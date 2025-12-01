@@ -91,12 +91,12 @@ class infeasibility_information_t {
   rmm::device_scalar<f_t> primal_ray_inf_norm_inverse_;
   rmm::device_scalar<f_t> neg_primal_ray_inf_norm_inverse_;
   rmm::device_scalar<f_t> primal_ray_max_violation_;
-  rmm::device_scalar<f_t> max_primal_ray_infeasibility_;
+  rmm::device_uvector<f_t> max_primal_ray_infeasibility_;
   rmm::device_uvector<f_t> primal_ray_linear_objective_;
 
-  rmm::device_scalar<f_t> dual_ray_inf_norm_;
-  rmm::device_scalar<f_t> max_dual_ray_infeasibility_;
-  rmm::device_scalar<f_t> dual_ray_linear_objective_;
+  rmm::device_uvector<f_t> dual_ray_inf_norm_;
+  rmm::device_uvector<f_t> max_dual_ray_infeasibility_;
+  rmm::device_uvector<f_t> dual_ray_linear_objective_;
   rmm::device_scalar<f_t> reduced_cost_dual_objective_;
 
   rmm::device_scalar<f_t> reduced_cost_inf_norm_;
@@ -108,6 +108,12 @@ class infeasibility_information_t {
   rmm::device_uvector<f_t> bound_value_;
   rmm::device_uvector<f_t> homogenous_dual_lower_bounds_;
   rmm::device_uvector<f_t> homogenous_dual_upper_bounds_;
+
+  // Used for cuPDLPx infeasibility detection
+  rmm::device_uvector<f_t> primal_slack_;
+  rmm::device_uvector<f_t> dual_slack_;
+  rmm::device_uvector<f_t> sum_primal_slack_;
+  rmm::device_uvector<f_t> sum_dual_slack_;
 
   rmm::device_buffer rmm_tmp_buffer_;
   size_t size_of_buffer_;

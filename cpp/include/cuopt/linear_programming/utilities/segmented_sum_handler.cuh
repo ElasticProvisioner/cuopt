@@ -52,18 +52,18 @@ struct segmented_sum_handler_t {
   void segmented_reduce_helper(InputIteratorT input, f_t* output, i_t batch_size, i_t problem_size, ReductionOpT reduction_op, f_t initial_value)
   {
     cub::DeviceSegmentedReduce::Reduce(
-    nullptr, byte_needed_, 
+    nullptr, byte_needed_,
     input,
     output, batch_size, problem_size, reduction_op, initial_value, stream_view_);
 
     segmented_sum_storage_.resize(byte_needed_, stream_view_);
 
     cub::DeviceSegmentedReduce::Reduce(
-    segmented_sum_storage_.data(), byte_needed_, 
+    segmented_sum_storage_.data(), byte_needed_,
     input,
     output, batch_size, problem_size, reduction_op, initial_value, stream_view_);
   }
-    
+
   size_t byte_needed_;
   rmm::device_buffer segmented_sum_storage_;
   rmm::cuda_stream_view stream_view_;

@@ -1231,6 +1231,25 @@ TEST(pdlp_class, more_complex_batch_different_bounds)
   cuopt::linear_programming::detail::deterministic_batch_pdlp = false;
 }
 
+TEST(pdlp_class, cupdlpx_infeasible_detection)
+{
+  const raft::handle_t handle_{};
+
+  auto solver_settings   = pdlp_solver_settings_t<int, double>{};
+  solver_settings.method = cuopt::linear_programming::method_t::PDLP;
+  solver_settings.detect_infeasibility = true;
+
+
+  auto path = make_path_absolute("linear_programming/good-mps-fixed-ranges.mps");
+  cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
+    cuopt::mps_parser::parse_mps<int, double>(path, true);
+
+  optimization_problem_solution_t<int, double> solution =
+    solve_lp(&handle_, op_problem, solver_settings);
+
+  EXPECT_EQ(solution.get_termination_status(0), pdlp_termination_status_t::PrimalInfeasible);
+}
+
 }  // namespace cuopt::linear_programming::test
 
 CUOPT_TEST_PROGRAM_MAIN()

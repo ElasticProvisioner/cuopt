@@ -576,6 +576,7 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       pdhg_solver_.get_dual_slack(),
       restart_strategy_.last_restart_duality_gap_.primal_solution_,
       restart_strategy_.last_restart_duality_gap_.dual_solution_,
+      total_pdlp_iterations_,
       problem_ptr->combined_bounds,
       problem_ptr->objective_coefficients);
 #ifdef PDLP_VERBOSE_MODE
@@ -593,6 +594,9 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
           unscaled_primal_avg_solution_,
           unscaled_dual_avg_solution_,
           pdhg_solver_.get_dual_slack(),
+          restart_strategy_.last_restart_duality_gap_.primal_solution_, // Will not be used since average not used in batch mode
+          restart_strategy_.last_restart_duality_gap_.dual_solution_, // Will not be used since average not used in batch mode
+          total_pdlp_iterations_,
           problem_ptr->combined_bounds,
           problem_ptr->objective_coefficients);
   }
