@@ -1415,6 +1415,75 @@ TEST(pdlp_class, cupdlpx_infeasible_detection_batch_afiro_new_bounds)
   cuopt::linear_programming::detail::deterministic_batch_pdlp  = false;
 }
 
+TEST(pdlp_class, big_batch_afiro)
+{
+  const raft::handle_t handle_{};
+
+  EXPECT_FALSE(cuopt::linear_programming::detail::deterministic_batch_pdlp);
+
+  cuopt::linear_programming::detail::deterministic_batch_pdlp = true;
+
+  auto path = make_path_absolute("linear_programming/afiro_original.mps");
+  cuopt::mps_parser::mps_data_model_t<int, double> op_problem =
+    cuopt::mps_parser::parse_mps<int, double>(path, true);
+
+  auto solver_settings   = pdlp_solver_settings_t<int, double>{};
+  solver_settings.method = cuopt::linear_programming::method_t::PDLP;
+
+  constexpr int batch_size = 1000;
+
+  // Setup a larger batch afiro but with all same primal/dual bounds
+
+  const auto& variable_lower_bounds = op_problem.get_variable_lower_bounds();
+  const auto& variable_upper_bounds = op_problem.get_variable_upper_bounds();
+
+  std::vector<double> new_variable_lower_bounds(variable_lower_bounds.size() * batch_size);
+  std::vector<double> new_variable_upper_bounds(variable_upper_bounds.size() * batch_size);
+
+  // Copy the bounds
+  for (size_t i = 0; i < batch_size; i++)
+    for (size_t j = 0; j < variable_lower_bounds.size(); ++j)
+      new_variable_lower_bounds[i * variable_lower_bounds.size() + j] = variable_lower_bounds[j];
+  for (size_t i = 0; i < batch_size; i++)
+    for (size_t j = 0; j < variable_upper_bounds.size(); ++j)
+      new_variable_upper_bounds[i * variable_upper_bounds.size() + j] = variable_upper_bounds[j];
+
+  op_problem.set_variable_lower_bounds(new_variable_lower_bounds.data(), new_variable_lower_bounds.size());
+  op_problem.set_variable_upper_bounds(new_variable_upper_bounds.data(), new_variable_upper_bounds.size());
+
+
+  optimization_problem_solution_t<int, double> solution =
+    solve_lp(&handle_, op_problem, solver_settings);
+
+  // All should be optimal with 
+  for (size_t i = 0; i < batch_size; ++i)
+  {
+    EXPECT_EQ((int)solution.get_termination_status(i), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+    EXPECT_FALSE(is_incorrect_objective(
+      afiro_primal_objective, solution.get_additional_termination_information(i).primal_objective));
+  }
+
+  // All should have the bitwise same primal/dual objective, termination reason, and iterations
+  const auto ref_stats = (int)solution.get_termination_status(0);
+  const auto ref_primal = solution.get_additional_termination_information(0).primal_objective;
+  const auto ref_dual = solution.get_additional_termination_information(0).dual_objective;
+  const auto ref_it = solution.get_additional_termination_information(0).number_of_steps_taken;
+  const auto ref_it_total = solution.get_additional_termination_information(0).total_number_of_attempted_steps;
+  // TODO batch mode: check primal / dual vectors
+
+  for (size_t i = 1; i < batch_size; ++i)
+  {
+    EXPECT_EQ(ref_stats, (int)solution.get_termination_status(i));
+    EXPECT_EQ(ref_primal, solution.get_additional_termination_information(i).primal_objective);
+    EXPECT_EQ(ref_dual, solution.get_additional_termination_information(i).dual_objective);
+    EXPECT_EQ(ref_it, solution.get_additional_termination_information(i).number_of_steps_taken);
+    EXPECT_EQ(ref_it_total, solution.get_additional_termination_information(i).total_number_of_attempted_steps);
+  }
+
+  cuopt::linear_programming::detail::deterministic_batch_pdlp = false;
+}
+
+
 }  // namespace cuopt::linear_programming::test
 
 CUOPT_TEST_PROGRAM_MAIN()
