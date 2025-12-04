@@ -116,8 +116,8 @@ const std::vector<pdlp_climber_strategy_t>& climber_strategies)
     dual_norm_weight_{stream_view_},
     restart_triggered_{0, stream_view_},
     candidate_is_avg_{0, stream_view_},
-    avg_duality_gap_{handle_ptr_, is_cupdlpx_restart<f_t, i_t>() ? 0 : primal_size, is_cupdlpx_restart<f_t, i_t>() ? 0 : dual_size, climber_strategies},
-    current_duality_gap_{handle_ptr_, is_cupdlpx_restart<f_t, i_t>() ? 0 : primal_size, is_cupdlpx_restart<f_t, i_t>() ? 0 : dual_size, climber_strategies},
+    avg_duality_gap_{handle_ptr_, is_cupdlpx_restart<i_t, f_t>() ? 0 : primal_size, is_cupdlpx_restart<i_t, f_t>() ? 0 : dual_size, climber_strategies},
+    current_duality_gap_{handle_ptr_, is_cupdlpx_restart<i_t, f_t>() ? 0 : primal_size, is_cupdlpx_restart<i_t, f_t>() ? 0 : dual_size, climber_strategies},
     last_restart_duality_gap_{handle_ptr_, primal_size, dual_size, climber_strategies}, // Only this one is also used in cuPDLPx so also in batch mode
     // If KKT restart, call the empty cusparse_view constructor
     avg_duality_gap_cusparse_view_{

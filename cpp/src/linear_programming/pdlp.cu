@@ -11,10 +11,12 @@
 #include <cuopt/linear_programming/solver_settings.hpp>
 #include <linear_programming/pdlp.cuh>
 #include <linear_programming/utils.cuh>
+
 #include <mip/mip_constants.hpp>
 #include "cuopt/linear_programming/pdlp/solver_solution.hpp"
 
 #include <utilities/copy_helpers.hpp>
+#include <utilities/macros.cuh>
 
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -32,6 +34,7 @@
 #include <thrust/extrema.h>
 
 #include <optional>
+#include <unordered_set>
 
 namespace cuopt::linear_programming::detail {
 
@@ -562,6 +565,43 @@ void pdlp_solver_t<i_t, f_t>::print_final_termination_criteria(
 }
 
 template <typename i_t, typename f_t>
+std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>::check_batch_termination(
+  const timer_t& timer)
+{
+  [[maybe_unused]] const bool is_cupdlpx = is_cupdlpx_restart<i_t, f_t>();
+  cuopt_assert(is_cupdlpx, "Batch termination handling only supported with cuPDLPx restart");
+  
+  #ifdef BATCH_VERBOSE_MODE
+  static std::unordered_set<i_t> climber_done;
+  for (size_t i = 0; i < current_termination_strategy_.get_terminations_status().size(); ++i)
+  {
+    const auto& term = current_termination_strategy_.get_termination_status(i);
+    if (current_termination_strategy_.is_done(term) && climber_done.find(i) == climber_done.end())
+    {
+      climber_done.emplace(i);
+      std::cout << "[BATCH MODE]: Climber " << i << " is done with "
+        << optimization_problem_solution_t<i_t, f_t>::get_termination_status_string(term) << " at step " << total_pdlp_iterations_ << std::endl;
+    }
+  }
+  #endif
+
+
+  // All are optimal or infeasible
+  if (current_termination_strategy_.all_done())
+  {
+    return current_termination_strategy_.fill_return_problem_solution(
+      internal_solver_iterations_,
+      pdhg_solver_,
+      pdhg_solver_.get_potential_next_primal_solution(),
+      pdhg_solver_.get_potential_next_dual_solution(),
+      get_filled_warmed_start_data(),
+      std::move(current_termination_strategy_.get_terminations_status()));
+  }
+
+  return check_limits(timer);
+}
+
+template <typename i_t, typename f_t>
 std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>::check_termination(
   const timer_t& timer)
 {
@@ -615,10 +655,6 @@ pdhg_solver_.get_saddle_point_state().get_delta_primal(),
   }
 #endif
 
-  // For non-batch mode
-  pdlp_termination_status_t termination_current = current_termination_strategy_.get_termination_status(0);
-  pdlp_termination_status_t termination_average = average_termination_strategy_.get_termination_status(0);
-
   // We exit directly without checking the termination criteria as some problem can have a low
   // initial redidual + there is by definition 0 gap at first
   // To avoid that we allow at least two iterations at first before checking (in practice 0 wasn't
@@ -628,6 +664,17 @@ pdhg_solver_.get_saddle_point_state().get_delta_primal(),
     print_termination_criteria(timer);
     return check_limits(timer);
   }
+
+  // Handle the batch case separetly
+  if (batch_mode_)
+  {
+    return check_batch_termination(timer);
+  }
+
+  // For non-batch mode
+  pdlp_termination_status_t termination_current = current_termination_strategy_.get_termination_status(0);
+  pdlp_termination_status_t termination_average = average_termination_strategy_.get_termination_status(0);
+
 
   // First check for pdlp_termination_reason_t::Optimality and handle the first primal feasible case
 

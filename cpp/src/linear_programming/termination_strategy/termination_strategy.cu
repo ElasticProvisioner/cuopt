@@ -313,10 +313,26 @@ if (idx == 0)
 }
 
 template <typename i_t, typename f_t>
-bool pdlp_termination_strategy_t<i_t, f_t>::all_optimal_status()
+bool pdlp_termination_strategy_t<i_t, f_t>::all_optimal_status() const
 {
   // TODO batch mode: would using a std::par be useful here?
   return std::all_of(termination_status_.cbegin(), termination_status_.cend(), [](i_t termination_status) { return termination_status == (i_t)pdlp_termination_status_t::Optimal; });
+}
+
+template <typename i_t, typename f_t>
+bool pdlp_termination_strategy_t<i_t, f_t>::is_done(pdlp_termination_status_t termination_status)
+{
+  return termination_status == pdlp_termination_status_t::Optimal || termination_status == pdlp_termination_status_t::PrimalInfeasible || termination_status == pdlp_termination_status_t::DualInfeasible; 
+}
+
+template <typename i_t, typename f_t>
+bool pdlp_termination_strategy_t<i_t, f_t>::all_done() const
+{
+  // TODO batch mode: would using a std::par be useful here?
+  return std::all_of(termination_status_.cbegin(), termination_status_.cend(), [](i_t termination_status) 
+  {
+    return is_done((pdlp_termination_status_t)termination_status);
+  });
 }
 
 template <typename i_t, typename f_t>

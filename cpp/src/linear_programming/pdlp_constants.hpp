@@ -32,6 +32,8 @@ inline constexpr int dual_stride   = 1;
 
 // #define CUPDLP_DEBUG_MODE
 
+// #define BATCH_VERBOSE_MODE
+
 // Used only for batch PDLP, uses a serie of SpMV rather than SpMM to be deterministic for tests
 static bool deterministic_batch_pdlp = 0;
 

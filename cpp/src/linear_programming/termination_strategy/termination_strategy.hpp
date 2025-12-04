@@ -63,7 +63,9 @@ class pdlp_termination_strategy_t {
 
   pdlp_termination_status_t get_termination_status(i_t id) const;
   std::vector<pdlp_termination_status_t> get_terminations_status();
-  bool all_optimal_status();
+  bool all_optimal_status() const;
+  bool all_done() const;
+  static bool is_done(pdlp_termination_status_t term);
   bool has_optimal_status(int custom_climber_log = -1) const;
   i_t nb_optimal_solutions() const;
   i_t get_optimal_solution_id() const;

@@ -101,6 +101,7 @@ class pdlp_solver_t {
     const pdlp_termination_status_t& termination_status,
     bool is_average = false);
   std::optional<optimization_problem_solution_t<i_t, f_t>> check_termination(const timer_t& timer);
+  std::optional<optimization_problem_solution_t<i_t, f_t>> check_batch_termination(const timer_t& timer);
   std::optional<optimization_problem_solution_t<i_t, f_t>> check_limits(const timer_t& timer);
   void record_best_primal_so_far(const detail::pdlp_termination_strategy_t<i_t, f_t>& current,
                                  const detail::pdlp_termination_strategy_t<i_t, f_t>& average,
