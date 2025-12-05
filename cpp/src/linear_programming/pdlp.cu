@@ -77,7 +77,7 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
     step_size_{climber_strategies_.size(), stream_view_},
     step_size_strategy_{handle_ptr_, &primal_weight_, &step_size_, is_legacy_batch_mode, op_problem.n_variables, op_problem.n_constraints, climber_strategies_},
     pdhg_solver_{handle_ptr_, op_problem_scaled_, is_legacy_batch_mode, climber_strategies_},
-    settings_(settings, stream_view_),
+    settings_(settings),
     initial_scaling_strategy_{handle_ptr_,
                               op_problem_scaled_,
                               pdlp_hyper_params::default_l_inf_ruiz_iterations,
@@ -340,8 +340,8 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       std::vector<pdlp_termination_status_t>(climber_strategies_.size(), pdlp_termination_status_t::IterationLimit));
   }
 
-  // Check for concurrent limit
-  if (settings_.concurrent_halt != nullptr && *settings_.concurrent_halt == 1) {
+  // Check for concurrent limit (had to add the check on the method else would leave while not in Concurrent mode)
+  if (settings_.method == method_t::Concurrent && settings_.concurrent_halt != nullptr && *settings_.concurrent_halt == 1) {
 #ifdef PDLP_VERBOSE_MODE
     RAFT_CUDA_TRY(cudaDeviceSynchronize());
     std::cout << "Concurrent Limit reached, returning current solution" << std::endl;
@@ -1817,12 +1817,12 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_primal_weight()
 
   } else {
     if (pdlp_hyper_params::bound_objective_rescaling) {
-      const f_t one = 1;
-
-      thrust::uninitialized_fill(
-    handle_ptr_->get_thrust_policy(), primal_weight_.begin(), step_size_.end(), one);
-    thrust::uninitialized_fill(
-    handle_ptr_->get_thrust_policy(), best_primal_weight_.begin(), step_size_.end(), one);
+    RAFT_CUDA_TRY(cub::DeviceTransform::Transform(primal_weight_.data(), primal_weight_.data(), primal_weight_.size(), [] HD (f_t) { return f_t(1.0); }, stream_view_));
+    RAFT_CUDA_TRY(cub::DeviceTransform::Transform(best_primal_weight_.data(), best_primal_weight_.data(), best_primal_weight_.size(), [] HD (f_t) { return f_t(1.0); }, stream_view_));
+    //  thrust::uninitialized_fill(
+    //handle_ptr_->get_thrust_policy(), primal_weight_.begin(), step_size_.end(), one);
+    //thrust::uninitialized_fill(
+    //handle_ptr_->get_thrust_policy(), best_primal_weight_.begin(), step_size_.end(), one);
       return;
     } else {
       cuopt_expects(pdlp_hyper_params::initial_primal_weight_b_scaling == 1,

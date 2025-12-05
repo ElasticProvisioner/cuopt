@@ -65,8 +65,6 @@ class pdlp_solver_settings_t {
  public:
   pdlp_solver_settings_t() = default;
 
-  // Copy constructor for when copying in the PDLP object
-  pdlp_solver_settings_t(const pdlp_solver_settings_t& other, rmm::cuda_stream_view stream_view);
   /**
    * @brief Set both absolute and relative tolerance on the primal feasibility,
    dual feasibility and gap.
@@ -212,7 +210,7 @@ class pdlp_solver_settings_t {
   bool dual_postsolve{true};
   method_t method{method_t::Concurrent};
   // For concurrent termination
-  volatile int* concurrent_halt;
+  volatile int* concurrent_halt; // TODO seeing termination on this while not using concurrent, where is this initilized?
   static constexpr f_t minimal_absolute_tolerance = 1.0e-12;
 
  private:
