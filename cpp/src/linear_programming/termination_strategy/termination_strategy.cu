@@ -92,18 +92,13 @@ std::vector<pdlp_termination_status_t> pdlp_termination_strategy_t<i_t, f_t>::ge
   return out;
 }
 
-// TODO batch mode: all 3 of those below might be useless
+// TODO batch mode: will be useful once I bring back MCPDLP
 template <typename i_t, typename f_t>
-bool pdlp_termination_strategy_t<i_t, f_t>::has_optimal_status(int custom_climber_log) const
+bool pdlp_termination_strategy_t<i_t, f_t>::has_optimal_status() const
 {
-  if (custom_climber_log == -1) {
-    return std::any_of(termination_status_.begin(), termination_status_.end(), [](i_t status) {
-      return status == (i_t)pdlp_termination_status_t::Optimal;
-    });
-  }
-  else {
-    return termination_status_[custom_climber_log] == (i_t)pdlp_termination_status_t::Optimal;
-  }
+  return std::any_of(termination_status_.begin(), termination_status_.end(), [](i_t status) {
+    return status == (i_t)pdlp_termination_status_t::Optimal;
+  });
 }
 
 template <typename i_t, typename f_t>

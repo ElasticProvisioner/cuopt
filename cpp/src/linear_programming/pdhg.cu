@@ -623,7 +623,6 @@ print("reflected_primal_", reflected_primal_);
       }
       else
       {
-        // TODO batch mode: handle different constraint bound
         cub::DeviceTransform::Transform(
         cuda::std::make_tuple(current_saddle_point_state_.get_dual_solution().data(),
                               current_saddle_point_state_.get_dual_gradient().data(),

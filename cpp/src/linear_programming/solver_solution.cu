@@ -229,7 +229,7 @@ void optimization_problem_solution_t<i_t, f_t>::write_to_file(std::string_view f
   myfile << "{ " << std::endl;
   myfile << "\t\"Termination reason\" : \"" << get_termination_status_string() << "\","
          << std::endl;
-  myfile << "\t\"Objective value for " << objective_name_ << "\" : " << get_objective_value() << ","
+  myfile << "\t\"Objective value for " << objective_name_ << "\" : " << get_objective_value(0) << ","
          << std::endl;
   if (!var_names_.empty() && generate_variable_values) {
     myfile << "\t\"Primal variables\" : {" << std::endl;
@@ -301,23 +301,24 @@ std::string optimization_problem_solution_t<i_t, f_t>::get_termination_status_st
 }
 
 template <typename i_t, typename f_t>
-std::string optimization_problem_solution_t<i_t, f_t>::get_termination_status_string() const
+std::string optimization_problem_solution_t<i_t, f_t>::get_termination_status_string(i_t id) const
 {
-  return get_termination_status_string(termination_status_[0]);
+  cuopt_assert(id < termination_status_.size(), "id too big for batch size");
+  return get_termination_status_string(termination_status_[id]);
 }
 
 template <typename i_t, typename f_t>
-f_t optimization_problem_solution_t<i_t, f_t>::get_objective_value() const
+f_t optimization_problem_solution_t<i_t, f_t>::get_objective_value(i_t id) const
 {
-  // TODO batch mode: is that ok?
-  return termination_stats_[0].primal_objective;
+  cuopt_assert(id < termination_status_.size(), "id too big for batch size");
+  return termination_stats_[id].primal_objective;
 }
 
 template <typename i_t, typename f_t>
-f_t optimization_problem_solution_t<i_t, f_t>::get_dual_objective_value() const
+f_t optimization_problem_solution_t<i_t, f_t>::get_dual_objective_value(i_t id) const
 {
-  // TODO batch mode: is that ok?
-  return termination_stats_[0].dual_objective;
+  cuopt_assert(id < termination_status_.size(), "id too big for batch size");
+  return termination_stats_[id].dual_objective;
 }
 
 template <typename i_t, typename f_t>
@@ -404,7 +405,7 @@ void optimization_problem_solution_t<i_t, f_t>::write_to_sol_file(
     status = "Infeasible";
   }
 
-  auto objective_value = get_objective_value();
+  auto objective_value = get_objective_value(0);
   std::vector<f_t> solution;
   solution.resize(primal_solution_.size());
   raft::copy(

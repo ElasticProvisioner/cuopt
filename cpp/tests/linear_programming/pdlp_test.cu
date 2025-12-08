@@ -981,6 +981,7 @@ TEST(pdlp_class, simple_batch_afiro)
 
   auto solver_settings   = pdlp_solver_settings_t<int, double>{};
   solver_settings.method = cuopt::linear_programming::method_t::PDLP;
+  solver_settings.detect_infeasibility = true; // Should not matter or cause any problem
 
   constexpr int batch_size = 5;
 
@@ -1014,13 +1015,18 @@ TEST(pdlp_class, simple_batch_afiro)
       afiro_primal_objective, solution.get_additional_termination_information(i).primal_objective));
   }
 
-  // All should have the bitwise same primal/dual objective, termination reason, and iterations
+  // All should have the bitwise same primal/dual objective, termination reason, iterations and primal/dual values compared to ref
   const auto ref_stats = (int)solution.get_termination_status(0);
   const auto ref_primal = solution.get_additional_termination_information(0).primal_objective;
   const auto ref_dual = solution.get_additional_termination_information(0).dual_objective;
   const auto ref_it = solution.get_additional_termination_information(0).number_of_steps_taken;
   const auto ref_it_total = solution.get_additional_termination_information(0).total_number_of_attempted_steps;
-  // TODO batch mode: check primal / dual vectors are the same
+
+  const auto ref_primal_solution = host_copy(solution.get_primal_solution());
+  const auto ref_dual_solution = host_copy(solution.get_dual_solution());
+
+  const size_t primal_size = ref_primal_solution.size() / batch_size;
+  const size_t dual_size = ref_dual_solution.size() / batch_size;
 
   for (size_t i = 1; i < batch_size; ++i)
   {
@@ -1029,6 +1035,12 @@ TEST(pdlp_class, simple_batch_afiro)
     EXPECT_EQ(ref_dual, solution.get_additional_termination_information(i).dual_objective);
     EXPECT_EQ(ref_it, solution.get_additional_termination_information(i).number_of_steps_taken);
     EXPECT_EQ(ref_it_total, solution.get_additional_termination_information(i).total_number_of_attempted_steps);
+    // Direclty compare on ref since we just compare the first climber to the rest
+    for (size_t p = 0; p < primal_size; ++p)
+      EXPECT_EQ(ref_primal_solution[p], ref_primal_solution[p + i * primal_size]);
+    for (size_t d = 0; d < dual_size; ++d)
+      EXPECT_EQ(ref_dual_solution[d], ref_dual_solution[d + i * dual_size]);
+    break;
   }
 }
 
@@ -1366,6 +1378,7 @@ TEST(pdlp_class, big_batch_afiro)
 
   auto solver_settings   = pdlp_solver_settings_t<int, double>{};
   solver_settings.method = cuopt::linear_programming::method_t::PDLP;
+  solver_settings.detect_infeasibility = true; // Should not matter or cause any problem
 
   constexpr int batch_size = 1000;
 
@@ -1399,13 +1412,18 @@ TEST(pdlp_class, big_batch_afiro)
       afiro_primal_objective, solution.get_additional_termination_information(i).primal_objective));
   }
 
-  // All should have the bitwise same primal/dual objective, termination reason, and iterations
+  // All should have the bitwise same primal/dual objective, termination reason, iterations and primal/dual values compared to ref
   const auto ref_stats = (int)solution.get_termination_status(0);
   const auto ref_primal = solution.get_additional_termination_information(0).primal_objective;
   const auto ref_dual = solution.get_additional_termination_information(0).dual_objective;
   const auto ref_it = solution.get_additional_termination_information(0).number_of_steps_taken;
   const auto ref_it_total = solution.get_additional_termination_information(0).total_number_of_attempted_steps;
-  // TODO batch mode: check primal / dual vectors
+
+  const auto ref_primal_solution = host_copy(solution.get_primal_solution());
+  const auto ref_dual_solution = host_copy(solution.get_dual_solution());
+
+  const size_t primal_size = ref_primal_solution.size() / batch_size;
+  const size_t dual_size = ref_dual_solution.size() / batch_size;
 
   for (size_t i = 1; i < batch_size; ++i)
   {
@@ -1414,6 +1432,12 @@ TEST(pdlp_class, big_batch_afiro)
     EXPECT_EQ(ref_dual, solution.get_additional_termination_information(i).dual_objective);
     EXPECT_EQ(ref_it, solution.get_additional_termination_information(i).number_of_steps_taken);
     EXPECT_EQ(ref_it_total, solution.get_additional_termination_information(i).total_number_of_attempted_steps);
+    // Direclty compare on ref since we just compare the first climber to the rest
+    for (size_t p = 0; p < primal_size; ++p)
+      EXPECT_EQ(ref_primal_solution[p], ref_primal_solution[p + i * primal_size]);
+    for (size_t d = 0; d < dual_size; ++d)
+      EXPECT_EQ(ref_dual_solution[d], ref_dual_solution[d + i * dual_size]);
+    break;
   }
 }
 

@@ -1835,12 +1835,11 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_primal_weight()
 
   } else {
     if (pdlp_hyper_params::bound_objective_rescaling) {
-    RAFT_CUDA_TRY(cub::DeviceTransform::Transform(primal_weight_.data(), primal_weight_.data(), primal_weight_.size(), [] HD (f_t) { return f_t(1.0); }, stream_view_));
-    RAFT_CUDA_TRY(cub::DeviceTransform::Transform(best_primal_weight_.data(), best_primal_weight_.data(), best_primal_weight_.size(), [] HD (f_t) { return f_t(1.0); }, stream_view_));
-    //  thrust::uninitialized_fill(
-    //handle_ptr_->get_thrust_policy(), primal_weight_.begin(), step_size_.end(), one);
-    //thrust::uninitialized_fill(
-    //handle_ptr_->get_thrust_policy(), best_primal_weight_.begin(), step_size_.end(), one);
+    constexpr f_t one = f_t(1.0);
+    thrust::uninitialized_fill(
+    handle_ptr_->get_thrust_policy(), primal_weight_.begin(), step_size_.end(), one);
+    thrust::uninitialized_fill(
+    handle_ptr_->get_thrust_policy(), best_primal_weight_.begin(), step_size_.end(), one);
       return;
     } else {
       cuopt_expects(pdlp_hyper_params::initial_primal_weight_b_scaling == 1,

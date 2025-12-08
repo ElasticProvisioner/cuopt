@@ -415,7 +415,7 @@ void convergence_information_t<i_t, f_t>::compute_primal_residual(
                                                  violation<f_t>(),
                                                  stream_view_);
   } else {
-    // TODO batch mode: multiple constraint bound per problem
+    cuopt_assert(primal_residual_.size() == primal_slack_.size(), "Both vectors should had the same size");
     #ifdef CUPDLP_DEBUG_MODE
     print("tmp_dual", tmp_dual);
     #endif

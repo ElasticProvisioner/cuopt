@@ -66,7 +66,7 @@ class pdlp_termination_strategy_t {
   bool all_optimal_status() const;
   bool all_done() const;
   static bool is_done(pdlp_termination_status_t term);
-  bool has_optimal_status(int custom_climber_log = -1) const;
+  bool has_optimal_status() const;
   i_t nb_optimal_solutions() const;
   i_t get_optimal_solution_id() const;
 

@@ -763,6 +763,8 @@ void pdlp_restart_strategy_t<i_t, f_t>::cupdlpx_restart(
   rmm::device_uvector<f_t>& best_primal_weight,
   const std::vector<int>& should_restart)
 {
+  raft::common::nvtx::range fun_scope("cupdlpx_restart");
+
   // TODO batch mode: remove this once you have per solution score
   cuopt_assert(std::all_of(should_restart.begin(), should_restart.end(), [](int restarted){ return restarted == 1; }), "If any, all should be true");
 
