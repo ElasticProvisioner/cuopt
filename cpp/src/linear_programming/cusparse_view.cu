@@ -220,7 +220,7 @@ cusparseStatus_t my_cusparsespmm_preprocess(cusparseHandle_t handle,
 }
 #endif
 
-// This cstr is used in pdhg and step size strategy
+// This cstr is used in pdhg, step size strategy and in cuPDLPx infeasible detection
 // A_T is owned by the scaled problem
 // It was already transposed in the scaled_problem version
 template <typename i_t, typename f_t>
@@ -358,10 +358,6 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
           op_problem_scaled.n_variables,
           current_saddle_point_state.get_current_AtY().data() + i * op_problem_scaled.n_variables));
         RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
-          &tmp_primal_vector[i],
-          op_problem_scaled.n_variables,
-          _tmp_primal.data() + i * op_problem_scaled.n_variables));
-        RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
           &dual_gradients_vector[i],
           op_problem_scaled.n_constraints,
           current_saddle_point_state.get_dual_gradient().data() + i * op_problem_scaled.n_constraints));
@@ -487,7 +483,8 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
 
   buffer_transpose.resize(buffer_size_transpose, handle_ptr->get_stream());
 
-  if (batch_mode_ && !deterministic_batch_pdlp)
+  // We need it even in non batch mode since we also use SpMM in infeasibility detection
+  if (!deterministic_batch_pdlp)
   {
     size_t buffer_size_transpose_batch = 0;
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm_bufferSize(handle_ptr_->get_cusparse_handle(),
@@ -495,12 +492,13 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
                                                                    CUSPARSE_OPERATION_NON_TRANSPOSE,
                                                                    alpha.data(),
                                                                    A_T,
-                                                                   batch_dual_solutions,
+                                                                   batch_delta_dual_solutions,
                                                                    beta.data(),
-                                                                   batch_current_AtYs,
+                                                                   batch_tmp_primals,
                                                                    CUSPARSE_SPMM_CSR_ALG3,
                                                                    &buffer_size_transpose_batch,
                                                                    handle_ptr->get_stream()));
+
     buffer_transpose_batch.resize(buffer_size_transpose_batch, handle_ptr->get_stream());
     size_t buffer_size_non_transpose_batch = 0;
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm_bufferSize(handle_ptr_->get_cusparse_handle(),
@@ -508,9 +506,9 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
                                                                    CUSPARSE_OPERATION_NON_TRANSPOSE,
                                                                    alpha.data(),
                                                                    A,
-                                                                   batch_reflected_primal_solutions,
+                                                                   batch_delta_primal_solutions,
                                                                    beta.data(),
-                                                                   batch_dual_gradients,
+                                                                   batch_tmp_duals,
                                                                    CUSPARSE_SPMM_CSR_ALG3,
                                                                    &buffer_size_non_transpose_batch,
                                                                    handle_ptr->get_stream()));
@@ -539,23 +537,22 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
                              CUSPARSE_SPMV_CSR_ALG2,
                              buffer_transpose.data(),
                              handle_ptr->get_stream());
-  // TODO batch mode: add when swtich to SpMM
-  if (batch_mode_ && !deterministic_batch_pdlp) {
+  if (!deterministic_batch_pdlp) {
     my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
                             CUSPARSE_OPERATION_NON_TRANSPOSE,
                             CUSPARSE_OPERATION_NON_TRANSPOSE,
                             alpha.data(),
                             A_T,
-                            batch_dual_solutions,
-                            beta.data(), batch_current_AtYs, CUSPARSE_SPMM_CSR_ALG3, buffer_transpose_batch.data(), handle_ptr->get_stream());
+                            batch_delta_dual_solutions,
+                            beta.data(), batch_tmp_primals, CUSPARSE_SPMM_CSR_ALG3, buffer_transpose_batch.data(), handle_ptr->get_stream());
 
     my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
                             CUSPARSE_OPERATION_NON_TRANSPOSE,
                             CUSPARSE_OPERATION_NON_TRANSPOSE,
                             alpha.data(),
                             A,
-                            batch_reflected_primal_solutions,
-                            beta.data(), batch_dual_gradients, CUSPARSE_SPMM_CSR_ALG3, buffer_non_transpose_batch.data(), handle_ptr->get_stream());
+                            batch_delta_primal_solutions,
+                            beta.data(), batch_tmp_duals, CUSPARSE_SPMM_CSR_ALG3, buffer_non_transpose_batch.data(), handle_ptr->get_stream());
   }
 #endif
 }

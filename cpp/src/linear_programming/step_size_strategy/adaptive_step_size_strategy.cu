@@ -362,19 +362,19 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
     }
     else
     {
-    for (size_t i = 0; i < climber_strategies_.size(); ++i)
-    {
-      RAFT_CUSPARSE_TRY(
-      raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
-                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
-                                        reusable_device_scalar_value_1_.data(),  // alpha
-                                        cusparse_view.A_T,
-                                        cusparse_view.potential_next_dual_solution_vector[i],
-                                        reusable_device_scalar_value_0_.data(),  // beta
-                                        cusparse_view.next_AtYs_vector[i],
-                                        CUSPARSE_SPMV_CSR_ALG2,
-                                        (f_t*)cusparse_view.buffer_transpose.data(),
-                                        stream_view_));
+      for (size_t i = 0; i < climber_strategies_.size(); ++i)
+      {
+        RAFT_CUSPARSE_TRY(
+        raft::sparse::detail::cusparsespmv(handle_ptr_->get_cusparse_handle(),
+                                          CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                          reusable_device_scalar_value_1_.data(),  // alpha
+                                          cusparse_view.A_T,
+                                          cusparse_view.potential_next_dual_solution_vector[i],
+                                          reusable_device_scalar_value_0_.data(),  // beta
+                                          cusparse_view.next_AtYs_vector[i],
+                                          CUSPARSE_SPMV_CSR_ALG2,
+                                          (f_t*)cusparse_view.buffer_transpose.data(),
+                                          stream_view_));
       }
     }
   }
@@ -401,57 +401,57 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
 
   if (!batch_mode_)
   {
-      // compute interaction (x'-x) . (A(y'-y))
-  RAFT_CUBLAS_TRY(
-    raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
-                                    current_saddle_point_state.get_primal_size(),
-                                    tmp_primal.data(),
-                                    primal_stride,
-                                    current_saddle_point_state.get_delta_primal().data(),
-                                    primal_stride,
-                                    interaction_.data(),
-                                    stream_view_));
+    // compute interaction (x'-x) . (A(y'-y))
+    RAFT_CUBLAS_TRY(
+      raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+                                      current_saddle_point_state.get_primal_size(),
+                                      tmp_primal.data(),
+                                      primal_stride,
+                                      current_saddle_point_state.get_delta_primal().data(),
+                                      primal_stride,
+                                      interaction_.data(),
+                                      stream_view_));
 
-  // Compute movement
-  //  compute euclidean norm squared which is
-  //  same as taking the dot product with itself
-  //    movement = 0.5 * solver_state.primal_weight
-  //    * norm(delta_primal) ^
-  //               2 + (0.5 /
-  //               solver_state.primal_weight) *
-  //               norm(delta_dual) ^ 2;
-  deltas_are_done_.stream_wait(stream_pool_.get_stream(0));
-  RAFT_CUBLAS_TRY(
-    raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
-                                    current_saddle_point_state.get_primal_size(),
-                                    current_saddle_point_state.get_delta_primal().data(),
-                                    primal_stride,
-                                    current_saddle_point_state.get_delta_primal().data(),
-                                    primal_stride,
-                                    norm_squared_delta_primal_.data(),
-                                    stream_pool_.get_stream(0)));
-  dot_delta_X_.record(stream_pool_.get_stream(0));
+    // Compute movement
+    //  compute euclidean norm squared which is
+    //  same as taking the dot product with itself
+    //    movement = 0.5 * solver_state.primal_weight
+    //    * norm(delta_primal) ^
+    //               2 + (0.5 /
+    //               solver_state.primal_weight) *
+    //               norm(delta_dual) ^ 2;
+    deltas_are_done_.stream_wait(stream_pool_.get_stream(0));
+    RAFT_CUBLAS_TRY(
+      raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+                                      current_saddle_point_state.get_primal_size(),
+                                      current_saddle_point_state.get_delta_primal().data(),
+                                      primal_stride,
+                                      current_saddle_point_state.get_delta_primal().data(),
+                                      primal_stride,
+                                      norm_squared_delta_primal_.data(),
+                                      stream_pool_.get_stream(0)));
+    dot_delta_X_.record(stream_pool_.get_stream(0));
 
-  deltas_are_done_.stream_wait(stream_pool_.get_stream(1));
-  RAFT_CUBLAS_TRY(
-    raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
-                                    current_saddle_point_state.get_dual_size(),
-                                    current_saddle_point_state.get_delta_dual().data(),
-                                    dual_stride,
-                                    current_saddle_point_state.get_delta_dual().data(),
-                                    dual_stride,
-                                    norm_squared_delta_dual_.data(),
-                                    stream_pool_.get_stream(1)));
-  dot_delta_Y_.record(stream_pool_.get_stream(1));
+    deltas_are_done_.stream_wait(stream_pool_.get_stream(1));
+    RAFT_CUBLAS_TRY(
+      raft::linalg::detail::cublasdot(handle_ptr_->get_cublas_handle(),
+                                      current_saddle_point_state.get_dual_size(),
+                                      current_saddle_point_state.get_delta_dual().data(),
+                                      dual_stride,
+                                      current_saddle_point_state.get_delta_dual().data(),
+                                      dual_stride,
+                                      norm_squared_delta_dual_.data(),
+                                      stream_pool_.get_stream(1)));
+    dot_delta_Y_.record(stream_pool_.get_stream(1));
 
-  // Wait on main stream for both dot to be done before launching the next kernel
-  dot_delta_X_.stream_wait(stream_view_);
-  dot_delta_Y_.stream_wait(stream_view_);
+    // Wait on main stream for both dot to be done before launching the next kernel
+    dot_delta_X_.stream_wait(stream_view_);
+    dot_delta_Y_.stream_wait(stream_view_);
   }
   else
   {
-  // TODO batch mode: remove this once you want to do per climber solution
-        cub::DeviceSegmentedReduce::Sum(
+    // TODO batch mode: remove this once you want to do per climber solution
+    cub::DeviceSegmentedReduce::Sum(
   dot_product_storage.data(), dot_product_bytes, 
   thrust::make_transform_iterator(thrust::make_zip_iterator(tmp_primal.data(), current_saddle_point_state.get_delta_primal().data()),
   tuple_multiplies<f_t>{}),
@@ -463,11 +463,11 @@ void adaptive_step_size_strategy_t<i_t, f_t>::compute_interaction_and_movement(
   power_two_func_t<f_t>{}),
   norm_squared_delta_primal_.data(), climber_strategies_.size(), primal_size_, stream_view_);
 
-  cub::DeviceSegmentedReduce::Sum(
-  dot_product_storage.data(), dot_product_bytes, 
-  thrust::make_transform_iterator(current_saddle_point_state.get_delta_dual().data(),
-  power_two_func_t<f_t>{}),
-  norm_squared_delta_dual_.data(), climber_strategies_.size(), dual_size_, stream_view_);
+    cub::DeviceSegmentedReduce::Sum(
+    dot_product_storage.data(), dot_product_bytes, 
+    thrust::make_transform_iterator(current_saddle_point_state.get_delta_dual().data(),
+    power_two_func_t<f_t>{}),
+    norm_squared_delta_dual_.data(), climber_strategies_.size(), dual_size_, stream_view_);
   }
 }
 
