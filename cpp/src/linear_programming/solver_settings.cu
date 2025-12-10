@@ -59,6 +59,18 @@ void pdlp_solver_settings_t<i_t, f_t>::set_initial_dual_solution(const f_t* init
 }
 
 template <typename i_t, typename f_t>
+void pdlp_solver_settings_t<i_t, f_t>::set_initial_step_size(f_t initial_step_size)
+{
+  initial_step_size_ = std::make_optional(initial_step_size);
+}
+
+template <typename i_t, typename f_t>
+void pdlp_solver_settings_t<i_t, f_t>::set_initial_primal_weight(f_t initial_primal_weight)
+{
+  initial_primal_weight_ = initial_primal_weight;
+}
+
+template <typename i_t, typename f_t>
 void pdlp_solver_settings_t<i_t, f_t>::set_pdlp_warm_start_data(
   pdlp_warm_start_data_t<i_t, f_t>& pdlp_warm_start_data_view,
   const rmm::device_uvector<i_t>& var_mapping,
@@ -322,6 +334,18 @@ template <typename i_t, typename f_t>
 bool pdlp_solver_settings_t<i_t, f_t>::has_initial_dual_solution() const
 {
   return initial_dual_solution_.get() != nullptr;
+}
+
+template <typename i_t, typename f_t>
+std::optional<f_t> pdlp_solver_settings_t<i_t, f_t>::get_initial_step_size() const
+{
+  return initial_step_size_;
+}
+
+template <typename i_t, typename f_t>
+std::optional<f_t> pdlp_solver_settings_t<i_t, f_t>::get_initial_primal_weight() const
+{
+  return initial_primal_weight_;
 }
 
 template <typename i_t, typename f_t>

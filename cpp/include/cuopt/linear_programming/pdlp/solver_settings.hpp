@@ -116,6 +116,20 @@ class pdlp_solver_settings_t {
                                  i_t size,
                                  rmm::cuda_stream_view stream = rmm::cuda_stream_default);
 
+  /** TODO batch mode: tmp
+   * @brief Set an initial step size.
+   *
+   * @param[in] initial_step_size Initial step size.
+   */
+  // TODO batch mode: tmp
+   void set_initial_step_size(f_t initial_step_size);
+  /**
+   * @brief Set an initial primal weight.
+   *
+   * @param[in] initial_primal_weight Initial primal weight.
+   */
+  void set_initial_primal_weight(f_t initial_primal_weight);
+
   /**
    * @brief Set the pdlp warm start data. This allows to restart PDLP with a
    * previous solution
@@ -163,6 +177,10 @@ class pdlp_solver_settings_t {
   const pdlp_warm_start_data_t<i_t, f_t>& get_pdlp_warm_start_data() const noexcept;
   pdlp_warm_start_data_t<i_t, f_t>& get_pdlp_warm_start_data();
   const pdlp_warm_start_data_view_t<i_t, f_t>& get_pdlp_warm_start_data_view() const noexcept;
+  // TODO batch mode: tmp
+  std::optional<f_t> get_initial_step_size() const;
+  // TODO batch mode: tmp
+  std::optional<f_t> get_initial_primal_weight() const;
 
   const rmm::device_uvector<f_t>& get_initial_primal_solution() const;
   const rmm::device_uvector<f_t>& get_initial_dual_solution() const;
@@ -218,6 +236,12 @@ class pdlp_solver_settings_t {
   std::shared_ptr<rmm::device_uvector<f_t>> initial_primal_solution_;
   /** Initial dual solution */
   std::shared_ptr<rmm::device_uvector<f_t>> initial_dual_solution_;
+  /** Initial step size */
+  // TODO batch mode: tmp
+  std::optional<f_t> initial_step_size_;
+  /** Initial primal weight */
+  // TODO batch mode: tmp
+  std::optional<f_t> initial_primal_weight_;
   // For the C++ interface
   pdlp_warm_start_data_t<i_t, f_t> pdlp_warm_start_data_;
   // For the Cython interface

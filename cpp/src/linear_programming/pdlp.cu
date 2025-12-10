@@ -576,6 +576,7 @@ template <typename i_t, typename f_t>
 std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>::check_batch_termination(
   const timer_t& timer)
 {
+  // Forced to do it in two lines because of macro template interaction
   [[maybe_unused]] const bool is_cupdlpx = is_cupdlpx_restart<i_t, f_t>();
   cuopt_assert(is_cupdlpx, "Batch termination handling only supported with cuPDLPx restart");
   
@@ -1239,14 +1240,15 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
   std::cout << "Starting PDLP loop:" << std::endl;
 #endif
 
-  if (pdlp_hyper_params::compute_initial_step_size_before_scaling) compute_initial_step_size();
-  if (pdlp_hyper_params::compute_initial_primal_weight_before_scaling)
+  // TODO handle that properly
+  if (pdlp_hyper_params::compute_initial_step_size_before_scaling && !settings_.get_initial_step_size().has_value()) compute_initial_step_size();
+  if (pdlp_hyper_params::compute_initial_primal_weight_before_scaling && !settings_.get_initial_primal_weight().has_value())
     compute_initial_primal_weight();
 
   initial_scaling_strategy_.scale_problem();
 
-  if (!pdlp_hyper_params::compute_initial_step_size_before_scaling) compute_initial_step_size();
-  if (!pdlp_hyper_params::compute_initial_primal_weight_before_scaling)
+  if (!pdlp_hyper_params::compute_initial_step_size_before_scaling && !settings_.get_initial_step_size().has_value()) compute_initial_step_size();
+  if (!pdlp_hyper_params::compute_initial_primal_weight_before_scaling && !settings_.get_initial_primal_weight().has_value())
     compute_initial_primal_weight();
 
 #ifdef PDLP_DEBUG_MODE
@@ -1255,10 +1257,14 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
 
   // Needs to be performed here before the below line to make sure the initial primal_weight / step
   // size are used as previous point when potentially updating them in this next call
-  if (initial_step_size_.has_value())
-    thrust::uninitialized_fill(handle_ptr_->get_thrust_policy(), step_size_.begin(), step_size_.end(), initial_step_size_.value());
-  if (initial_primal_weight_.has_value())
-    thrust::uninitialized_fill(handle_ptr_->get_thrust_policy(), primal_weight_.begin(), primal_weight_.end(), initial_primal_weight_.value());
+  if (settings_.get_initial_step_size().has_value())
+    thrust::uninitialized_fill(handle_ptr_->get_thrust_policy(), step_size_.begin(), step_size_.end(), settings_.get_initial_step_size().value());
+  if (settings_.get_initial_primal_weight().has_value())
+  {
+    thrust::uninitialized_fill(handle_ptr_->get_thrust_policy(), primal_weight_.begin(), primal_weight_.end(), settings_.get_initial_primal_weight().value());
+    if (is_cupdlpx_restart<i_t, f_t>())
+      thrust::uninitialized_fill(handle_ptr_->get_thrust_policy(), best_primal_weight_.begin(), best_primal_weight_.end(), settings_.get_initial_primal_weight().value());
+  }
   if (initial_k_.has_value()) {
     pdhg_solver_.total_pdhg_iterations_ = initial_k_.value();
     pdhg_solver_.get_d_total_pdhg_iterations().set_value_async(initial_k_.value(), stream_view_);
@@ -1361,10 +1367,10 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
       if (verbose) {
         std::cout << "-------------------------------" << std::endl;
         std::cout << internal_solver_iterations_ << std::endl;
-        raft::print_device_vector("step_size", step_size_.data(), 1, std::cout);
-        raft::print_device_vector("primal_weight", primal_weight_.data(), 1, std::cout);
-        raft::print_device_vector("primal_step_size", primal_step_size_.data(), 1, std::cout);
-        raft::print_device_vector("dual_step_size", dual_step_size_.data(), 1, std::cout);
+        raft::print_device_vector("step_size", step_size_.data(), step_size_.size(), std::cout);
+        raft::print_device_vector("primal_weight", primal_weight_.data(), primal_weight_.size(), std::cout);
+        raft::print_device_vector("primal_step_size", primal_step_size_.data(), primal_step_size_.size(), std::cout);
+        raft::print_device_vector("dual_step_size", dual_step_size_.data(), dual_step_size_.size(), std::cout);
       }
 
       // If a warm start is given and it's the first step, the average solutions were already filled
@@ -1873,12 +1879,14 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_primal_weight()
 template <typename i_t, typename f_t>
 f_t pdlp_solver_t<i_t, f_t>::get_primal_weight_h(i_t id) const
 {
-  return primal_weight_.element(0, stream_view_);
+  cuopt_assert(id < primal_weight_.size(), "id is out of bounds");
+  return primal_weight_.element(id, stream_view_);
 }
 
 template <typename i_t, typename f_t>
 f_t pdlp_solver_t<i_t, f_t>::get_step_size_h(i_t id) const
 {
+  cuopt_assert(id < step_size_.size(), "id is out of bounds");
   return step_size_.element(id, stream_view_);
 }
 
