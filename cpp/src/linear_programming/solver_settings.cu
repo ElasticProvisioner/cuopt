@@ -67,7 +67,7 @@ void pdlp_solver_settings_t<i_t, f_t>::set_initial_step_size(f_t initial_step_si
 template <typename i_t, typename f_t>
 void pdlp_solver_settings_t<i_t, f_t>::set_initial_primal_weight(f_t initial_primal_weight)
 {
-  initial_primal_weight_ = initial_primal_weight;
+  initial_primal_weight_ = std::make_optional(initial_primal_weight);
 }
 
 template <typename i_t, typename f_t>

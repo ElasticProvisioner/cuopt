@@ -1222,6 +1222,7 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
       make_span(step_size_),
       make_span(step_size_strategy_.get_interaction()),
       make_span(restart_strategy_.fixed_point_error_));
+      RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_)); // To make sure all the data is written from device to host
     RAFT_CUDA_TRY(cudaPeekAtLastError());
     #ifdef CUPDLP_DEBUG_MODE
       RAFT_CUDA_TRY(cudaDeviceSynchronize());

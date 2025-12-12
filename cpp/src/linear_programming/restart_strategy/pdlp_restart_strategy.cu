@@ -730,6 +730,8 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_cupdlpx_restart(i_t total_number_
     const f_t average_fixed_point_error = std::reduce(fixed_point_error_.begin(), fixed_point_error_.end()) / fixed_point_error_.size();
     const f_t average_initial_fixed_point_error = std::reduce(initial_fixed_point_error_.begin(), initial_fixed_point_error_.end()) / initial_fixed_point_error_.size();
     const f_t average_last_trial_fixed_point_error = std::reduce(last_trial_fixed_point_error_.begin(), last_trial_fixed_point_error_.end()) / last_trial_fixed_point_error_.size();
+    cuopt_assert(average_fixed_point_error != std::numeric_limits<f_t>::signaling_NaN(), "Numerical error: average_fixed_point_error should not be at nan at this stage");
+    cuopt_assert(average_initial_fixed_point_error != std::numeric_limits<f_t>::signaling_NaN(), "Numerical error: average_initial_fixed_point_error should not be at nan at this stage");
 
     if (average_fixed_point_error <= pdlp_hyper_params::host_default_sufficient_reduction_for_restart *
                                 average_initial_fixed_point_error) {
