@@ -659,12 +659,12 @@ void convergence_information_t<i_t, f_t>::compute_dual_objective(
       sum_primal_slack_.data(), climber_strategies_.size(), dual_size_h_, stream_view_);
     }
 
-    // TODO batch mode: would be faster in a kernel
-    for (size_t i = 0; i < climber_strategies_.size(); ++i)
-    {
-      const f_t sum = dual_dot_.element(i, stream_view_) + sum_primal_slack_.element(i, stream_view_);
-      dual_objective_.set_element_async(i, sum, stream_view_);
-    }
+    cub::DeviceTransform::Transform(cuda::std::make_tuple(
+      dual_dot_.data(), sum_primal_slack_.data()),
+      dual_objective_.data(),
+      dual_objective_.size(),
+      cuda::std::plus<>{},
+      stream_view_);
   }
 
   // dual_objective = 1 * (dual_objective + 0) = dual_objective
