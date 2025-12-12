@@ -1633,14 +1633,13 @@ i_t basis_update_mpf_t<i_t, f_t>::b_solve(const sparse_vector_t<i_t, f_t>& rhs,
                                           sparse_vector_t<i_t, f_t>& Lsol,
                                           bool need_Lsol) const
 {
-  fpe_disable fpe_disabler;
+  // fpe_disable fpe_disabler;
 
-  // assert(rhs.n > 0);
   const i_t m = L0_.m;
   solution    = rhs;
   solution.inverse_permute_vector(inverse_row_permutation_);
 
-#if defined(CHECK_PERMUTATION)
+#ifdef CHECK_PERMUTATION
   std::vector<f_t> permuation_rhs;
   rhs.to_dense(permuation_rhs);
   std::vector<f_t> finish_perm(m);
@@ -1655,7 +1654,7 @@ i_t basis_update_mpf_t<i_t, f_t>::b_solve(const sparse_vector_t<i_t, f_t>& rhs,
   }
 #endif
 
-#if defined(CHECK_L_SOLVE)
+#ifdef CHECK_L_SOLVE
   std::vector<f_t> l_solve_rhs;
   solution.to_dense(l_solve_rhs);
 #endif
@@ -1674,7 +1673,7 @@ i_t basis_update_mpf_t<i_t, f_t>::b_solve(const sparse_vector_t<i_t, f_t>& rhs,
   if (need_Lsol) { Lsol = solution; }
   sum_L_ += static_cast<f_t>(solution.i.size()) / input_size;
 
-#if defined(CHECK_L_SOLVE)
+#ifdef CHECK_L_SOLVE
   std::vector<f_t> l_solve_dense;
   Lsol.to_dense(l_solve_dense);
 
@@ -1687,13 +1686,12 @@ i_t basis_update_mpf_t<i_t, f_t>::b_solve(const sparse_vector_t<i_t, f_t>& rhs,
   if (max_err_l_solve > 1e-9) { printf("B solve L solve residual %e\n", max_err_l_solve); }
 #endif
 
-#if defined(CHECK_U_SOLVE)
+#ifdef CHECK_U_SOLVE
   std::vector<f_t> rhs_dense;
   solution.to_dense(rhs_dense);
 #endif
 
   const f_t rhs_size = static_cast<f_t>(solution.i.size());
-  // assert(rhs_size > 0);
   estimate_solution_density(rhs_size, sum_U_, num_calls_U_, use_hypersparse);
   if (use_hypersparse) {
     u_solve(solution);
@@ -1705,7 +1703,7 @@ i_t basis_update_mpf_t<i_t, f_t>::b_solve(const sparse_vector_t<i_t, f_t>& rhs,
   }
   sum_U_ += static_cast<f_t>(solution.i.size()) / rhs_size;
 
-#if defined(CHECK_U_SOLVE)
+#ifdef CHECK_U_SOLVE
   std::vector<f_t> solution_dense;
   solution.to_dense(solution_dense);
 
