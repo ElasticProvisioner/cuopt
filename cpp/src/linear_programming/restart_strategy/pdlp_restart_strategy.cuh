@@ -82,6 +82,27 @@ class pdlp_restart_strategy_t {
     raft::device_span<f_t> shared_live_kernel_accumulator;
   };
 
+  struct cupdlpx_restart_view_t {
+    raft::device_span<const f_t> primal_distance;
+    raft::device_span<const f_t> dual_distance;
+    raft::device_span<const f_t> l2_dual_residual;
+    raft::device_span<const f_t> l2_primal_residual;
+    f_t l2_norm_primal_linear_objective;
+    f_t l2_norm_primal_right_hand_side;
+    raft::device_span<const f_t> step_size;
+    raft::device_span<f_t> primal_weight;
+    raft::device_span<f_t> primal_weight_error_sum;
+    raft::device_span<f_t> primal_weight_last_error;
+    raft::device_span<f_t> best_primal_weight;
+    raft::device_span<f_t> new_primal_step_size;
+    raft::device_span<f_t> new_dual_step_size;
+    raft::device_span<f_t> best_primal_dual_residual_gap;
+    f_t restart_k_p;
+    f_t restart_k_i;
+    f_t restart_k_d;
+    f_t restart_i_smooth;
+  };
+
   enum class restart_strategy_t {
     NO_RESTART           = 0,
     KKT_RESTART          = 1,
@@ -144,6 +165,16 @@ class pdlp_restart_strategy_t {
   bool get_last_restart_was_average() const;
 
   i_t should_do_artificial_restart(i_t total_number_of_iterations) const;
+
+  cupdlpx_restart_view_t make_cupdlpx_restart_view(
+    const rmm::device_uvector<f_t>& primal_distance,
+    const rmm::device_uvector<f_t>& dual_distance,
+    const convergence_information_t<i_t, f_t>& current_convergence_information,
+    const rmm::device_uvector<f_t>& step_size,
+    rmm::device_uvector<f_t>& primal_weight,
+    rmm::device_uvector<f_t>& best_primal_weight,
+    rmm::device_uvector<f_t>& primal_step_size,
+    rmm::device_uvector<f_t>& dual_step_size);
 
  private:
   void run_cupdlpx_restart(
@@ -346,12 +377,12 @@ class pdlp_restart_strategy_t {
   bool last_restart_was_average_ = false;
 
   // Needed for cuPDLP+ restart
-  std::vector<f_t> fixed_point_error_;
+  thrust::universal_host_pinned_vector<f_t> fixed_point_error_;
   std::vector<f_t> initial_fixed_point_error_;
   std::vector<f_t> last_trial_fixed_point_error_;
-  std::vector<f_t> primal_weight_error_sum_;       
-  std::vector<f_t> primal_weight_last_error_;      
-  std::vector<f_t> best_primal_dual_residual_gap_;
+  thrust::universal_host_pinned_vector<f_t> primal_weight_error_sum_;       
+  thrust::universal_host_pinned_vector<f_t> primal_weight_last_error_;      
+  thrust::universal_host_pinned_vector<f_t> best_primal_dual_residual_gap_;
 
   const std::vector<pdlp_climber_strategy_t>& climber_strategies_;
 };

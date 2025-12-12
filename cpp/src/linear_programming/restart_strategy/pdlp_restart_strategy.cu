@@ -106,6 +106,7 @@ pdlp_restart_strategy_t<i_t, f_t>::pdlp_restart_strategy_t(
 const std::vector<pdlp_climber_strategy_t>& climber_strategies)
   : handle_ptr_(handle_ptr),
     stream_view_(handle_ptr_->get_stream()),
+    batch_mode_(climber_strategies.size() > 1),
     weighted_average_solution_{handle_ptr_, primal_size, dual_size, is_legacy_batch_mode},
     primal_size_h_(primal_size),
     dual_size_h_(dual_size),
@@ -754,6 +755,118 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_cupdlpx_restart(i_t total_number_
   std::copy(last_trial_fixed_point_error_.begin(), last_trial_fixed_point_error_.end(), fixed_point_error_.begin());
 }
 
+template <typename f_t>
+HDI void cupdlpx_new_primal_weight_computation(
+  const f_t primal_distance,
+  const f_t dual_distance,
+  const f_t relative_l2_dual_residual_value,
+  const f_t relative_l2_primal_residual_value,
+  const f_t step_size,
+  f_t* primal_weight_error_sum,
+  f_t* primal_weight_last_error,
+  f_t* primal_weight,
+  f_t* best_primal_weight,
+  f_t* new_primal_step_size,
+  f_t* new_dual_step_size,
+  f_t* best_primal_dual_residual_gap,
+  const f_t restart_k_p,
+  const f_t restart_k_i,
+  const f_t restart_k_d,
+  const f_t restart_i_smooth)
+{
+  // TODO batch mode:No value update if this climber is not restarting
+  //if (!should_restart[i])
+  //continue;
+  const f_t l2_primal_distance = cuda::std::sqrt(primal_distance);
+  const f_t l2_dual_distance = cuda::std::sqrt(dual_distance);
+
+#ifdef CUPDLP_DEBUG_MODE
+  printf("l2 primal distance: %lf l2 dual distance %lf\n", l2_primal_distance, l2_dual_distance);
+  printf("relative L2 primal residual %lf relative L2 dual residual %lf\n",
+        relative_l2_primal_residual_value,
+        relative_l2_dual_residual_value);
+#endif
+
+  const f_t ratio_infeas = (relative_l2_primal_residual_value == f_t(0.0))
+                            ? std::numeric_limits<f_t>::infinity()
+                            : relative_l2_dual_residual_value / relative_l2_primal_residual_value;
+
+  if (l2_primal_distance > f_t(1e-16) && l2_dual_distance > f_t(1e-16) &&
+      l2_primal_distance < f_t(1e12) && l2_dual_distance < f_t(1e12) && ratio_infeas > f_t(1e-8) &&
+      ratio_infeas < f_t(1e8)) {
+#ifdef CUPDLP_DEBUG_MODE
+    printf("Compute new primal weight\n");
+#endif
+    const f_t current_primal_weight = *primal_weight;
+    const f_t error =
+      cuda::std::log(l2_dual_distance) - cuda::std::log(l2_primal_distance) - cuda::std::log(current_primal_weight);
+    const f_t new_primal_weight_error_sum_value = *primal_weight_error_sum * restart_i_smooth + error;
+    *primal_weight_error_sum = new_primal_weight_error_sum_value;
+    const f_t delta_error = error - *primal_weight_last_error;
+    const f_t computed_new_primal_weight =
+      cuda::std::exp(restart_k_p * error +
+              restart_k_i * new_primal_weight_error_sum_value +
+              restart_k_d * delta_error) *
+      current_primal_weight;
+    *primal_weight = computed_new_primal_weight;
+    *primal_weight_last_error = error;
+    *new_primal_step_size = step_size / computed_new_primal_weight;
+    *new_dual_step_size = step_size * computed_new_primal_weight;
+  } else {
+#ifdef CUPDLP_DEBUG_MODE
+    printf("Setting new primal weight to best primal weight\n");
+#endif
+    const f_t best_primal_weight_value = *best_primal_weight;
+    *primal_weight = best_primal_weight_value;
+    *primal_weight_error_sum = f_t(0.0);
+    *primal_weight_last_error = f_t(0.0);
+    *new_primal_step_size = step_size / best_primal_weight_value;
+    *new_dual_step_size = step_size * best_primal_weight_value;
+  }
+
+  const f_t primal_dual_residual_gap = cuda::std::abs(cuda::std::log10(ratio_infeas));
+  if (primal_dual_residual_gap < *best_primal_dual_residual_gap) {
+    *best_primal_dual_residual_gap = primal_dual_residual_gap;
+    *best_primal_weight = *primal_weight;
+  }
+
+  #ifdef CUPDLP_DEBUG_MODE
+    printf("New primal weight %lf\n", *primal_weight);
+    printf("New best_primal_weight %lf\n", *best_primal_weight);
+    printf("New primal_weight_error_sum_ %lf\n", *primal_weight_error_sum);
+    printf("New primal_weight_last_error_ %lf\n", *primal_weight_last_error);
+    printf("New best_primal_dual_residual_gap_ %lf\n", *best_primal_dual_residual_gap);
+  #endif
+}
+
+template <typename i_t, typename f_t>
+__global__ void kernel_compute_next_cupdlpx_primal_weight(typename pdlp_restart_strategy_t<i_t, f_t>::cupdlpx_restart_view_t view, i_t batch_size)
+{
+  const i_t index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= batch_size) { return; }
+
+  const f_t relative_l2_dual_residual_value = view.l2_dual_residual[index] / (f_t(1.0) + view.l2_norm_primal_linear_objective);
+  const f_t relative_l2_primal_residual_value = view.l2_primal_residual[index] / (f_t(1.0) + view.l2_norm_primal_right_hand_side);
+  
+  cupdlpx_new_primal_weight_computation<f_t>(
+    view.primal_distance[index],
+    view.dual_distance[index],
+    relative_l2_dual_residual_value,
+    relative_l2_primal_residual_value,
+    view.step_size[index],
+    &view.primal_weight_error_sum[index],
+    &view.primal_weight_last_error[index],
+    &view.primal_weight[index],
+    &view.best_primal_weight[index],
+    &view.new_primal_step_size[index],
+    &view.new_dual_step_size[index],
+    &view.best_primal_dual_residual_gap[index],
+    view.restart_k_p,
+    view.restart_k_i,
+    view.restart_k_d,
+    view.restart_i_smooth);
+}
+
 template <typename i_t, typename f_t>
 void pdlp_restart_strategy_t<i_t, f_t>::cupdlpx_restart(
   const convergence_information_t<i_t, f_t>& current_convergence_information,
@@ -786,86 +899,53 @@ void pdlp_restart_strategy_t<i_t, f_t>::cupdlpx_restart(
     1,
     last_restart_duality_gap_.dual_distance_traveled_);
 
-  // TODO batch mode: would be faster inside a custom kernel
-  for (size_t i = 0; i < climber_strategies_.size(); ++i)
-  { 
-    // No value update if this climber is not restarting
-    if (!should_restart[i])
-      continue;
+  auto view = make_cupdlpx_restart_view(
+    last_restart_duality_gap_.primal_distance_traveled_,
+    last_restart_duality_gap_.dual_distance_traveled_,
+    current_convergence_information,
+    step_size,
+    primal_weight,
+    best_primal_weight,
+    primal_step_size,
+    dual_step_size);
 
-    const f_t l2_primal_distance =
-      std::sqrt(last_restart_duality_gap_.primal_distance_traveled_.element(i, stream_view_));
-    const f_t l2_dual_distance =
-      std::sqrt(last_restart_duality_gap_.dual_distance_traveled_.element(i, stream_view_));
-
-  #ifdef CUPDLP_DEBUG_MODE
-    printf("l2 primal distance: %lf l2 dual distance %lf\n", l2_primal_distance, l2_dual_distance);
-    printf("relative L2 primal residual %lf relative L2 dual residual %lf\n",
-          current_convergence_information.get_relative_l2_primal_residual_value(),
-          current_convergence_information.get_relative_l2_dual_residual_value());
-  #endif
-
-    const f_t relative_l2_dual_residual_value =
-      current_convergence_information.get_relative_l2_dual_residual_value(i);
-    const f_t relative_l2_primal_residual_value =
-      current_convergence_information.get_relative_l2_primal_residual_value(i);
-    const f_t ratio_infeas = (relative_l2_primal_residual_value == f_t(0.0))
-                              ? std::numeric_limits<f_t>::infinity()
-                              : relative_l2_dual_residual_value / relative_l2_primal_residual_value;
-
-    if (l2_primal_distance > f_t(1e-16) && l2_dual_distance > f_t(1e-16) &&
-        l2_primal_distance < f_t(1e12) && l2_dual_distance < f_t(1e12) && ratio_infeas > f_t(1e-8) &&
-        ratio_infeas < f_t(1e8)) {
-  #ifdef CUPDLP_DEBUG_MODE
-      printf("Compute new primal weight\n");
-  #endif
-      const f_t current_primal_weight = primal_weight.element(i, stream_view_);
-      const f_t error =
-        std::log(l2_dual_distance) - std::log(l2_primal_distance) - std::log(current_primal_weight);
-      primal_weight_error_sum_[i] *= pdlp_hyper_params::restart_i_smooth;
-      primal_weight_error_sum_[i] += error;
-      const f_t delta_error = error - primal_weight_last_error_[i];
-      const f_t new_primal_weight =
-        std::exp(pdlp_hyper_params::restart_k_p * error +
-                pdlp_hyper_params::restart_k_i * primal_weight_error_sum_[i] +
-                pdlp_hyper_params::restart_k_d * delta_error) *
-        current_primal_weight;
-      primal_weight.set_element_async(i, new_primal_weight, stream_view_);
-      primal_weight_last_error_[i]   = error;
-      const f_t h_step_size          = step_size.element(i, stream_view_);
-      const f_t new_primal_step_size = h_step_size / new_primal_weight;
-      const f_t new_dual_step_size   = h_step_size * new_primal_weight;
-      primal_step_size.set_element_async(i, new_primal_step_size, stream_view_);
-      dual_step_size.set_element_async(i, new_dual_step_size, stream_view_);
-    } else {
-  #ifdef CUPDLP_DEBUG_MODE
-      printf("Setting new primal weight to best primal weight\n");
-  #endif
-      const f_t best_primal_weight_value = best_primal_weight.element(i, stream_view_);
-      primal_weight.set_element_async(i, best_primal_weight_value, stream_view_);
-      primal_weight_error_sum_[i]       = f_t(0.0);
-      primal_weight_last_error_[i]      = f_t(0.0);
-      const f_t h_step_size          = step_size.element(i, stream_view_);
-      const f_t new_primal_step_size = h_step_size / best_primal_weight_value;
-      const f_t new_dual_step_size   = h_step_size * best_primal_weight_value;
-      primal_step_size.set_element_async(i, new_primal_step_size, stream_view_);
-      dual_step_size.set_element_async(i, new_dual_step_size, stream_view_);
-    }
-
-    const f_t primal_dual_residual_gap = std::abs(std::log10(ratio_infeas));
-    if (primal_dual_residual_gap < best_primal_dual_residual_gap_ [i]) {
-      best_primal_dual_residual_gap_[i] = primal_dual_residual_gap;
-      const f_t new_primal_weight    = primal_weight.element(i, stream_view_);
-      best_primal_weight.set_element_async(i, new_primal_weight, stream_view_);
-    }
-
+  // Those could be a same function and all device but it would break backward compatibility because of FMAD difference between host and device
+  if (batch_mode_) {
+    const auto [grid_size, block_size] = kernel_config_from_batch_size(climber_strategies_.size());
+    kernel_compute_next_cupdlpx_primal_weight<i_t, f_t><<<grid_size, block_size, 0, stream_view_>>>(
+      view, climber_strategies_.size());
+    RAFT_CUDA_TRY(cudaPeekAtLastError());
+    RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_)); // To make sure all the data is written from device to host
     #ifdef CUPDLP_DEBUG_MODE
-      printf("New primal weight %lf\n", primal_weight.element(i, stream_view_));
-      printf("New best_primal_weight %lf\n", best_primal_weight.element(i, stream_view_));
-      printf("New primal_weight_error_sum_ %lf\n", primal_weight_error_sum_[i]);
-      printf("New primal_weight_last_error_ %lf\n", primal_weight_last_error_[i]);
-      printf("New best_primal_dual_residual_gap_ %lf\n", best_primal_dual_residual_gap_[i]);
+      RAFT_CUDA_TRY(cudaDeviceSynchronize());
     #endif
+  } else {
+    // Extract those 4 out because the live on the device memory and we write those in the host version of the function
+    f_t primal_weight_value = primal_weight.element(0, stream_view_);
+    f_t primal_step_size_value = primal_step_size.element(0, stream_view_);
+    f_t dual_step_size_value = dual_step_size.element(0, stream_view_);
+    f_t best_primal_weight_value = best_primal_weight.element(0, stream_view_);
+    cupdlpx_new_primal_weight_computation<f_t>(
+      last_restart_duality_gap_.primal_distance_traveled_.element(0, stream_view_),
+      last_restart_duality_gap_.dual_distance_traveled_.element(0, stream_view_),
+      current_convergence_information.get_relative_l2_dual_residual_value(0),
+      current_convergence_information.get_relative_l2_primal_residual_value(0),
+      step_size.element(0, stream_view_),
+      &view.primal_weight_error_sum[0],
+      &view.primal_weight_last_error[0],
+      &primal_weight_value,
+      &best_primal_weight_value,
+      &primal_step_size_value,
+      &dual_step_size_value,
+      &view.best_primal_dual_residual_gap[0],
+      view.restart_k_p,
+      view.restart_k_i,
+      view.restart_k_d,
+      view.restart_i_smooth);
+    primal_weight.set_element_async(0, primal_weight_value, stream_view_);
+    primal_step_size.set_element_async(0, primal_step_size_value, stream_view_);
+    dual_step_size.set_element_async(0, dual_step_size_value, stream_view_);
+    best_primal_weight.set_element_async(0, best_primal_weight_value, stream_view_);
   }
 
   // TODO batch mode: for now with restart for everyone
@@ -2291,6 +2371,40 @@ typename pdlp_restart_strategy_t<i_t, f_t>::view_t pdlp_restart_strategy_t<i_t, 
   v.shared_live_kernel_accumulator = raft::device_span<f_t>{shared_live_kernel_accumulator_.data(),
                                                             shared_live_kernel_accumulator_.size()};
 
+  return v;
+}
+
+template <typename i_t, typename f_t>
+typename pdlp_restart_strategy_t<i_t, f_t>::cupdlpx_restart_view_t
+pdlp_restart_strategy_t<i_t, f_t>::make_cupdlpx_restart_view(
+  const rmm::device_uvector<f_t>& primal_distance,
+  const rmm::device_uvector<f_t>& dual_distance,
+  const convergence_information_t<i_t, f_t>& current_convergence_information,
+  const rmm::device_uvector<f_t>& step_size,
+  rmm::device_uvector<f_t>& primal_weight,
+  rmm::device_uvector<f_t>& best_primal_weight,
+  rmm::device_uvector<f_t>& primal_step_size,
+  rmm::device_uvector<f_t>& dual_step_size)
+{
+  cupdlpx_restart_view_t v{};
+  v.primal_distance = make_span(primal_distance);
+  v.dual_distance = make_span(dual_distance);
+  v.l2_dual_residual = make_span(current_convergence_information.get_l2_dual_residual());
+  v.l2_primal_residual = make_span(current_convergence_information.get_l2_primal_residual());
+  v.l2_norm_primal_linear_objective = current_convergence_information.get_relative_dual_tolerance_factor();
+  v.l2_norm_primal_right_hand_side = current_convergence_information.get_relative_primal_tolerance_factor();
+  v.step_size = make_span(step_size);
+  v.primal_weight = make_span(primal_weight);
+  v.primal_weight_error_sum = make_span(primal_weight_error_sum_);
+  v.primal_weight_last_error = make_span(primal_weight_last_error_);
+  v.best_primal_weight = make_span(best_primal_weight);
+  v.new_primal_step_size = make_span(primal_step_size);
+  v.new_dual_step_size = make_span(dual_step_size);
+  v.best_primal_dual_residual_gap = make_span(best_primal_dual_residual_gap_);
+  v.restart_k_p = static_cast<f_t>(pdlp_hyper_params::restart_k_p);
+  v.restart_k_i = static_cast<f_t>(pdlp_hyper_params::restart_k_i);
+  v.restart_k_d = static_cast<f_t>(pdlp_hyper_params::restart_k_d);
+  v.restart_i_smooth = static_cast<f_t>(pdlp_hyper_params::restart_i_smooth);
   return v;
 }
 

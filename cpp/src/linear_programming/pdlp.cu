@@ -1117,9 +1117,45 @@ void pdlp_solver_t<i_t, f_t>::update_primal_dual_solutions(
   }
 }
 
+template <typename f_t>
+HDI void fixed_error_computation(const f_t norm_squared_delta_primal, const f_t norm_squared_delta_dual, const f_t primal_weight, const f_t step_size, const f_t interaction, f_t* fixed_point_error)
+{
+  const f_t movement =
+  norm_squared_delta_primal * primal_weight +
+  norm_squared_delta_dual / primal_weight;
+  const f_t computed_interaction =
+    f_t(2.0) * interaction * step_size;
+
+  *fixed_point_error = cuda::std::sqrt(movement + computed_interaction);
+
+  #ifdef CUPDLP_DEBUG_MODE
+    printf("movement %lf\n", movement);
+    printf("interaction %lf\n", interaction);
+    printf("state->fixed_point_error %lf\n", *fixed_point_error);
+  #endif
+}
+
+template <typename f_t>
+__global__ void kernel_compute_fixed_error(
+  raft::device_span<const f_t> norm_squared_delta_primal,
+  raft::device_span<const f_t> norm_squared_delta_dual,
+  raft::device_span<const f_t> primal_weight,
+  raft::device_span<const f_t> step_size,
+  raft::device_span<const f_t> interaction,
+  raft::device_span<f_t> fixed_point_error)
+{
+  const size_t index = blockIdx.x * blockDim.x + threadIdx.x;
+  cuopt_assert(norm_squared_delta_primal.size() == norm_squared_delta_dual.size() && norm_squared_delta_primal.size() == primal_weight.size()
+  && norm_squared_delta_primal.size() == step_size.size() && norm_squared_delta_primal.size() == interaction.size() && norm_squared_delta_primal.size() == fixed_point_error.size(), "All vectors must have the same size");
+  if (index >= norm_squared_delta_primal.size()) { return; }
+  fixed_error_computation<f_t>(norm_squared_delta_primal[index], norm_squared_delta_dual[index], primal_weight[index], step_size[index], interaction[index], &fixed_point_error[index]);
+}
+
 template <typename i_t, typename f_t>
 void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarted)
 {
+  raft::common::nvtx::range fun_scope("compute_fixed_error");
+
 #ifdef CUPDLP_DEBUG_MODE
   printf("Computing compute_fixed_point_error \n");
 #endif
@@ -1162,35 +1198,44 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
     {
       for (size_t i = 0; i < climber_strategies_.size(); ++i)
       {
-          RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view.potential_next_dual_solution_vector[i],
-                           (void*)(pdhg_solver_.get_reflected_dual().data() + i * op_problem_scaled_.n_constraints)));
+        RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view.potential_next_dual_solution_vector[i],
+                          (void*)(pdhg_solver_.get_reflected_dual().data() + i * op_problem_scaled_.n_constraints)));
       }
     }
     else
     {
-        RAFT_CUSPARSE_TRY(cusparseDnMatSetValues(cusparse_view.batch_potential_next_dual_solution, (void*)pdhg_solver_.get_reflected_dual().data()));
+      RAFT_CUSPARSE_TRY(cusparseDnMatSetValues(cusparse_view.batch_potential_next_dual_solution, (void*)pdhg_solver_.get_reflected_dual().data()));
     }
   }
 
   step_size_strategy_.compute_interaction_and_movement(
     pdhg_solver_.get_primal_tmp_resource(), cusparse_view, pdhg_solver_.get_saddle_point_state());
 
-  // TODO batch mode: replace with a kernel
-  for (size_t i = 0; i < climber_strategies_.size(); ++i)
+
+  if (batch_mode_)
   {
-    const f_t movement =
-    step_size_strategy_.get_norm_squared_delta_primal(i) * primal_weight_.element(i, stream_view_) +
-    step_size_strategy_.get_norm_squared_delta_dual(i) / primal_weight_.element(i, stream_view_);
-    const f_t interaction =
-      f_t(2.0) * step_size_strategy_.get_interaction(i) * step_size_.element(i, stream_view_);
-
-    restart_strategy_.fixed_point_error_[i] = std::sqrt(movement + interaction);
-
+    const auto [grid_size, block_size] = kernel_config_from_batch_size(climber_strategies_.size());
+    kernel_compute_fixed_error<f_t><<<grid_size, block_size, 0, stream_view_>>>(
+      make_span(step_size_strategy_.get_norm_squared_delta_primal()),
+      make_span(step_size_strategy_.get_norm_squared_delta_dual()),
+      make_span(primal_weight_),
+      make_span(step_size_),
+      make_span(step_size_strategy_.get_interaction()),
+      make_span(restart_strategy_.fixed_point_error_));
+    RAFT_CUDA_TRY(cudaPeekAtLastError());
     #ifdef CUPDLP_DEBUG_MODE
-      printf("movement %lf\n", movement);
-      printf("interaction %lf\n", interaction);
-      printf("state->fixed_point_error %lf\n", restart_strategy_.fixed_point_error_[i]);
+      RAFT_CUDA_TRY(cudaDeviceSynchronize());
     #endif
+  }
+  else
+  {
+    fixed_error_computation<f_t>(
+      step_size_strategy_.get_norm_squared_delta_primal(0),
+      step_size_strategy_.get_norm_squared_delta_dual(0),
+      primal_weight_.element(0, stream_view_),
+      step_size_.element(0, stream_view_),
+      step_size_strategy_.get_interaction(0),
+      &restart_strategy_.fixed_point_error_[0]);
   }
 
   // Put back

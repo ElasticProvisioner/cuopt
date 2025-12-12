@@ -195,13 +195,6 @@ struct max_abs_t {
 };
 
 template <typename f_t>
-struct scalar_divide_t {
-  scalar_divide_t(const f_t scalar): scalar_(scalar){}
-  const f_t scalar_;
-  HDI f_t operator()(f_t a) { cuopt_assert(scalar_ != f_t(0.0), "Scalar should never be 0"); return a / scalar_; }
-};
-
-template <typename f_t>
 HDI f_t finite_or_zero(f_t in)
 {
   return isfinite(in) ? in : f_t(0.0);
@@ -270,20 +263,11 @@ void infeasibility_information_t<i_t, f_t>::compute_infeasibility_information(
       // Inf norm of dual ray
       segmented_sum_handler_.segmented_reduce_helper(dual_ray.data(), dual_ray_inf_norm_.data(), climber_strategies_.size(), dual_size_h_, max_abs_t<f_t>{}, f_t(0.0));
 
-      // TODO batch mode: would be better in a kernel or pass the mask to the transform -> just use cub for each or transformIf with batch_wrapper_iterator
-      for (size_t i = 0; i < climber_strategies_.size(); ++i)
-      {
-        const f_t primal_ray_inf_norm_val = primal_ray_inf_norm_.element(i, stream_view_);
-        if (primal_ray_inf_norm_val > f_t(0.0))
-        {
-          cub::DeviceTransform::Transform(
-            primal_ray.data() + i * primal_size_h_,
-            primal_ray.data() + i * primal_size_h_,
-            primal_size_h_,
-            scalar_divide_t<f_t>{primal_ray_inf_norm_val},
-            stream_view_);
-        }
-      }
+      cub::DeviceFor::Bulk(primal_ray.size(), [primal_ray_inf_norm = make_span(primal_ray_inf_norm_), primal_ray_data = make_span(primal_ray), primal_size_h_ = primal_size_h_] __device__ (i_t id) {
+        const f_t primal_ray_inf_norm_value = primal_ray_inf_norm[id / primal_size_h_];
+        if (primal_ray_inf_norm_value > f_t(0.0))
+          primal_ray_data[id] = primal_ray_data[id] / primal_ray_inf_norm_value;
+      }, stream_view_);
 #ifdef CUPDLP_DEBUG_MODE
         print("delta_primal_solution after scale", primal_ray);
         print("delta_dual_solution after scale", dual_ray);

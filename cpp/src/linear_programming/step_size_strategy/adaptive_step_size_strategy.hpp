@@ -73,6 +73,9 @@ class adaptive_step_size_strategy_t {
   f_t get_interaction(i_t) const;
   f_t get_norm_squared_delta_primal(i_t) const;
   f_t get_norm_squared_delta_dual(i_t) const;
+  const rmm::device_uvector<f_t>& get_interaction() const;
+  const rmm::device_uvector<f_t>& get_norm_squared_delta_primal() const;
+  const rmm::device_uvector<f_t>& get_norm_squared_delta_dual() const;
 
   void compute_interaction_and_movement(rmm::device_uvector<f_t>& tmp_primal,
                                         cusparse_view_t<i_t, f_t>& cusparse_view,

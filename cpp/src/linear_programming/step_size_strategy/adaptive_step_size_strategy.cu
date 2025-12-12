@@ -244,6 +244,25 @@ f_t adaptive_step_size_strategy_t<i_t, f_t>::get_norm_squared_delta_dual(i_t i) 
   return norm_squared_delta_dual_.element(i, stream_view_);
 }
 
+
+template <typename i_t, typename f_t>
+const rmm::device_uvector<f_t>& adaptive_step_size_strategy_t<i_t, f_t>::get_interaction() const
+{
+  return interaction_;
+}
+
+template <typename i_t, typename f_t>
+const rmm::device_uvector<f_t>& adaptive_step_size_strategy_t<i_t, f_t>::get_norm_squared_delta_primal() const
+{
+  return norm_squared_delta_primal_;
+}
+
+template <typename i_t, typename f_t>
+const rmm::device_uvector<f_t>& adaptive_step_size_strategy_t<i_t, f_t>::get_norm_squared_delta_dual() const
+{
+  return norm_squared_delta_dual_;
+}
+
 template <typename i_t, typename f_t>
 void adaptive_step_size_strategy_t<i_t, f_t>::set_valid_step_size(i_t valid)
 {
