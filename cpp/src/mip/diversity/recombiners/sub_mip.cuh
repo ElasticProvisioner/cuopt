@@ -104,8 +104,15 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       branch_and_bound_settings.integer_tol     = context.settings.tolerances.integrality_tolerance;
       branch_and_bound_settings.num_threads     = 2;
       branch_and_bound_settings.num_bfs_threads = 1;
-      branch_and_bound_settings.num_diving_threads = 1;
-      branch_and_bound_settings.solution_callback  = [this](std::vector<f_t>& solution,
+
+      // In the future, let SubMIP use all the diving heuristics. For now,
+      // restricting to line search diving.
+      branch_and_bound_settings.diving_settings.num_diving_tasks           = 1;
+      branch_and_bound_settings.diving_settings.disable_guided_diving      = true;
+      branch_and_bound_settings.diving_settings.disable_coefficient_diving = true;
+      branch_and_bound_settings.diving_settings.disable_pseudocost_diving  = true;
+
+      branch_and_bound_settings.solution_callback = [this](std::vector<f_t>& solution,
                                                            f_t objective) {
         this->solution_callback(solution, objective);
       };

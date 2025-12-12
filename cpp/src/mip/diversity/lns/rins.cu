@@ -255,13 +255,19 @@ void rins_t<i_t, f_t>::run_rins()
   branch_and_bound_settings.absolute_mip_gap_tol = context.settings.tolerances.absolute_mip_gap;
   branch_and_bound_settings.relative_mip_gap_tol =
     std::min(current_mip_gap, (f_t)settings.target_mip_gap);
-  branch_and_bound_settings.integer_tol        = context.settings.tolerances.integrality_tolerance;
-  branch_and_bound_settings.num_threads        = 2;
-  branch_and_bound_settings.num_bfs_threads    = 1;
-  branch_and_bound_settings.num_diving_threads = 1;
-  branch_and_bound_settings.log.log            = false;
-  branch_and_bound_settings.log.log_prefix     = "[RINS] ";
-  branch_and_bound_settings.solution_callback  = [this, &rins_solution_queue](
+  branch_and_bound_settings.integer_tol     = context.settings.tolerances.integrality_tolerance;
+  branch_and_bound_settings.num_threads     = 2;
+  branch_and_bound_settings.num_bfs_threads = 1;
+
+  // In the future, let RINS use all the diving heuristics. For now,
+  // restricting to line search diving.
+  branch_and_bound_settings.diving_settings.num_diving_tasks           = 1;
+  branch_and_bound_settings.diving_settings.disable_guided_diving      = true;
+  branch_and_bound_settings.diving_settings.disable_coefficient_diving = true;
+  branch_and_bound_settings.diving_settings.disable_pseudocost_diving  = true;
+  branch_and_bound_settings.log.log                                    = false;
+  branch_and_bound_settings.log.log_prefix                             = "[RINS] ";
+  branch_and_bound_settings.solution_callback = [this, &rins_solution_queue](
                                                   std::vector<f_t>& solution, f_t objective) {
     rins_solution_queue.push_back(solution);
   };

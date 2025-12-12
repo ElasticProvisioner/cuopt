@@ -20,6 +20,20 @@
 namespace cuopt::linear_programming::dual_simplex {
 
 template <typename i_t, typename f_t>
+struct diving_heuristics_settings_t {
+  i_t num_diving_tasks = -1;
+
+  bool disable_line_search_diving = false;
+  bool disable_pseudocost_diving  = false;
+  bool disable_guided_diving      = false;
+  bool disable_coefficient_diving = false;
+
+  i_t node_limit             = 500;
+  f_t iteration_limit_factor = 0.05;
+  i_t backtrack              = 5;
+};
+
+template <typename i_t, typename f_t>
 struct simplex_solver_settings_t {
  public:
   simplex_solver_settings_t()
@@ -71,17 +85,13 @@ struct simplex_solver_settings_t {
       first_iteration_log(2),
       num_threads(omp_get_max_threads() - 1),
       num_bfs_threads(std::min(num_threads / 4, 1)),
-      num_diving_threads(std::min(num_threads - num_bfs_threads, 1)),
-      disable_line_search_diving(false),
-      disable_pseudocost_diving(false),
-      disable_guided_diving(false),
-      disable_coefficient_diving(false),
       random_seed(0),
       inside_mip(0),
       solution_callback(nullptr),
       heuristic_preemption_callback(nullptr),
       concurrent_halt(nullptr)
   {
+    diving_settings.num_diving_tasks = std::min(num_threads - num_bfs_threads, 1);
   }
 
   void set_log(bool logging) const { log.log = logging; }
@@ -142,12 +152,8 @@ struct simplex_solver_settings_t {
   i_t num_threads;                 // number of threads to use
   i_t random_seed;                 // random seed
   i_t num_bfs_threads;             // number of threads dedicated to the best-first search
-  i_t num_diving_threads;          // number of threads dedicated to diving
 
-  bool disable_line_search_diving;  // true to disable line search diving
-  bool disable_pseudocost_diving;   // true to disable pseudocost diving
-  bool disable_guided_diving;       // true to disable guided diving
-  bool disable_coefficient_diving;  // true to disable coefficient diving
+  diving_heuristics_settings_t<i_t, f_t> diving_settings;  // Settings for the diving heuristics
 
   i_t inside_mip;  // 0 if outside MIP, 1 if inside MIP at root node, 2 if inside MIP at leaf node
   std::function<void(std::vector<f_t>&, f_t)> solution_callback;

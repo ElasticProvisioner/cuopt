@@ -141,6 +141,7 @@ class branch_and_bound_t {
   std::vector<f_t> guess_;
 
   // LP relaxation
+  csr_matrix_t<i_t, f_t> Arow_;
   lp_problem_t<i_t, f_t> original_lp_;
   std::vector<i_t> new_slacks_;
   std::vector<variable_type_t> var_types_;
@@ -211,30 +212,36 @@ class branch_and_bound_t {
 
   // Ramp-up phase of the solver, where we greedily expand the tree until
   // there is enough unexplored nodes. This is done recursively using OpenMP tasks.
-  void exploration_ramp_up(mip_node_t<i_t, f_t>* node,
-                           search_tree_t<i_t, f_t>* search_tree,
-                           const csr_matrix_t<i_t, f_t>& Arow,
-                           i_t initial_heap_size);
+  void exploration_ramp_up(mip_node_t<i_t, f_t>* node, i_t initial_heap_size);
 
-  // Explore the search tree using the best-first search with plunging strategy.
-  void explore_subtree(i_t task_id,
-                       mip_node_t<i_t, f_t>* start_node,
-                       search_tree_t<i_t, f_t>& search_tree,
-                       lp_problem_t<i_t, f_t>& leaf_problem,
-                       bounds_strengthening_t<i_t, f_t>& node_presolver,
-                       basis_update_mpf_t<i_t, f_t>& basis_update,
-                       std::vector<i_t>& basic_list,
-                       std::vector<i_t>& nonbasic_list);
+  // Perform a plunge in the subtree determined by the `start_node`.
+  void plunge_from(i_t task_id,
+                   mip_node_t<i_t, f_t>* start_node,
+                   search_tree_t<i_t, f_t>& search_tree,
+                   lp_problem_t<i_t, f_t>& leaf_problem,
+                   bounds_strengthening_t<i_t, f_t>& node_presolver,
+                   basis_update_mpf_t<i_t, f_t>& basis_update,
+                   std::vector<i_t>& basic_list,
+                   std::vector<i_t>& nonbasic_list);
 
   // Each "main" thread pops a node from the global heap and then performs a plunge
   // (i.e., a shallow dive) into the subtree determined by the node.
-  void best_first_thread(i_t task_id,
-                         search_tree_t<i_t, f_t>& search_tree,
-                         const csr_matrix_t<i_t, f_t>& Arow);
+  void best_first_thread(i_t task_id);
+
+  // Perform a deep dive in the subtree determined by the `start_node`.
+  void dive_from(mip_node_t<i_t, f_t>& start_node,
+                 const std::vector<f_t>& start_lower,
+                 const std::vector<f_t>& start_upper,
+                 lp_problem_t<i_t, f_t>& leaf_problem,
+                 bounds_strengthening_t<i_t, f_t>& node_presolver,
+                 basis_update_mpf_t<i_t, f_t>& basis_update,
+                 std::vector<i_t>& basic_list,
+                 std::vector<i_t>& nonbasic_list,
+                 bnb_thread_type_t diving_type);
 
   // Each diving thread pops the first node from the dive queue and then performs
   // a deep dive into the subtree determined by the node.
-  void diving_thread(bnb_thread_type_t diving_type, const csr_matrix_t<i_t, f_t>& Arow);
+  void diving_thread(bnb_thread_type_t diving_type);
 
   // Solve the LP relaxation of a leaf node and update the tree.
   node_solve_info_t solve_node(mip_node_t<i_t, f_t>* node_ptr,
