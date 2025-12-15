@@ -7,9 +7,9 @@
 
 #pragma once
 
-#include <dual_simplex/diving_queue.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/mip_node.hpp>
+#include <dual_simplex/node_queue.hpp>
 #include <dual_simplex/phase2.hpp>
 #include <dual_simplex/pseudo_costs.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
@@ -20,7 +20,6 @@
 #include <utilities/omp_helpers.hpp>
 
 #include <omp.h>
-#include <queue>
 #include <vector>
 
 namespace cuopt::linear_programming::dual_simplex {
@@ -69,11 +68,21 @@ template <typename i_t, typename f_t>
 void upper_bound_callback(f_t upper_bound);
 
 template <typename i_t, typename f_t>
+struct bnb_stats_t {
+  f_t start_time                        = 0.0;
+  omp_atomic_t<f_t> total_lp_solve_time = 0.0;
+  omp_atomic_t<i_t> nodes_explored      = 0;
+  omp_atomic_t<i_t> nodes_unexplored    = 0;
+  omp_atomic_t<f_t> total_lp_iters      = 0;
+
+  // This should only be used by the main thread
+  omp_atomic_t<f_t> last_log             = 0.0;
+  omp_atomic_t<i_t> nodes_since_last_log = 0;
+};
+
+template <typename i_t, typename f_t>
 class branch_and_bound_t {
  public:
-  template <typename T>
-  using mip_node_heap_t = std::priority_queue<T, std::vector<T>, node_compare_t<i_t, f_t>>;
-
   branch_and_bound_t(const user_problem_t<i_t, f_t>& user_problem,
                      const simplex_solver_settings_t<i_t, f_t>& solver_settings);
 
@@ -111,7 +120,6 @@ class branch_and_bound_t {
 
   f_t get_upper_bound();
   f_t get_lower_bound();
-  i_t get_heap_size();
   bool enable_concurrent_lp_root_solve() const { return enable_concurrent_lp_root_solve_; }
   volatile int* get_root_concurrent_halt() { return &root_concurrent_halt_; }
   void set_root_concurrent_halt(int value) { root_concurrent_halt_ = value; }
@@ -145,17 +153,7 @@ class branch_and_bound_t {
   mip_solution_t<i_t, f_t> incumbent_;
 
   // Structure with the general info of the solver.
-  struct stats_t {
-    f_t start_time                        = 0.0;
-    omp_atomic_t<f_t> total_lp_solve_time = 0.0;
-    omp_atomic_t<i_t> nodes_explored      = 0;
-    omp_atomic_t<i_t> nodes_unexplored    = 0;
-    omp_atomic_t<f_t> total_lp_iters      = 0;
-
-    // This should only be used by the main thread
-    omp_atomic_t<f_t> last_log             = 0.0;
-    omp_atomic_t<i_t> nodes_since_last_log = 0;
-  } exploration_stats_;
+  bnb_stats_t<i_t, f_t> exploration_stats_;
 
   // Mutex for repair
   omp_mutex_t mutex_repair_;
@@ -175,20 +173,14 @@ class branch_and_bound_t {
   // Pseudocosts
   pseudo_costs_t<i_t, f_t> pc_;
 
-  // Heap storing the nodes to be explored.
-  omp_mutex_t mutex_heap_;
-  mip_node_heap_t<mip_node_t<i_t, f_t>*> heap_;
+  // Heap storing the nodes waiting to be explored.
+  node_queue_t<i_t, f_t> node_queue;
 
   // Search tree
   search_tree_t<i_t, f_t> search_tree_;
 
   // Count the number of subtrees that are currently being explored.
   omp_atomic_t<i_t> active_subtrees_;
-
-  // Queue for storing the promising node for performing dives.
-  omp_mutex_t mutex_dive_queue_;
-  diving_queue_t<i_t, f_t> diving_queue_;
-  i_t min_diving_queue_size_;
 
   // Global status of the solver.
   omp_atomic_t<mip_exploration_status_t> solver_status_;
@@ -219,15 +211,15 @@ class branch_and_bound_t {
                            const csr_matrix_t<i_t, f_t>& Arow,
                            i_t initial_heap_size);
 
-  // Explore the search tree using the best-first search with plunging strategy.
-  void explore_subtree(i_t task_id,
-                       mip_node_t<i_t, f_t>* start_node,
-                       search_tree_t<i_t, f_t>& search_tree,
-                       lp_problem_t<i_t, f_t>& leaf_problem,
-                       bounds_strengthening_t<i_t, f_t>& node_presolver,
-                       basis_update_mpf_t<i_t, f_t>& basis_update,
-                       std::vector<i_t>& basic_list,
-                       std::vector<i_t>& nonbasic_list);
+  // Perform a plunge in the subtree determined by the `start_node`.
+  void plunge_from(i_t task_id,
+                   mip_node_t<i_t, f_t>* start_node,
+                   search_tree_t<i_t, f_t>& search_tree,
+                   lp_problem_t<i_t, f_t>& leaf_problem,
+                   bounds_strengthening_t<i_t, f_t>& node_presolver,
+                   basis_update_mpf_t<i_t, f_t>& basis_update,
+                   std::vector<i_t>& basic_list,
+                   std::vector<i_t>& nonbasic_list);
 
   // Each "main" thread pops a node from the global heap and then performs a plunge
   // (i.e., a shallow dive) into the subtree determined by the node.
@@ -235,6 +227,16 @@ class branch_and_bound_t {
                          search_tree_t<i_t, f_t>& search_tree,
                          const csr_matrix_t<i_t, f_t>& Arow);
 
+  // Perform a deep dive in the subtree determined by the `start_node`.
+  void dive_from(mip_node_t<i_t, f_t>& start_node,
+                 const std::vector<f_t>& start_lower,
+                 const std::vector<f_t>& start_upper,
+                 lp_problem_t<i_t, f_t>& leaf_problem,
+                 bounds_strengthening_t<i_t, f_t>& node_presolver,
+                 basis_update_mpf_t<i_t, f_t>& basis_update,
+                 std::vector<i_t>& basic_list,
+                 std::vector<i_t>& nonbasic_list,
+                 thread_type_t diving_type);
   // Each diving thread pops the first node from the dive queue and then performs
   // a deep dive into the subtree determined by the node.
   void diving_thread(const csr_matrix_t<i_t, f_t>& Arow);
@@ -251,6 +253,7 @@ class branch_and_bound_t {
                                bool recompute_basis_and_bounds,
                                const std::vector<f_t>& root_lower,
                                const std::vector<f_t>& root_upper,
+                               bnb_stats_t<i_t, f_t>& stats,
                                logger_t& log);
 
   // Sort the children based on the Martin's criteria.
