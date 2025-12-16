@@ -1468,6 +1468,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                       root_vstatus_,
                       original_lp_,
                       log);
+  worker_data_pool_.resize(settings_.num_threads);
 
   settings_.log.printf("Exploring the B&B tree using %d threads (best-first = %d, diving = %d)\n",
                        settings_.num_threads,
