@@ -532,7 +532,9 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
     f_t lower_bound = get_lower_bound();
     f_t obj         = compute_user_objective(original_lp_, upper_bound_);
     f_t lower       = compute_user_objective(original_lp_, lower_bound);
-    f_t iter_node   = nodes_explored > 0 ? exploration_stats_.total_lp_iters / nodes_explored : 0;
+    f_t iter_node   = nodes_explored > 0 ? static_cast<f_t>(exploration_stats_.total_lp_iters) /
+                                           static_cast<f_t>(nodes_explored)
+                                         : 0;
     settings_.log.printf("%s%10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
                          feasible_solution_symbol(thread_type),
                          nodes_explored,
@@ -871,7 +873,9 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* nod
       std::string gap_user = user_mip_gap<f_t>(obj, user_lower);
       i_t nodes_explored   = exploration_stats_.nodes_explored;
       i_t nodes_unexplored = exploration_stats_.nodes_unexplored;
-      f_t iter_node = nodes_explored > 0 ? exploration_stats_.total_lp_iters / nodes_explored : 0;
+      f_t iter_node = nodes_explored > 0 ? static_cast<f_t>(exploration_stats_.total_lp_iters) /
+                                             static_cast<f_t>(nodes_explored)
+                                         : 0;
 
       settings_.log.printf("  %10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
                            nodes_explored,
@@ -1002,17 +1006,19 @@ void branch_and_bound_t<i_t, f_t>::plunge_from(i_t task_id,
         std::string gap_user = user_mip_gap<f_t>(obj, user_lower);
         i_t nodes_explored   = exploration_stats_.nodes_explored;
         i_t nodes_unexplored = exploration_stats_.nodes_unexplored;
+        f_t iter_node = nodes_explored > 0 ? static_cast<f_t>(exploration_stats_.total_lp_iters) /
+                                               static_cast<f_t>(nodes_explored)
+                                           : 0;
 
-        settings_.log.printf(
-          "  %10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
-          nodes_explored,
-          nodes_unexplored,
-          obj,
-          user_lower,
-          node_ptr->depth,
-          nodes_explored > 0 ? exploration_stats_.total_lp_iters / nodes_explored : 0,
-          gap_user.c_str(),
-          now);
+        settings_.log.printf("  %10d   %10lu    %+13.6e    %+10.6e   %6d   %7.1e     %s %9.2f\n",
+                             nodes_explored,
+                             nodes_unexplored,
+                             obj,
+                             user_lower,
+                             node_ptr->depth,
+                             iter_node,
+                             gap_user.c_str(),
+                             now);
         exploration_stats_.last_log             = tic();
         exploration_stats_.nodes_since_last_log = 0;
       }
