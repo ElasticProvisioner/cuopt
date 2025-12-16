@@ -183,11 +183,11 @@ std::string user_mip_gap(f_t obj_value, f_t lower_bound)
 {
   const f_t user_mip_gap = relative_gap(obj_value, lower_bound);
   if (user_mip_gap == std::numeric_limits<f_t>::infinity()) {
-    return "  -  ";
+    return "   -  ";
   } else {
     constexpr int BUFFER_LEN = 32;
     char buffer[BUFFER_LEN];
-    snprintf(buffer, BUFFER_LEN - 1, "%4.1f%%", user_mip_gap * 100);
+    snprintf(buffer, BUFFER_LEN - 1, "%5.1f%%", user_mip_gap * 100);
     return std::string(buffer);
   }
 }
