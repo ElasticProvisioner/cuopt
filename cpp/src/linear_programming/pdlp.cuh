@@ -175,6 +175,11 @@ class pdlp_solver_t {
 
   pdlp_warm_start_data_t<i_t, f_t> get_filled_warmed_start_data();
 
+  void transpose_primal_dual_to_row();
+  void transpose_primal_dual_back_to_col();
+
+  bool matrix_transposed_{false};
+
   // Initial scaling strategy
   detail::pdlp_initial_scaling_strategy_t<i_t, f_t> initial_scaling_strategy_;
 
@@ -209,6 +214,9 @@ class pdlp_solver_t {
   std::optional<f_t> initial_primal_weight_;
   std::optional<f_t> initial_step_size_;
   std::optional<i_t> initial_k_;
+
+  const rmm::device_scalar<f_t> reusable_device_scalar_value_1_;
+  const rmm::device_scalar<f_t> reusable_device_scalar_value_0_;
 
   // Only used if save_best_primal_so_far is toggeled
   optimization_problem_solution_t<i_t, f_t> best_primal_solution_so_far;

@@ -182,7 +182,7 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
       // When using row row we need to transpose the input / output before / after the SpMM
       if (use_row_row)
       {
-        RAFT_CUBLAS_TRY( cublasDgeam(handle_ptr_->get_cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
+        /*RAFT_CUBLAS_TRY( cublasDgeam(handle_ptr_->get_cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
                                   climber_strategies_.size(), // B_NUM_ROWS <=> climber_strategies_.size()
                                   problem_ptr->n_constraints, // B_ROWS <=> A_NUM_COLS (A_NUM_ROW if A transposed, here yes) <=> n_constraints
                                   reusable_device_scalar_value_1_.data(), // alpha <=> 1.0
@@ -192,7 +192,7 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
                                   cusparse_view_.batch_dual_solutions_data_transposed_.data(), // Output transposed dual solutions we want to use in SpMM
                                   climber_strategies_.size(), // B_NUM_ROWS <=> climber_strategies_.size()
                                   cusparse_view_.batch_dual_solutions_data_transposed_.data(), // Output transposed current AtYs we want to use in SpMM
-                                  climber_strategies_.size()) ); // B_NUM_ROWS <=> climber_strategies_.size()
+                                  climber_strategies_.size()) ); // B_NUM_ROWS <=> climber_strategies_.size()*/
       }
       RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
                                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -207,7 +207,7 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
                                                        stream_view_));
       if (use_row_row)
       {
-        RAFT_CUBLAS_TRY( cublasDgeam(handle_ptr_->get_cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
+        /*RAFT_CUBLAS_TRY( cublasDgeam(handle_ptr_->get_cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
                                   problem_ptr->n_variables, // mC <=> A final rows <=> A NUM_ROW (A_NUM_COL if A transposed, here yes) <=> n_variables
                                   climber_strategies_.size(), // nC <=> B NUM_COL <=> climber_strategies_.size()
                                   reusable_device_scalar_value_1_.data(), // alpha <=> 1.0
@@ -217,7 +217,7 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
                                    nullptr, 
                                    problem_ptr->n_variables, // mC <=> A final rows <=> A NUM_ROW (A_NUM_COL if A transposed, here yes) <=> n_variables
                                   current_saddle_point_state_.get_current_AtY().data(), // ReTransposed output to be used COL wise 
-                                  problem_ptr->n_variables) ); // mC <=> A final rows <=> A NUM_ROW (A_NUM_COL if A transposed, here yes) <=> n_variables
+                                  problem_ptr->n_variables) ); // mC <=> A final rows <=> A NUM_ROW (A_NUM_COL if A transposed, here yes) <=> n_variables*/
       }
     }
     else
@@ -263,7 +263,7 @@ void pdhg_solver_t<i_t, f_t>::compute_A_x()
       // When using row row we need to transpose the input / output before / after the SpMM
       if (use_row_row)
       {
-        RAFT_CUBLAS_TRY( cublasDgeam(handle_ptr_->get_cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
+        /*RAFT_CUBLAS_TRY( cublasDgeam(handle_ptr_->get_cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
                                   climber_strategies_.size(), 
                                   problem_ptr->n_variables,
                                   reusable_device_scalar_value_1_.data(), 
@@ -273,7 +273,7 @@ void pdhg_solver_t<i_t, f_t>::compute_A_x()
                                   cusparse_view_.batch_reflected_primal_solutions_data_transposed_.data(), 
                                   climber_strategies_.size(),
                                   cusparse_view_.batch_reflected_primal_solutions_data_transposed_.data(), 
-                                  climber_strategies_.size()) );
+                                  climber_strategies_.size()) );*/
       }
       RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(handle_ptr_->get_cusparse_handle(),
                                                        CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -288,7 +288,7 @@ void pdhg_solver_t<i_t, f_t>::compute_A_x()
                                                        stream_view_));
       if (use_row_row)
       {
-        RAFT_CUBLAS_TRY( cublasDgeam(handle_ptr_->get_cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
+        /*RAFT_CUBLAS_TRY( cublasDgeam(handle_ptr_->get_cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
                                   problem_ptr->n_constraints, // mC <=> A final rows <=> A NUM_ROW (A NUM_COL if A transposed) <=> n_constraints
                                   climber_strategies_.size(), // nC <=> B NUM_COL <=> climber_strategies_.size()
                                   reusable_device_scalar_value_1_.data(), // alpha <=> 1.0
@@ -299,7 +299,7 @@ void pdhg_solver_t<i_t, f_t>::compute_A_x()
                                   problem_ptr->n_constraints, // mC <=> A final rows <=> A NUM_ROW (A NUM_COL if A transposed) <=> n_constraints
                                   current_saddle_point_state_.get_dual_gradient().data(), // ReTransposed output to be use COL wise 
                                   problem_ptr->n_constraints) // mC <=> A final rows <=> A NUM_ROW (A NUM_COL if A transposed) <=> n_constraints
-                                );
+                                );*/
       }
     }
     else
