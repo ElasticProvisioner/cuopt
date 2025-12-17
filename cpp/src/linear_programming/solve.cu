@@ -191,7 +191,7 @@ static void set_Stable3()
   pdlp_hyper_params::update_primal_weight_on_initial_solution                   = false;
   pdlp_hyper_params::update_step_size_on_initial_solution                       = false;
   pdlp_hyper_params::handle_some_primal_gradients_on_finite_bounds_as_residuals = false;
-  pdlp_hyper_params::project_initial_primal                                     = true;
+  pdlp_hyper_params::project_initial_primal                                     = true; // TODO I think he doesn't do it anymore
   pdlp_hyper_params::use_adaptive_step_size_strategy                            = false;
   pdlp_hyper_params::initial_step_size_max_singular_value                       = true;
   pdlp_hyper_params::initial_primal_weight_combined_bounds                      = false;
@@ -1177,17 +1177,9 @@ optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
   pdlp_solver_settings_t<i_t, f_t> const& settings,
   const timer_t& timer)
 {
-  std::cout << "Enterring run_batch_pdlp" << std::endl;
-  print("constraint_lower_bounds", problem.constraint_lower_bounds);
-  print("constraint_upper_bounds", problem.constraint_upper_bounds);
-  std::cout << "Running batch LP" << std::endl;
   cuopt_assert(problem.variable_bounds.size() != 0 && problem.n_variables != 0, "Those should never be 0");
   int max_batch_size = problem.variable_bounds.size() / problem.n_variables;
   int optimal_batch_size = optimal_batch_size_handler(problem, max_batch_size);
-  std::cout << "After optimal_batch_size_handler" << std::endl;
-  print("constraint_lower_bounds", problem.constraint_lower_bounds);
-  print("constraint_upper_bounds", problem.constraint_upper_bounds);
-  std::cout << "Optimal batch size: " << optimal_batch_size << std::endl;
   cuopt_assert(optimal_batch_size != 0 && optimal_batch_size <= max_batch_size, "Optimal batch size should be between 1 and max batch size");
   using f_t2 = typename type_2<f_t>::type;
   
@@ -1208,19 +1200,11 @@ optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
   {
       const int current_batch_size = std::min(optimal_batch_size, max_batch_size - i);
 
-      std::cout << "Running batch " << i << " of " << max_batch_size << " with batch size " << current_batch_size << std::endl;
-
-      std::cout << "Before resizing and copying bounds" << std::endl;
-      print("constraint_lower_bounds", problem.constraint_lower_bounds);
-      print("constraint_upper_bounds", problem.constraint_upper_bounds);
-
       // Resize and copy bounds
       problem.variable_bounds.resize(problem.n_variables * current_batch_size, stream);
       raft::copy(problem.variable_bounds.data(), full_variable_bounds.data() + i * problem.n_variables, problem.n_variables * current_batch_size, stream);
 
       auto sol = run_pdlp(problem, batch_settings, timer, false);
-
-      std::cout << "Batch problem solved in " << sol.get_additional_termination_information().solve_time << " using " << sol.get_additional_termination_information().number_of_steps_taken << std::endl;
 
       // Copy results
       raft::copy(full_primal_solution.data() + i * problem.n_variables, sol.get_primal_solution().data(), problem.n_variables * current_batch_size, stream);
@@ -1232,8 +1216,6 @@ optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
 
       auto status = sol.get_terminations_status();
       full_status.insert(full_status.end(), status.begin(), status.end());
-
-      exit(0);
   }
 
   // Restore
@@ -1341,7 +1323,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
       presolver   = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
       auto result = presolver->apply(op_problem,
                                      cuopt::linear_programming::problem_category_t::LP,
-                                     settings.dual_postsolve,
+                                      settings.dual_postsolve,
                                      settings.tolerances.absolute_primal_tolerance,
                                      settings.tolerances.relative_primal_tolerance,
                                      presolve_time_limit);

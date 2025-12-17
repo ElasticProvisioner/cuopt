@@ -219,7 +219,7 @@ const std::vector<pdlp_climber_strategy_t>& climber_strategies)
                                 stream_view_));
   RAFT_CUDA_TRY(cudaMemsetAsync(last_restart_duality_gap_.dual_solution_.data(),
                                 0.0,
-                                sizeof(f_t) * last_restart_duality_gap_.primal_solution_.size(),
+                                sizeof(f_t) * last_restart_duality_gap_.dual_solution_.size(),
                                 stream_view_));
 
   // Trigger the costly (costly for ms instances) GetDeviceProperty only if need trust region

@@ -59,7 +59,7 @@ convergence_information_t<i_t, f_t>::convergence_information_t(
     abs_objective_{climber_strategies.size(), stream_view_},
     primal_residual_{climber_strategies.size() * dual_size_h_, stream_view_},
     dual_residual_{climber_strategies.size() * primal_size_h_, stream_view_},
-    reduced_cost_{static_cast<size_t>(primal_size_h_), stream_view_},
+    reduced_cost_{climber_strategies.size() * primal_size_h_, stream_view_},
     bound_value_{static_cast<size_t>(std::max(primal_size_h_, dual_size_h_)), stream_view_},
     primal_slack_{
       (pdlp_hyper_params::use_reflected_primal_dual) ? static_cast<size_t>(dual_size_h_ * climber_strategies.size()) : 0,
@@ -101,7 +101,6 @@ convergence_information_t<i_t, f_t>::convergence_information_t(
                        problem_ptr->constraint_upper_bounds,
                        l2_norm_primal_right_hand_side_,
                        handle_ptr_->get_stream());
-    std::cout << "l2_norm_primal_right_hand_side_: " << l2_norm_primal_right_hand_side_.value(stream_view_) << std::endl;
   }
 
   void* d_temp_storage        = NULL;
