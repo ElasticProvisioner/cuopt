@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -148,6 +148,8 @@ void test_multi_probe(std::string path)
   problem_checking_t<int, double>::check_problem_representation(op_problem);
   detail::problem_t<int, double> problem(op_problem);
   mip_solver_settings_t<int, double> default_settings{};
+  auto timer = termination_checker_t(std::numeric_limits<double>::infinity(),
+                                     termination_checker_t::root_tag_t{});
   detail::pdlp_initial_scaling_strategy_t<int, double> scaling(&handle_,
                                                                problem,
                                                                10,
@@ -157,7 +159,7 @@ void test_multi_probe(std::string path)
                                                                problem.reverse_constraints,
                                                                nullptr,
                                                                true);
-  detail::mip_solver_t<int, double> solver(problem, default_settings, scaling, cuopt::timer_t(0));
+  detail::mip_solver_t<int, double> solver(problem, default_settings, scaling, timer);
   detail::bound_presolve_t<int, double> bnd_prb_0(solver.context);
   detail::bound_presolve_t<int, double> bnd_prb_1(solver.context);
   detail::multi_probe_t<int, double> multi_probe_prs(solver.context);

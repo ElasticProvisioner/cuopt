@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -122,7 +122,7 @@ class population_t {
   // updates qualities of each solution
   void update_qualities();
   // adjusts the threshold of the population
-  void adjust_threshold(cuopt::timer_t timer);
+  void adjust_threshold(const termination_checker_t& timer);
   /*! \param sol { Input solution }
    *  \return { Index of the best solution similar to sol. If no similar is found we return
    * max_solutions. }*/
@@ -206,7 +206,7 @@ class population_t {
   std::atomic<bool> solutions_in_external_queue_ = false;
   f_t best_feasible_objective                    = std::numeric_limits<f_t>::max();
   assignment_hash_map_t<i_t, f_t> population_hash_map;
-  cuopt::timer_t timer;
+  termination_checker_t timer;
 };
 
 }  // namespace cuopt::linear_programming::detail

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -51,7 +51,7 @@ feasibility_pump_t<i_t, f_t>::feasibility_pump_t(
                         context.problem_ptr->handle_ptr->get_stream()),
     lp_optimal_solution(lp_optimal_solution_),
     rng(cuopt::seed_generator::get_seed()),
-    timer(20.)
+    timer(20., context.termination)
 {
 }
 
@@ -217,7 +217,7 @@ bool feasibility_pump_t<i_t, f_t>::linear_project_onto_polytope(solution_t<i_t, 
   lp_settings.time_limit          = time_limit;
   lp_settings.tolerance           = lp_tolerance;
   lp_settings.check_infeasibility = false;
-  auto solver_response            = get_relaxed_lp_solution(temp_p, solution, lp_settings);
+  auto solver_response            = get_relaxed_lp_solution(temp_p, solution, lp_settings, timer);
   cuopt_func_call(solution.test_variable_bounds(false));
   last_lp_time = old_remaining - timer.remaining_time();
   lp_time += last_lp_time;
@@ -246,7 +246,8 @@ bool feasibility_pump_t<i_t, f_t>::round(solution_t<i_t, f_t>& solution)
 {
   bool result;
   CUOPT_LOG_DEBUG("Rounding the point");
-  timer_t bounds_prop_timer(std::max(0.05, std::min(0.5, timer.remaining_time() / 10.)));
+  termination_checker_t bounds_prop_timer(
+    std::max(0.05, std::min(0.5, timer.remaining_time() / 10.)), context.termination);
   const f_t lp_run_time_after_feasible     = 0.;
   bool old_var                             = constraint_prop.round_all_vars;
   f_t old_time                             = constraint_prop.max_time_for_bounds_prop;
@@ -477,7 +478,7 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
              solution.assignment.size(),
              solution.handle_ptr->get_stream());
   while (true) {
-    if (timer.check_time_limit()) {
+    if (timer.check()) {
       CUOPT_LOG_DEBUG("FP time limit reached!");
       round(solution);
       return false;
@@ -530,6 +531,7 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
                                solution,
                                solution.problem_ptr->integer_indices,
                                lp_settings,
+                               timer,
                                &constraint_prop.bounds_update);
         is_feasible = solution.get_feasible();
         n_integers  = solution.compute_number_of_integers();
@@ -547,7 +549,7 @@ bool feasibility_pump_t<i_t, f_t>::run_single_fp_descent(solution_t<i_t, f_t>& s
       const f_t time_ratio = 0.2;
       is_feasible          = test_fj_feasible(solution, time_ratio * proj_and_round_time);
     }
-    if (timer.check_time_limit()) {
+    if (timer.check()) {
       CUOPT_LOG_DEBUG("FP time limit reached!");
       return false;
     }

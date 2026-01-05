@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -39,7 +39,8 @@ constraint_prop_t<i_t, f_t>::constraint_prop_t(mip_solver_context_t<i_t, f_t>& c
     ub_restore(context.problem_ptr->n_variables, context.problem_ptr->handle_ptr->get_stream()),
     assignment_restore(context.problem_ptr->n_variables,
                        context.problem_ptr->handle_ptr->get_stream()),
-    rng(cuopt::seed_generator::get_seed(), 0, 0)
+    rng(cuopt::seed_generator::get_seed(), 0, 0),
+    max_timer(0, context.termination)
 {
 }
 
@@ -755,7 +756,7 @@ void constraint_prop_t<i_t, f_t>::restore_original_bounds_on_unfixed(
 template <typename i_t, typename f_t>
 bool constraint_prop_t<i_t, f_t>::run_repair_procedure(problem_t<i_t, f_t>& problem,
                                                        problem_t<i_t, f_t>& original_problem,
-                                                       timer_t& timer,
+                                                       termination_checker_t& timer,
                                                        const raft::handle_t* handle_ptr)
 {
   // select the first probing value
@@ -767,7 +768,7 @@ bool constraint_prop_t<i_t, f_t>::run_repair_procedure(problem_t<i_t, f_t>& prob
   i_t n_of_repairs_needed_for_feasible = 0;
   do {
     n_of_repairs_needed_for_feasible++;
-    if (timer.check_time_limit()) {
+    if (timer.check()) {
       CUOPT_LOG_DEBUG("Time limit is reached in repair loop!");
       f_t repair_end_time = timer.remaining_time();
       repair_stats.total_time_spent_on_repair += repair_start_time - repair_end_time;
@@ -789,7 +790,7 @@ bool constraint_prop_t<i_t, f_t>::run_repair_procedure(problem_t<i_t, f_t>& prob
     bounds_update.settings.time_limit      = timer.remaining_time();
     auto term_crit                         = bounds_update.solve(problem);
     bounds_update.settings.iteration_limit = 50;
-    if (timer.check_time_limit()) {
+    if (timer.check()) {
       CUOPT_LOG_DEBUG("Time limit is reached in repair loop!");
       f_t repair_end_time = timer.remaining_time();
       repair_stats.total_time_spent_on_repair += repair_start_time - repair_end_time;
@@ -841,7 +842,7 @@ bool constraint_prop_t<i_t, f_t>::find_integer(
   solution_t<i_t, f_t>& sol,
   solution_t<i_t, f_t>& orig_sol,
   f_t lp_run_time_after_feasible,
-  timer_t& timer,
+  termination_checker_t& timer,
   std::optional<std::reference_wrapper<probing_config_t<i_t, f_t>>> probing_config)
 {
   using crit_t             = termination_criterion_t;
@@ -859,7 +860,7 @@ bool constraint_prop_t<i_t, f_t>::find_integer(
   multi_probe.settings.iteration_limit = 50;
   multi_probe.settings.time_limit      = max_timer.remaining_time();
   multi_probe.resize(*sol.problem_ptr);
-  if (max_timer.check_time_limit()) {
+  if (max_timer.check()) {
     CUOPT_LOG_DEBUG("Time limit is reached before bounds prop rounding!");
     sol.round_nearest();
     expand_device_copy(orig_sol.assignment, sol.assignment, sol.handle_ptr->get_stream());
@@ -931,14 +932,14 @@ bool constraint_prop_t<i_t, f_t>::find_integer(
   while (set_count < unset_integer_vars.size()) {
     CUOPT_LOG_TRACE("n_set_vars %d vars to set %lu", set_count, unset_integer_vars.size());
     update_host_assignment(sol);
-    if (max_timer.check_time_limit()) {
+    if (max_timer.check()) {
       CUOPT_LOG_DEBUG("Second time limit is reached returning nearest rounding!");
       collapse_crossing_bounds(*sol.problem_ptr, *orig_sol.problem_ptr, sol.handle_ptr);
       sol.round_nearest();
       timeout_happened = true;
       break;
     }
-    if (!rounding_ii && timer.check_time_limit()) {
+    if (!rounding_ii && timer.check()) {
       CUOPT_LOG_DEBUG("First time limit is reached! Continuing without backtracking and repair!");
       rounding_ii = true;
       // this is to not try the repair procedure again
@@ -971,7 +972,8 @@ bool constraint_prop_t<i_t, f_t>::find_integer(
       sol, orig_sol.problem_ptr, var_probe_vals, &set_count, unset_integer_vars, probing_config);
     if (!(n_failed_repair_iterations >= max_n_failed_repair_iterations) && rounding_ii &&
         !timeout_happened) {
-      timer_t repair_timer{std::min(timer.remaining_time() / 5, timer.elapsed_time() / 3)};
+      termination_checker_t repair_timer(
+        std::min(timer.remaining_time() / 5, timer.elapsed_time() / 3), context.termination);
       save_bounds(sol);
       // update bounds and run repair procedure
       bool bounds_repaired =
@@ -1046,6 +1048,7 @@ bool constraint_prop_t<i_t, f_t>::find_integer(
                            orig_sol,
                            orig_sol.problem_ptr->integer_indices,
                            lp_settings,
+                           timer,
                            static_cast<bound_presolve_t<i_t, f_t>*>(nullptr));
   }
   bool res_feasible = orig_sol.compute_feasibility();
@@ -1057,11 +1060,11 @@ template <typename i_t, typename f_t>
 bool constraint_prop_t<i_t, f_t>::apply_round(
   solution_t<i_t, f_t>& sol,
   f_t lp_run_time_after_feasible,
-  timer_t& timer,
+  termination_checker_t& timer,
   std::optional<std::reference_wrapper<probing_config_t<i_t, f_t>>> probing_config)
 {
   raft::common::nvtx::range fun_scope("constraint prop round");
-  max_timer = timer_t{max_time_for_bounds_prop};
+  max_timer = termination_checker_t(max_time_for_bounds_prop, context.termination);
   if (check_brute_force_rounding(sol)) { return true; }
   recovery_mode      = false;
   rounding_ii        = false;

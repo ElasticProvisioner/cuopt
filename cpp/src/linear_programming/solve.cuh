@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -24,7 +24,7 @@ template <typename i_t, typename f_t>
 cuopt::linear_programming::optimization_problem_solution_t<i_t, f_t> solve_lp_with_method(
   detail::problem_t<i_t, f_t>& problem,
   pdlp_solver_settings_t<i_t, f_t> const& settings,
-  const timer_t& timer,
+  const termination_checker_t& timer,
   bool is_batch_mode = false);
 
 template <typename i_t, typename f_t>

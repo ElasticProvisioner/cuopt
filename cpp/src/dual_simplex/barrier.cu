@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -3688,13 +3688,13 @@ lp_status_t barrier_solver_t<i_t, f_t>::solve(f_t start_time,
     data.cusparse_y_residual_    = data.cusparse_view_.create_vector(data.d_y_residual_);
     data.restrict_u_.resize(num_upper_bounds);
 
-    if (toc(start_time) > settings.time_limit) {
+    if (settings.check_termination(start_time)) {
       settings.log.printf("Barrier time limit exceeded\n");
       return lp_status_t::TIME_LIMIT;
     }
 
     i_t initial_status = initial_point(data);
-    if (toc(start_time) > settings.time_limit) {
+    if (settings.check_termination(start_time)) {
       settings.log.printf("Barrier time limit exceeded\n");
       return lp_status_t::TIME_LIMIT;
     }
@@ -3793,7 +3793,7 @@ lp_status_t barrier_solver_t<i_t, f_t>::solve(f_t start_time,
     while (iter < iteration_limit) {
       raft::common::nvtx::range fun_scope("Barrier: iteration");
 
-      if (toc(start_time) > settings.time_limit) {
+      if (settings.check_termination(start_time)) {
         settings.log.printf("Barrier time limit exceeded\n");
         return lp_status_t::TIME_LIMIT;
       }
@@ -3829,7 +3829,7 @@ lp_status_t barrier_solver_t<i_t, f_t>::solve(f_t start_time,
                                              relative_complementarity_residual,
                                              solution);
       }
-      if (toc(start_time) > settings.time_limit) {
+      if (settings.check_termination(start_time)) {
         settings.log.printf("Barrier time limit exceeded\n");
         return lp_status_t::TIME_LIMIT;
       }
@@ -3869,7 +3869,7 @@ lp_status_t barrier_solver_t<i_t, f_t>::solve(f_t start_time,
       }
       data.has_factorization = false;
       data.has_solve_info    = false;
-      if (toc(start_time) > settings.time_limit) {
+      if (settings.check_termination(start_time)) {
         settings.log.printf("Barrier time limit exceeded\n");
         return lp_status_t::TIME_LIMIT;
       }

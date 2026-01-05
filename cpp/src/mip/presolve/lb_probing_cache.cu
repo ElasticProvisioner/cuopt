@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -309,7 +309,7 @@ inline std::vector<i_t> compute_prioritized_integer_indices(
 template <typename i_t, typename f_t>
 void compute_probing_cache(load_balanced_bounds_presolve_t<i_t, f_t>& bound_presolve,
                            load_balanced_problem_t<i_t, f_t>& problem,
-                           timer_t timer)
+                           const termination_checker_t& timer)
 {
   // we dont want to compute the probing cache for all variables for time and computation resources
   auto priority_indices = compute_prioritized_integer_indices(bound_presolve, problem);
@@ -326,7 +326,7 @@ void compute_probing_cache(load_balanced_bounds_presolve_t<i_t, f_t>& bound_pres
   i_t n_of_implied_singletons             = 0;
   // for each integer var, loop around two possible values/intervals and save the implied bounds
   for (auto var_idx : priority_indices) {
-    if (timer.check_time_limit()) { break; }
+    if (timer.check()) { break; }
     f_t lb = h_var_lower_bounds[var_idx];
     f_t ub = h_var_upper_bounds[var_idx];
     // TODO make this more efficient, we can do double probing
@@ -399,7 +399,7 @@ void compute_probing_cache(load_balanced_bounds_presolve_t<i_t, f_t>& bound_pres
   template void compute_probing_cache<int, F_TYPE>(                \
     load_balanced_bounds_presolve_t<int, F_TYPE> & bound_presolve, \
     load_balanced_problem_t<int, F_TYPE> & problem,                \
-    timer_t timer);                                                \
+    const termination_checker_t& timer);                           \
   template class lb_probing_cache_t<int, F_TYPE>;
 
 #if MIP_INSTANTIATE_FLOAT

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -8,6 +8,7 @@
 #include <cuopt/linear_programming/mip/solver_settings.hpp>
 #include <cuopt/linear_programming/optimization_problem.hpp>
 #include <cuopt/linear_programming/solve.hpp>
+#include <cuopt/utilities/user_interrupt_handler.hpp>
 #include <mps_parser/parser.hpp>
 #include <utilities/logger.hpp>
 
@@ -26,6 +27,14 @@
 #include <math_optimization/solution_reader.hpp>
 
 #include <cuopt/version_config.hpp>
+
+class check_termination_callback_t : public cuopt::internals::check_termination_callback_t {
+ public:
+  virtual bool check_termination() override
+  {
+    return cuopt::user_interrupt_handler_t::instance().termination_requested();
+  }
+};
 
 static char cuda_module_loading_env[] = "CUDA_MODULE_LOADING=EAGER";
 
@@ -91,6 +100,11 @@ int run_single_file(const std::string& file_path,
 {
   const raft::handle_t handle_{};
   cuopt::linear_programming::solver_settings_t<int, double> settings;
+
+  // Ctrl-C handler
+  check_termination_callback_t termination_callback;
+  settings.set_mip_callback(&termination_callback);
+  settings.set_lp_callback(&termination_callback);
 
   try {
     for (auto& [key, val] : settings_strings) {

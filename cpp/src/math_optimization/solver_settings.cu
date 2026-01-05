@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -392,6 +392,19 @@ const std::vector<internals::base_solution_callback_t*>
 solver_settings_t<i_t, f_t>::get_mip_callbacks() const
 {
   return mip_settings.get_mip_callbacks();
+}
+
+template <typename i_t, typename f_t>
+void solver_settings_t<i_t, f_t>::set_lp_callback(internals::base_solution_callback_t* callback)
+{
+  pdlp_settings.set_lp_callback(callback);
+}
+
+template <typename i_t, typename f_t>
+const std::vector<internals::base_solution_callback_t*>
+solver_settings_t<i_t, f_t>::get_lp_callbacks() const
+{
+  return pdlp_settings.get_lp_callbacks();
 }
 
 template <typename i_t, typename f_t>

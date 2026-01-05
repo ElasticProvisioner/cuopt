@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -16,6 +16,7 @@
 #include <linear_programming/restart_strategy/pdlp_restart_strategy.cuh>
 #include <linear_programming/step_size_strategy/adaptive_step_size_strategy.hpp>
 #include <linear_programming/termination_strategy/termination_strategy.hpp>
+#include <utilities/termination_checker.hpp>
 
 #include <mip/problem/problem.cuh>
 
@@ -60,7 +61,7 @@ class pdlp_solver_t {
     pdlp_solver_settings_t<i_t, f_t> const& settings = pdlp_solver_settings_t<i_t, f_t>{},
     bool is_batch_mode                               = false);
 
-  optimization_problem_solution_t<i_t, f_t> run_solver(const timer_t& timer);
+  optimization_problem_solution_t<i_t, f_t> run_solver(const termination_checker_t& timer);
 
   f_t get_primal_weight_h() const;
   f_t get_step_size_h() const;
@@ -93,14 +94,16 @@ class pdlp_solver_t {
   void compute_initial_primal_weight();
 
  private:
-  void print_termination_criteria(const timer_t& timer, bool is_average = false);
+  void print_termination_criteria(const termination_checker_t& timer, bool is_average = false);
   void print_final_termination_criteria(
-    const timer_t& timer,
+    const termination_checker_t& timer,
     const convergence_information_t<i_t, f_t>& convergence_information,
     const pdlp_termination_status_t& termination_status,
     bool is_average = false);
-  std::optional<optimization_problem_solution_t<i_t, f_t>> check_termination(const timer_t& timer);
-  std::optional<optimization_problem_solution_t<i_t, f_t>> check_limits(const timer_t& timer);
+  std::optional<optimization_problem_solution_t<i_t, f_t>> check_termination(
+    const termination_checker_t& timer);
+  std::optional<optimization_problem_solution_t<i_t, f_t>> check_limits(
+    const termination_checker_t& timer);
   void record_best_primal_so_far(const detail::pdlp_termination_strategy_t<i_t, f_t>& current,
                                  const detail::pdlp_termination_strategy_t<i_t, f_t>& average,
                                  const pdlp_termination_status_t& termination_current,

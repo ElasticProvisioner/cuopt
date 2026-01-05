@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -12,6 +12,10 @@
 #include <mip/utils.cuh>
 
 #include <utilities/timer.hpp>
+
+namespace cuopt::linear_programming {
+class termination_checker_t;
+}
 
 namespace cuopt::linear_programming::detail {
 
@@ -117,6 +121,6 @@ class lb_probing_cache_t {
 template <typename i_t, typename f_t>
 void compute_probing_cache(bound_presolve_t<i_t, f_t>& bound_presolve,
                            problem_t<i_t, f_t>& problem,
-                           timer_t timer);
+                           const termination_checker_t& timer);
 
 }  // namespace cuopt::linear_programming::detail

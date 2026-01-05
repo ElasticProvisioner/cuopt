@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -397,7 +397,7 @@ bool lb_bounds_repair_t<i_t, f_t>::repair_problem(
   load_balanced_problem_t<i_t, f_t>* problem,
   load_balanced_bounds_presolve_t<i_t, f_t>& lb_bound_presolve,
   problem_t<i_t, f_t>& original_problem,
-  timer_t timer_,
+  termination_checker_t timer_,
   const raft::handle_t* handle_ptr_)
 {
   CUOPT_LOG_DEBUG("Running bounds repair");
@@ -414,7 +414,7 @@ bool lb_bounds_repair_t<i_t, f_t>::repair_problem(
                     h_n_violated_cstr,
                     best_violation,
                     curr_violation);
-    if (timer.check_time_limit()) { break; }
+    if (timer.check()) { break; }
     i_t curr_cstr = get_random_cstr();
     // best way would be to check a variable cycle, but this is easier and more performant
     bool is_cycle = detect_cycle(curr_cstr);

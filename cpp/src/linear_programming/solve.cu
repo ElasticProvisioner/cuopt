@@ -32,8 +32,8 @@
 #include <dual_simplex/solve.hpp>
 #include <dual_simplex/sparse_cholesky.cuh>
 #include <dual_simplex/tic_toc.hpp>
-#include <linear_programming/solver_termination.hpp>
 #include <linear_programming/utilities/problem_checking.cuh>
+#include <utilities/termination_checker.hpp>
 
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -387,7 +387,7 @@ template <typename i_t, typename f_t>
 std::tuple<dual_simplex::lp_solution_t<i_t, f_t>, dual_simplex::lp_status_t, f_t, f_t, f_t>
 run_barrier(dual_simplex::user_problem_t<i_t, f_t>& user_problem,
             pdlp_solver_settings_t<i_t, f_t> const& settings,
-            const timer_t& timer)
+            const termination_checker_t& timer)
 {
   f_t norm_user_objective = dual_simplex::vector_norm2<i_t, f_t>(user_problem.objective);
   f_t norm_rhs            = dual_simplex::vector_norm2<i_t, f_t>(user_problem.rhs);
@@ -434,7 +434,7 @@ template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> run_barrier(
   detail::problem_t<i_t, f_t>& problem,
   pdlp_solver_settings_t<i_t, f_t> const& settings,
-  const timer_t& timer)
+  const termination_checker_t& timer)
 {
   // Convert data structures to dual simplex format and back
   dual_simplex::user_problem_t<i_t, f_t> dual_simplex_problem =
@@ -456,7 +456,7 @@ void run_barrier_thread(
   std::unique_ptr<
     std::tuple<dual_simplex::lp_solution_t<i_t, f_t>, dual_simplex::lp_status_t, f_t, f_t, f_t>>&
     sol_ptr,
-  const timer_t& timer)
+  const termination_checker_t& timer)
 {
   // We will return the solution from the thread as a unique_ptr
   sol_ptr = std::make_unique<
@@ -471,9 +471,9 @@ template <typename i_t, typename f_t>
 std::tuple<dual_simplex::lp_solution_t<i_t, f_t>, dual_simplex::lp_status_t, f_t, f_t, f_t>
 run_dual_simplex(dual_simplex::user_problem_t<i_t, f_t>& user_problem,
                  pdlp_solver_settings_t<i_t, f_t> const& settings,
-                 const timer_t& timer)
+                 const termination_checker_t& timer)
 {
-  timer_t timer_dual_simplex(timer.remaining_time());
+  termination_checker_t timer_dual_simplex(timer.remaining_time(), timer);
   f_t norm_user_objective = dual_simplex::vector_norm2<i_t, f_t>(user_problem.objective);
   f_t norm_rhs            = dual_simplex::vector_norm2<i_t, f_t>(user_problem.rhs);
 
@@ -508,7 +508,7 @@ template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> run_dual_simplex(
   detail::problem_t<i_t, f_t>& problem,
   pdlp_solver_settings_t<i_t, f_t> const& settings,
-  const timer_t& timer)
+  const termination_checker_t& timer)
 {
   // Convert data structures to dual simplex format and back
   dual_simplex::user_problem_t<i_t, f_t> dual_simplex_problem =
@@ -527,7 +527,7 @@ template <typename i_t, typename f_t>
 static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
   detail::problem_t<i_t, f_t>& problem,
   pdlp_solver_settings_t<i_t, f_t> const& settings,
-  const timer_t& timer,
+  const termination_checker_t& timer,
   bool is_batch_mode)
 {
   if (problem.n_constraints == 0) {
@@ -543,12 +543,12 @@ static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
 template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> run_pdlp(detail::problem_t<i_t, f_t>& problem,
                                                    pdlp_solver_settings_t<i_t, f_t> const& settings,
-                                                   const timer_t& timer,
+                                                   const termination_checker_t& timer,
                                                    bool is_batch_mode)
 {
   auto start_solver = std::chrono::high_resolution_clock::now();
   f_t start_time    = dual_simplex::tic();
-  timer_t timer_pdlp(timer.remaining_time());
+  termination_checker_t timer_pdlp(timer.remaining_time(), timer);
   auto sol             = run_pdlp_solver(problem, settings, timer, is_batch_mode);
   auto pdlp_solve_time = timer_pdlp.elapsed_time();
   sol.set_solve_time(timer.elapsed_time());
@@ -639,7 +639,7 @@ void run_dual_simplex_thread(
   std::unique_ptr<
     std::tuple<dual_simplex::lp_solution_t<i_t, f_t>, dual_simplex::lp_status_t, f_t, f_t, f_t>>&
     sol_ptr,
-  const timer_t& timer)
+  const termination_checker_t& timer)
 {
   // We will return the solution from the thread as a unique_ptr
   sol_ptr = std::make_unique<
@@ -651,11 +651,11 @@ template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> run_concurrent(
   detail::problem_t<i_t, f_t>& problem,
   pdlp_solver_settings_t<i_t, f_t> const& settings,
-  const timer_t& timer,
+  const termination_checker_t& timer,
   bool is_batch_mode)
 {
   CUOPT_LOG_INFO("Running concurrent\n");
-  timer_t timer_concurrent(timer.remaining_time());
+  termination_checker_t timer_concurrent(timer.remaining_time(), timer);
 
   // Copy the settings so that we can set the concurrent halt pointer
   pdlp_solver_settings_t<i_t, f_t> settings_pdlp(settings);
@@ -796,7 +796,7 @@ template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> solve_lp_with_method(
   detail::problem_t<i_t, f_t>& problem,
   pdlp_solver_settings_t<i_t, f_t> const& settings,
-  const timer_t& timer,
+  const termination_checker_t& timer,
   bool is_batch_mode)
 {
   if (settings.method == method_t::DualSimplex) {
@@ -863,18 +863,24 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
                                                        op_problem.get_handle_ptr()->get_stream());
     }
 
-    auto lp_timer = cuopt::timer_t(settings.time_limit);
-
     // Create termination control (auto-registers for Ctrl-C)
-    solver_termination_t termination(settings.time_limit);
-    // Also set global_concurrent_halt on user interrupt for LP concurrent solver compatibility
-    auto halt_callback_id = user_interrupt_handler_t::instance().register_callback(
-      []() { global_concurrent_halt.store(1); });
-    // Ensure cleanup on exit
-    struct callback_guard_t {
-      size_t id;
-      ~callback_guard_t() { user_interrupt_handler_t::instance().unregister_callback(id); }
-    } halt_callback_guard{halt_callback_id};
+    termination_checker_t termination(settings.time_limit, termination_checker_t::root_tag_t{});
+    // TODO: potential for virtual function calls in a loop here... eh, very unlikely to be a
+    // bottleneck
+    termination.set_termination_callback(
+      [](void* termination_callback_data) {
+        auto settings = static_cast<pdlp_solver_settings_t<i_t, f_t>*>(termination_callback_data);
+        for (auto callback : settings->get_lp_callbacks()) {
+          if (callback->get_type() != internals::base_solution_callback_type::CHECK_TERMINATION) {
+            continue;
+          }
+          auto check_termination_callback =
+            static_cast<internals::check_termination_callback_t*>(callback);
+          if (check_termination_callback->check_termination()) { return true; }
+        }
+        return false;
+      },
+      &settings);
 
     detail::problem_t<i_t, f_t> problem(op_problem);
 
@@ -890,7 +896,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
       // Note that this is not the presolve time, but the time limit for presolve.
       // But no less than 1 second, to avoid early timeout triggering known crashes
       const double presolve_time_limit =
-        std::max(1.0, std::min(0.1 * lp_timer.remaining_time(), 60.0));
+        std::max(1.0, std::min(0.1 * termination.remaining_time(), 60.0));
       presolver   = std::make_unique<detail::third_party_presolve_t<i_t, f_t>>();
       auto result = presolver->apply(op_problem,
                                      cuopt::linear_programming::problem_category_t::LP,
@@ -903,7 +909,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
           pdlp_termination_status_t::PrimalInfeasible, op_problem.get_handle_ptr()->get_stream());
       }
       problem       = detail::problem_t<i_t, f_t>(result->reduced_problem);
-      presolve_time = lp_timer.elapsed_time();
+      presolve_time = termination.elapsed_time();
       CUOPT_LOG_INFO("Papilo presolve time: %f", presolve_time);
     }
 
@@ -921,7 +927,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
 
     setup_device_symbols(op_problem.get_handle_ptr()->get_stream());
 
-    auto solution = solve_lp_with_method(problem, settings, lp_timer, is_batch_mode);
+    auto solution = solve_lp_with_method(problem, settings, termination, is_batch_mode);
 
     if (run_presolve) {
       auto primal_solution = cuopt::device_copy(solution.get_primal_solution(),
@@ -1083,7 +1089,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
   template optimization_problem_solution_t<int, F_TYPE> solve_lp_with_method(          \
     detail::problem_t<int, F_TYPE>& problem,                                           \
     pdlp_solver_settings_t<int, F_TYPE> const& settings,                               \
-    const timer_t& timer,                                                              \
+    const termination_checker_t& timer,                                                \
     bool is_batch_mode);                                                               \
                                                                                        \
   template optimization_problem_t<int, F_TYPE> mps_data_model_to_optimization_problem( \

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -58,7 +58,7 @@ class lb_bounds_repair_t {
   bool repair_problem(load_balanced_problem_t<i_t, f_t>* problem,
                       load_balanced_bounds_presolve_t<i_t, f_t>& lb_bound_presolve,
                       problem_t<i_t, f_t>& original_problem,
-                      timer_t timer_,
+                      termination_checker_t timer_,
                       const raft::handle_t* handle_ptr_);
   void apply_move(load_balanced_problem_t<i_t, f_t>* problem,
                   problem_t<i_t, f_t>& original_problem,
@@ -82,7 +82,7 @@ class lb_bounds_repair_t {
   i_t h_n_violated_cstr;
   const raft::handle_t* handle_ptr;
   std::mt19937 gen;
-  timer_t timer{0.};
+  termination_checker_t timer{0.};
   std::vector<i_t> cycle_vector;
   i_t cycle_write_pos = 0;
 };

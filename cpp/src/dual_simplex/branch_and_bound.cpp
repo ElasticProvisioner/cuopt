@@ -19,7 +19,7 @@
 #include <dual_simplex/random.hpp>
 #include <dual_simplex/tic_toc.hpp>
 #include <dual_simplex/user_problem.hpp>
-#include <linear_programming/solver_termination.hpp>
+#include <utilities/termination_checker.hpp>
 
 #include <cmath>
 #include <cstdio>
@@ -834,7 +834,7 @@ void branch_and_bound_t<i_t, f_t>::exploration_ramp_up(mip_node_t<i_t, f_t>* nod
   }
 
   if (now > settings_.time_limit ||
-      (settings_.termination != nullptr && settings_.termination->should_terminate())) {
+      (settings_.termination != nullptr && settings_.termination->check())) {
     solver_status_ = mip_exploration_status_t::TIME_LIMIT;
     return;
   }
@@ -964,7 +964,7 @@ void branch_and_bound_t<i_t, f_t>::explore_subtree(i_t task_id,
     }
 
     if (now > settings_.time_limit ||
-        (settings_.termination != nullptr && settings_.termination->should_terminate())) {
+        (settings_.termination != nullptr && settings_.termination->check())) {
       solver_status_ = mip_exploration_status_t::TIME_LIMIT;
       return;
     }
@@ -1159,7 +1159,7 @@ void branch_and_bound_t<i_t, f_t>::diving_thread(const csr_matrix_t<i_t, f_t>& A
         }
 
         if (toc(exploration_stats_.start_time) > settings_.time_limit ||
-            (settings_.termination != nullptr && settings_.termination->should_terminate())) {
+            (settings_.termination != nullptr && settings_.termination->check())) {
           return;
         }
 
@@ -1431,7 +1431,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                              pc_);
 
   if (toc(exploration_stats_.start_time) > settings_.time_limit ||
-      (settings_.termination != nullptr && settings_.termination->should_terminate())) {
+      (settings_.termination != nullptr && settings_.termination->check())) {
     solver_status_ = mip_exploration_status_t::TIME_LIMIT;
     return set_final_solution(solution, root_objective_);
   }

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -31,20 +31,23 @@ template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   problem_t<i_t, f_t>& op_problem,
   solution_t<i_t, f_t>& solution,
-  const relaxed_lp_settings_t& settings);
+  const relaxed_lp_settings_t& settings,
+  const termination_checker_t& termination);
 
 template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   problem_t<i_t, f_t>& op_problem,
   rmm::device_uvector<f_t>& assignment,
   lp_state_t<i_t, f_t>& lp_state,
-  const relaxed_lp_settings_t& settings);
+  const relaxed_lp_settings_t& settings,
+  const termination_checker_t& termination);
 
 template <typename i_t, typename f_t>
 bool run_lp_with_vars_fixed(problem_t<i_t, f_t>& op_problem,
                             solution_t<i_t, f_t>& solution,
                             const rmm::device_uvector<i_t>& variables_to_fix,
                             relaxed_lp_settings_t& settings,
+                            const termination_checker_t& termination,
                             bound_presolve_t<i_t, f_t>* bound_presolve = nullptr,
                             bool check_fixed_assignment_feasibility    = false,
                             bool use_integer_fixed_problem             = false);

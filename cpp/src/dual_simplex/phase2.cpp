@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -1227,7 +1227,7 @@ i_t initialize_steepest_edge_norms(const lp_problem_t<i_t, f_t>& lp,
       last_log = tic();
       settings.log.printf("Initialized %d of %d steepest edge norms in %.2fs\n", k, m, now);
     }
-    if (toc(start_time) > settings.time_limit) { return -1; }
+    if (settings.check_termination(start_time)) { return -1; }
     if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) { return -1; }
   }
   return 0;
@@ -2245,7 +2245,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
       return dual::status_t::NUMERICAL;
     }
 
-    if (toc(start_time) > settings.time_limit) { return dual::status_t::TIME_LIMIT; }
+    if (settings.check_termination(start_time)) { return dual::status_t::TIME_LIMIT; }
   }
 
   std::vector<f_t> c_basic(m);
@@ -2256,7 +2256,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
 
   // Solve B'*y = cB
   ft.b_transpose_solve(c_basic, y);
-  if (toc(start_time) > settings.time_limit) { return dual::status_t::TIME_LIMIT; }
+  if (settings.check_termination(start_time)) { return dual::status_t::TIME_LIMIT; }
   constexpr bool print_norms = false;
   if constexpr (print_norms) {
     settings.log.printf(
@@ -2301,7 +2301,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
   phase2::compute_primal_variables(
     ft, lp.rhs, lp.A, basic_list, nonbasic_list, settings.tight_tol, x);
 
-  if (toc(start_time) > settings.time_limit) { return dual::status_t::TIME_LIMIT; }
+  if (settings.check_termination(start_time)) { return dual::status_t::TIME_LIMIT; }
   if (print_norms) { settings.log.printf("|| x || %e\n", vector_norm2<i_t, f_t>(x)); }
 
 #ifdef COMPUTE_PRIMAL_RESIDUAL
@@ -2886,7 +2886,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
       if (ft.refactor_basis(lp.A, settings, basic_list, nonbasic_list, vstatus) > 0) {
         should_recompute_x = true;
         settings.log.printf("Failed to factorize basis. Iteration %d\n", iter);
-        if (toc(start_time) > settings.time_limit) { return dual::status_t::TIME_LIMIT; }
+        if (settings.check_termination(start_time)) { return dual::status_t::TIME_LIMIT; }
         i_t count = 0;
         i_t deficient_size;
         while ((deficient_size =
@@ -2895,7 +2895,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
                               iter,
                               static_cast<int>(deficient_size));
 
-          if (toc(start_time) > settings.time_limit) { return dual::status_t::TIME_LIMIT; }
+          if (settings.check_termination(start_time)) { return dual::status_t::TIME_LIMIT; }
           settings.threshold_partial_pivoting_tol = 1.0;
 
           count++;
@@ -2961,7 +2961,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
       return dual::status_t::CUTOFF;
     }
 
-    if (now > settings.time_limit) { return dual::status_t::TIME_LIMIT; }
+    if (settings.check_termination(start_time)) { return dual::status_t::TIME_LIMIT; }
 
     if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
       return dual::status_t::CONCURRENT_LIMIT;

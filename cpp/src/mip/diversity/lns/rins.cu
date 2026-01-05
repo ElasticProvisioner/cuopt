@@ -17,11 +17,11 @@
 
 #include <mip/diversity/lns/rins.cuh>
 
-#include <linear_programming/solver_termination.hpp>
 #include <mip/diversity/diversity_manager.cuh>
 #include <mip/feasibility_jump/fj_cpu.cuh>
 #include <mip/mip_constants.hpp>
 #include <mip/presolve/trivial_presolve.cuh>
+#include <utilities/termination_checker.hpp>
 
 namespace cuopt::linear_programming::detail {
 template <typename i_t, typename f_t>
@@ -218,8 +218,9 @@ void rins_t<i_t, f_t>::run_rins()
 
   std::vector<std::vector<f_t>> rins_solution_queue;
 
+  termination_checker_t rins_termination(time_limit, context.termination);
   mip_solver_context_t<i_t, f_t> fj_context(
-    &rins_handle, &fixed_problem, context.settings, context.scaling, time_limit);
+    &rins_handle, &fixed_problem, context.settings, context.scaling, rins_termination);
   fj_t<i_t, f_t> fj(fj_context);
   solution_t<i_t, f_t> fj_solution(fixed_problem);
   fj_solution.copy_new_assignment(cuopt::host_copy(fixed_assignment));
@@ -251,7 +252,6 @@ void rins_t<i_t, f_t>::run_rins()
   branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
 
   // Termination control (linked to parent, handles Ctrl-C)
-  solver_termination_t rins_termination(time_limit, &context.termination);
   branch_and_bound_settings.termination = &rins_termination;
 
   // Fill in the settings for branch and bound

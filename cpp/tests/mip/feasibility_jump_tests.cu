@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -90,7 +90,7 @@ static fj_state_t run_fj(std::string test_instance,
 
   auto settings       = mip_solver_settings_t<int, double>{};
   settings.time_limit = 30.;
-  auto timer          = cuopt::timer_t(30);
+  auto timer          = termination_checker_t(30);
   detail::mip_solver_t<int, double> solver(problem, settings, scaling, timer);
 
   detail::solution_t<int, double> solution(*solver.context.problem_ptr);

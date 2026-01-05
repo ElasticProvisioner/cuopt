@@ -13,7 +13,7 @@
 #include <dual_simplex/branch_and_bound.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
 #include <dual_simplex/solve.hpp>
-#include <linear_programming/solver_termination.hpp>
+#include <utilities/termination_checker.hpp>
 
 namespace cuopt::linear_programming::detail {
 
@@ -99,8 +99,8 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
 
       // Termination control (linked to parent, handles Ctrl-C)
-      solver_termination_t sub_mip_termination(sub_mip_recombiner_config_t::sub_mip_time_limit,
-                                               &context.termination);
+      termination_checker_t sub_mip_termination(sub_mip_recombiner_config_t::sub_mip_time_limit,
+                                                context.termination);
       branch_and_bound_settings.termination = &sub_mip_termination;
 
       // Fill in the settings for branch and bound

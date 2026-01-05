@@ -8,11 +8,11 @@
 #include "cuda_profiler_api.h"
 #include "diversity_manager.cuh"
 
-#include <linear_programming/solver_termination.hpp>
 #include <mip/mip_constants.hpp>
 #include <mip/presolve/probing_cache.cuh>
 #include <mip/presolve/trivial_presolve.cuh>
 #include <mip/problem/problem_helpers.cuh>
+#include <utilities/termination_checker.hpp>
 
 #include <linear_programming/solve.cuh>
 
@@ -52,7 +52,7 @@ diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t
                              context.problem_ptr->handle_ptr->get_stream()),
     ls(context, lp_optimal_solution),
     rins(context, *this),
-    timer(diversity_config.default_time_limit),
+    timer(diversity_config.default_time_limit, context.termination),
     bound_prop_recombiner(context,
                           context.problem_ptr->n_variables,
                           ls.constraint_prop,
@@ -106,7 +106,7 @@ diversity_manager_t<i_t, f_t>::diversity_manager_t(mip_solver_context_t<i_t, f_t
 template <typename i_t, typename f_t>
 bool diversity_manager_t<i_t, f_t>::run_local_search(solution_t<i_t, f_t>& solution,
                                                      const weight_t<i_t, f_t>& weights,
-                                                     timer_t& timer,
+                                                     termination_checker_t& timer,
                                                      ls_config_t<i_t, f_t>& ls_config)
 {
   raft::common::nvtx::range fun_scope("run_local_search");
@@ -148,6 +148,7 @@ void diversity_manager_t<i_t, f_t>::add_user_given_solutions(
                              sol,
                              problem_ptr->integer_indices,
                              lp_settings,
+                             timer,
                              static_cast<bound_presolve_t<i_t, f_t>*>(nullptr));
       raft::copy(sol.assignment.data(),
                  init_sol_assignment.data(),
@@ -177,7 +178,7 @@ bool diversity_manager_t<i_t, f_t>::run_presolve(f_t time_limit)
 {
   raft::common::nvtx::range fun_scope("run_presolve");
   CUOPT_LOG_INFO("Running presolve!");
-  timer_t presolve_timer(time_limit);
+  termination_checker_t presolve_timer(time_limit, timer);
   auto term_crit = ls.constraint_prop.bounds_update.solve(*problem_ptr);
   if (ls.constraint_prop.bounds_update.infeas_constraints_count > 0) {
     stats.presolve_time = timer.elapsed_time();
@@ -219,7 +220,7 @@ void diversity_manager_t<i_t, f_t>::generate_quick_feasible_solution()
   // min 1 second, max 10 seconds
   const f_t generate_fast_solution_time =
     std::min(diversity_config.max_fast_sol_time, std::max(1., timer.remaining_time() / 20.));
-  timer_t sol_timer(generate_fast_solution_time);
+  termination_checker_t sol_timer(generate_fast_solution_time, timer);
   // do very short LP run to get somewhere close to the optimal point
   ls.generate_fast_solution(solution, sol_timer);
   if (solution.get_feasible()) {
@@ -244,7 +245,7 @@ void diversity_manager_t<i_t, f_t>::generate_quick_feasible_solution()
 template <typename i_t, typename f_t>
 bool diversity_manager_t<i_t, f_t>::check_b_b_preemption()
 {
-  if (context.preempt_heuristic_solver_.load() || context.termination.should_terminate()) {
+  if (context.preempt_heuristic_solver_.load() || context.termination.check()) {
     if (population.current_size() == 0) { population.allocate_solutions(); }
     population.add_external_solutions_to_population();
     return true;
@@ -326,7 +327,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   const f_t max_time_on_probing         = diversity_config.max_time_on_probing;
   f_t time_for_probing_cache =
     std::min(max_time_on_probing, time_limit * time_ratio_of_probing_cache);
-  timer_t probing_timer{time_for_probing_cache};
+  termination_checker_t probing_timer{time_for_probing_cache, timer};
   if (check_b_b_preemption()) { return population.best_feasible(); }
   if (!fj_only_run) {
     compute_probing_cache(ls.constraint_prop.bounds_update, *problem_ptr, probing_timer);
@@ -358,7 +359,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
     pdlp_settings.pdlp_solver_mode                     = pdlp_solver_mode_t::Stable2;
     pdlp_settings.num_gpus                             = context.settings.num_gpus;
 
-    timer_t lp_timer(lp_time_limit);
+    termination_checker_t lp_timer(lp_time_limit, timer);
     auto lp_result = solve_lp_with_method<i_t, f_t>(*problem_ptr, pdlp_settings, lp_timer);
 
     {
@@ -474,7 +475,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   rins.enable();
 
   generate_solution(timer.remaining_time(), false);
-  if (context.termination.should_terminate()) {
+  if (context.termination.check()) {
     population.add_external_solutions_to_population();
     return population.best_feasible();
   }
@@ -502,7 +503,7 @@ void diversity_manager_t<i_t, f_t>::diversity_step(i_t max_iterations_without_im
         CUOPT_LOG_DEBUG("Population degenerated in diversity step");
         return;
       }
-      if (context.termination.should_terminate()) { return; }
+      if (context.termination.check()) { return; }
       constexpr bool tournament = true;
       auto [sol1, sol2]         = population.get_two_random(tournament);
       cuopt_assert(population.test_invariant(), "");
@@ -555,7 +556,7 @@ void diversity_manager_t<i_t, f_t>::recombine_and_ls_with_all(solution_t<i_t, f_
         if (!add_only_feasible || offspring.get_feasible()) {
           population.add_solution(std::move(offspring));
         }
-        if (context.termination.should_terminate()) { return; }
+        if (context.termination.check()) { return; }
       }
     }
   }
@@ -574,11 +575,11 @@ void diversity_manager_t<i_t, f_t>::recombine_and_ls_with_all(
       population.add_solution(std::move(solution_t<i_t, f_t>(sol)));
     }
     for (auto& sol : solutions) {
-      if (context.termination.should_terminate()) { return; }
+      if (context.termination.check()) { return; }
       solution_t<i_t, f_t> ls_solution(sol);
       ls_config_t<i_t, f_t> ls_config;
       run_local_search(ls_solution, population.weights, timer, ls_config);
-      if (context.termination.should_terminate()) { return; }
+      if (context.termination.check()) { return; }
       // TODO try if running LP with integers fixed makes it feasible
       if (ls_solution.get_feasible()) {
         CUOPT_LOG_DEBUG("LS searched solution feasible, running recombiners!");
@@ -682,6 +683,7 @@ diversity_manager_t<i_t, f_t>::recombine_and_local_search(solution_t<i_t, f_t>& 
                          lp_offspring,
                          lp_offspring.problem_ptr->integer_indices,
                          lp_settings,
+                         timer,
                          &ls.constraint_prop.bounds_update,
                          true /* check fixed assignment is feasible */,
                          true /* use integer fixed problem */);

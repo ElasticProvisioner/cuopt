@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved. # noqa
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved. # noqa
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -78,6 +78,11 @@ cdef extern from "cuopt/linear_programming/solver_settings.hpp" namespace "cuopt
             i_t size
         ) except +
         void set_mip_callback(
+            base_solution_callback_t* callback
+        ) except +
+
+        # LP settings (callbacks)
+        void set_lp_callback(
             base_solution_callback_t* callback
         ) except +
 

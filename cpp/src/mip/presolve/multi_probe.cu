@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -261,9 +261,8 @@ void multi_probe_t<i_t, f_t>::set_bounds(
 }
 
 template <typename i_t, typename f_t>
-termination_criterion_t multi_probe_t<i_t, f_t>::bound_update_loop(problem_t<i_t, f_t>& pb,
-                                                                   const raft::handle_t* handle_ptr,
-                                                                   timer_t timer)
+termination_criterion_t multi_probe_t<i_t, f_t>::bound_update_loop(
+  problem_t<i_t, f_t>& pb, const raft::handle_t* handle_ptr, const termination_checker_t& timer)
 {
   termination_criterion_t criteria = termination_criterion_t::ITERATION_LIMIT;
   skip_0                           = false;
@@ -280,7 +279,7 @@ termination_criterion_t multi_probe_t<i_t, f_t>::bound_update_loop(problem_t<i_t
     init_changed_constraints = true;
   }
   for (i_t iter = 0; iter < settings.iteration_limit; ++iter) {
-    if (timer.check_time_limit()) {
+    if (timer.check()) {
       criteria = termination_criterion_t::TIME_LIMIT;
       break;
     }
@@ -370,7 +369,7 @@ termination_criterion_t multi_probe_t<i_t, f_t>::solve_for_interval(
   const std::tuple<i_t, std::pair<f_t, f_t>, std::pair<f_t, f_t>>& var_interval_vals,
   const raft::handle_t* handle_ptr)
 {
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit, context.termination);
 
   copy_problem_into_probing_buffers(pb, handle_ptr);
   set_interval_bounds(var_interval_vals, pb, handle_ptr);
@@ -384,7 +383,7 @@ termination_criterion_t multi_probe_t<i_t, f_t>::solve(
   const std::tuple<std::vector<i_t>, std::vector<f_t>, std::vector<f_t>>& var_probe_vals,
   bool use_host_bounds)
 {
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit, context.termination);
   auto& handle_ptr = pb.handle_ptr;
   if (use_host_bounds) {
     update_device_bounds(handle_ptr);

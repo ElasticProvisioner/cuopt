@@ -862,14 +862,14 @@ i_t fj_t<i_t, f_t>::host_loop(solution_t<i_t, f_t>& solution, i_t climber_idx)
 
   data.incumbent_quality.set_value_async(obj, handle_ptr->get_stream());
 
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit, context.termination);
   i_t steps;
   bool limit_reached = false;
   for (steps = 0; steps < std::numeric_limits<i_t>::max(); steps += iterations_per_graph) {
     // to actualize time limit
     handle_ptr->sync_stream();
-    if (timer.check_time_limit() || steps >= settings.iteration_limit ||
-        context.preempt_heuristic_solver_.load() || context.termination.should_terminate()) {
+    if (timer.check() || steps >= settings.iteration_limit ||
+        context.preempt_heuristic_solver_.load() || context.termination.check()) {
       limit_reached = true;
     }
 
@@ -1047,7 +1047,7 @@ template <typename i_t, typename f_t>
 i_t fj_t<i_t, f_t>::solve(solution_t<i_t, f_t>& solution)
 {
   raft::common::nvtx::range scope("fj_solve");
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit, context.termination);
   handle_ptr = const_cast<raft::handle_t*>(solution.handle_ptr);
   pb_ptr     = solution.problem_ptr;
   if (settings.mode != fj_mode_t::ROUNDING) {

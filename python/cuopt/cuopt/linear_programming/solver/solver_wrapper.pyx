@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved. # noqa
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved. # noqa
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -208,6 +208,14 @@ cdef set_solver_setting(
                 str(value).encode('utf-8')
             )
 
+        lp_callbacks = settings.get_lp_callbacks()
+        for callback in lp_callbacks:
+            if callback:
+                callback_ptr = callback.get_native_callback()
+
+                c_solver_settings.set_lp_callback(
+                    <base_solution_callback_t*>callback_ptr
+                )
 
     if settings.get_pdlp_warm_start_data() is not None:  # noqa
         if len(data_model_obj.get_objective_coefficients()) != len(

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved. # noqa
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved. # noqa
 # SPDX-License-Identifier: Apache-2.0
 
 # cython: profile=False
@@ -29,6 +29,10 @@ cdef extern from "cuopt/linear_programming/utilities/callbacks_implems.hpp" name
     cdef cppclass default_set_solution_callback_t(Callback):
         void setup() except +
         void set_solution(void* data, void* objective_value) except +
+        PyObject* pyCallbackClass
+
+    cdef cppclass default_check_termination_callback_t(Callback):
+        bint check_termination() except +
         PyObject* pyCallbackClass
 
 
@@ -77,6 +81,17 @@ cdef class GetSolutionCallback(PyCallback):
 cdef class SetSolutionCallback(PyCallback):
 
     cdef default_set_solution_callback_t native_callback
+
+    def __init__(self):
+        self.native_callback.pyCallbackClass = <PyObject *><void*>self
+
+    def get_native_callback(self):
+        return <uintptr_t>&(self.native_callback)
+
+
+cdef class CheckTerminationCallback(PyCallback):
+
+    cdef default_check_termination_callback_t native_callback
 
     def __init__(self):
         self.native_callback.pyCallbackClass = <PyObject *><void*>self

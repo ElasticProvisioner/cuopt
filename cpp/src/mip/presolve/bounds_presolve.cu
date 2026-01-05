@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -166,8 +166,8 @@ void bound_presolve_t<i_t, f_t>::set_bounds(
 }
 
 template <typename i_t, typename f_t>
-termination_criterion_t bound_presolve_t<i_t, f_t>::bound_update_loop(problem_t<i_t, f_t>& pb,
-                                                                      timer_t timer)
+termination_criterion_t bound_presolve_t<i_t, f_t>::bound_update_loop(
+  problem_t<i_t, f_t>& pb, const termination_checker_t& timer)
 {
   termination_criterion_t criteria = termination_criterion_t::ITERATION_LIMIT;
 
@@ -175,7 +175,7 @@ termination_criterion_t bound_presolve_t<i_t, f_t>::bound_update_loop(problem_t<
   upd.init_changed_constraints(pb.handle_ptr);
   for (iter = 0; iter < settings.iteration_limit; ++iter) {
     calculate_activity(pb);
-    if (timer.check_time_limit()) {
+    if (timer.check()) {
       criteria = termination_criterion_t::TIME_LIMIT;
       CUOPT_LOG_TRACE("Exiting bounds prop because of time limit at iter %d", iter);
       break;
@@ -229,7 +229,7 @@ termination_criterion_t bound_presolve_t<i_t, f_t>::solve(problem_t<i_t, f_t>& p
                                                           i_t var_idx)
 {
   auto& handle_ptr = pb.handle_ptr;
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit, context.termination);
   copy_input_bounds(pb);
   upd.lb.set_element_async(var_idx, var_lb, handle_ptr->get_stream());
   upd.ub.set_element_async(var_idx, var_ub, handle_ptr->get_stream());
@@ -242,7 +242,7 @@ termination_criterion_t bound_presolve_t<i_t, f_t>::solve(
   const std::vector<thrust::pair<i_t, f_t>>& var_probe_val_pairs,
   bool use_host_bounds)
 {
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit, context.termination);
   auto& handle_ptr = pb.handle_ptr;
   if (use_host_bounds) {
     update_device_bounds(handle_ptr);
@@ -257,7 +257,7 @@ termination_criterion_t bound_presolve_t<i_t, f_t>::solve(
 template <typename i_t, typename f_t>
 termination_criterion_t bound_presolve_t<i_t, f_t>::solve(problem_t<i_t, f_t>& pb)
 {
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit, context.termination);
   auto& handle_ptr = pb.handle_ptr;
   copy_input_bounds(pb);
   return bound_update_loop(pb, timer);

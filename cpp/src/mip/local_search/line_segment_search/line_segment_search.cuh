@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -31,14 +31,14 @@ class line_segment_search_t {
                            const rmm::device_uvector<f_t>& point_1,
                            const rmm::device_uvector<f_t>& point_2,
                            bool is_feasibility_run,
-                           cuopt::timer_t& timer);
+                           const termination_checker_t& timer);
 
   bool search_line_segment(solution_t<i_t, f_t>& solution,
                            const rmm::device_uvector<f_t>& point_1,
                            const rmm::device_uvector<f_t>& point_2,
                            const rmm::device_uvector<f_t>& delta_vector,
                            bool is_feasibility_run,
-                           cuopt::timer_t& timer);
+                           const termination_checker_t& timer);
 
   void save_solution_if_better(solution_t<i_t, f_t>& solution,
                                const rmm::device_uvector<f_t>& point_1,

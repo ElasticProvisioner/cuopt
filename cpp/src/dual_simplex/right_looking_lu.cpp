@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -1108,7 +1108,7 @@ i_t right_looking_lu_row_permutation_only(const csc_matrix_t<i_t, f_t>& A,
         toc(factorization_start_time));
       last_print = tic();
     }
-    if (toc(factorization_start_time) > settings.time_limit) {
+    if (settings.check_termination(factorization_start_time)) {
       settings.log.printf("Right-looking LU factorization time exceeded\n");
       return -1;
     }

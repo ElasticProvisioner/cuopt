@@ -20,7 +20,7 @@
 #include <dual_simplex/simplex_solver_settings.hpp>
 #include <dual_simplex/solve.hpp>
 
-#include <linear_programming/solver_termination.hpp>
+#include <utilities/termination_checker.hpp>
 
 #include <raft/sparse/detail/cusparse_macros.h>
 #include <raft/sparse/detail/cusparse_wrappers.h>
@@ -45,14 +45,14 @@ template <typename i_t, typename f_t>
 mip_solver_t<i_t, f_t>::mip_solver_t(const problem_t<i_t, f_t>& op_problem,
                                      const mip_solver_settings_t<i_t, f_t>& solver_settings,
                                      pdlp_initial_scaling_strategy_t<i_t, f_t>& scaling,
-                                     timer_t timer)
+                                     termination_checker_t& timer)
   : op_problem_(op_problem),
     solver_settings_(solver_settings),
     context(op_problem.handle_ptr,
             const_cast<problem_t<i_t, f_t>*>(&op_problem),
             solver_settings,
             scaling,
-            timer.remaining_time()),
+            timer),
     timer_(timer)
 {
   init_handler(op_problem.handle_ptr);
@@ -133,7 +133,7 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     CUOPT_LOG_INFO("Problem reduced to a LP, running concurrent LP");
     pdlp_solver_settings_t<i_t, f_t> settings{};
     settings.time_limit = timer_.remaining_time();
-    auto lp_timer       = timer_t(settings.time_limit);
+    auto lp_timer       = termination_checker_t(settings.time_limit, context.termination);
     settings.method     = method_t::Concurrent;
 
     auto opt_sol = solve_lp_with_method<i_t, f_t>(*context.problem_ptr, settings, lp_timer);

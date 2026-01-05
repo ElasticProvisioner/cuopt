@@ -1,13 +1,12 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
 #pragma once
 
 #include <chrono>
-#include <string>
 
 namespace cuopt {
 
@@ -23,15 +22,6 @@ class timer_t {
   {
     time_limit = time_limit_;
     begin      = steady_clock::now();
-  }
-
-  void print_debug(std::string msg) const
-  {
-    printf("%s time_limit: %f remaining_time: %f elapsed_time: %f \n",
-           msg.c_str(),
-           time_limit,
-           remaining_time(),
-           elapsed_time());
   }
 
   bool check_time_limit() const noexcept { return elapsed_time() >= time_limit; }

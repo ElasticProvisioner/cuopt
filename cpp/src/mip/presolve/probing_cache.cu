@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -455,7 +455,7 @@ void compute_cache_for_var(i_t var_idx,
 template <typename i_t, typename f_t>
 void compute_probing_cache(bound_presolve_t<i_t, f_t>& bound_presolve,
                            problem_t<i_t, f_t>& problem,
-                           timer_t timer)
+                           const termination_checker_t& timer)
 {
   raft::common::nvtx::range fun_scope("compute_probing_cache");
   // we dont want to compute the probing cache for all variables for time and computation resources
@@ -491,7 +491,7 @@ void compute_probing_cache(bound_presolve_t<i_t, f_t>& bound_presolve,
   {
 #pragma omp for schedule(static, 4)
     for (auto var_idx : priority_indices) {
-      if (timer.check_time_limit()) { continue; }
+      if (timer.check()) { continue; }
 
       int thread_idx = omp_get_thread_num();
       CUOPT_LOG_TRACE("Computing probing cache for var %d on thread %d", var_idx, thread_idx);
@@ -520,7 +520,7 @@ void compute_probing_cache(bound_presolve_t<i_t, f_t>& bound_presolve,
 #define INSTANTIATE(F_TYPE)                                                                        \
   template void compute_probing_cache<int, F_TYPE>(bound_presolve_t<int, F_TYPE> & bound_presolve, \
                                                    problem_t<int, F_TYPE> & problem,               \
-                                                   timer_t timer);                                 \
+                                                   const termination_checker_t& timer);            \
   template class probing_cache_t<int, F_TYPE>;
 
 #if MIP_INSTANTIATE_FLOAT

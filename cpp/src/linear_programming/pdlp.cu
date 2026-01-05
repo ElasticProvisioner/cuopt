@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -252,11 +252,11 @@ void pdlp_solver_t<i_t, f_t>::set_initial_dual_solution(
     initial_dual_.data(), initial_dual_solution.data(), initial_dual_solution.size(), stream_view_);
 }
 
-static bool time_limit_reached(const timer_t& timer) { return timer.check_time_limit(); }
+static bool time_limit_reached(const termination_checker_t& timer) { return timer.check(); }
 
 template <typename i_t, typename f_t>
 std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>::check_limits(
-  const timer_t& timer)
+  const termination_checker_t& timer)
 {
   // Check for time limit
   if (time_limit_reached(timer)) {
@@ -494,7 +494,8 @@ pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_star
 }
 
 template <typename i_t, typename f_t>
-void pdlp_solver_t<i_t, f_t>::print_termination_criteria(const timer_t& timer, bool is_average)
+void pdlp_solver_t<i_t, f_t>::print_termination_criteria(const termination_checker_t& timer,
+                                                         bool is_average)
 {
   if (!inside_mip_) {
     auto elapsed = timer.elapsed_time();
@@ -508,7 +509,7 @@ void pdlp_solver_t<i_t, f_t>::print_termination_criteria(const timer_t& timer, b
 
 template <typename i_t, typename f_t>
 void pdlp_solver_t<i_t, f_t>::print_final_termination_criteria(
-  const timer_t& timer,
+  const termination_checker_t& timer,
   const convergence_information_t<i_t, f_t>& convergence_information,
   const pdlp_termination_status_t& termination_status,
   bool is_average)
@@ -537,7 +538,7 @@ void pdlp_solver_t<i_t, f_t>::print_final_termination_criteria(
 
 template <typename i_t, typename f_t>
 std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>::check_termination(
-  const timer_t& timer)
+  const termination_checker_t& timer)
 {
   raft::common::nvtx::range fun_scope("Check termination");
 
@@ -1076,7 +1077,8 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(bool& has_restarted)
 }
 
 template <typename i_t, typename f_t>
-optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(const timer_t& timer)
+optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(
+  const termination_checker_t& timer)
 {
   bool verbose;
 #ifdef PDLP_VERBOSE_MODE

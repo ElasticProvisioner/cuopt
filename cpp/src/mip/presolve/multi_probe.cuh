@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -54,7 +54,7 @@ class multi_probe_t {
                           i_t select_update);
   termination_criterion_t bound_update_loop(problem_t<i_t, f_t>& pb,
                                             const raft::handle_t* handle_ptr,
-                                            timer_t timer);
+                                            const termination_checker_t& timer);
   void set_interval_bounds(
     const std::tuple<i_t, std::pair<f_t, f_t>, std::pair<f_t, f_t>>& var_interval_vals,
     problem_t<i_t, f_t>& pb,

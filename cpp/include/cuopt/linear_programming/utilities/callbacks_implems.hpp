@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -84,6 +84,19 @@ class default_set_solution_callback_t : public set_solution_callback_t {
     Py_DECREF(numba_matrix);
     Py_DECREF(numpy_array);
     Py_DECREF(res);
+  }
+
+  PyObject* pyCallbackClass;
+};
+
+class default_check_termination_callback_t : public check_termination_callback_t {
+ public:
+  bool check_termination() override
+  {
+    PyObject* res = PyObject_CallMethod(this->pyCallbackClass, "check_termination", nullptr);
+    bool should_terminate = PyObject_IsTrue(res);
+    Py_DECREF(res);
+    return should_terminate;
   }
 
   PyObject* pyCallbackClass;

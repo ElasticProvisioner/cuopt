@@ -1,13 +1,11 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
 
 #pragma once
-
-#include <utilities/logger.hpp>
 
 #include <chrono>
 #include <csignal>
@@ -17,7 +15,7 @@
 #include <mutex>
 #include <unordered_map>
 
-namespace cuopt::linear_programming {
+namespace cuopt {
 
 /**
  * @brief Global singleton that handles SIGINT (Ctrl-C) and invokes registered callbacks.
@@ -35,6 +33,8 @@ class user_interrupt_handler_t {
     static user_interrupt_handler_t instance;
     return instance;
   }
+
+  bool termination_requested() const { return terminate_signal_received_.load(); }
 
   /**
    * @brief Register a callback to be invoked on SIGINT.
@@ -83,6 +83,8 @@ class user_interrupt_handler_t {
     auto& self = instance();
     std::lock_guard<std::mutex> lock(self.mutex_);
 
+    self.terminate_signal_received_ = true;
+
     auto now    = std::chrono::steady_clock::now();
     auto cutoff = now - std::chrono::seconds(force_quit_window_seconds);
 
@@ -94,9 +96,10 @@ class user_interrupt_handler_t {
 
     // Force quit if too many interrupts in the window
     if (static_cast<int>(self.interrupt_times_.size()) >= force_quit_threshold) {
-      CUOPT_LOG_INFO("Force quit: %d interrupts in %d seconds.",
-                     force_quit_threshold,
-                     force_quit_window_seconds);
+      fprintf(stderr,
+              "Force quit: %d interrupts in %d seconds.",
+              force_quit_threshold,
+              force_quit_window_seconds);
       std::_Exit(128 + SIGINT);
     }
 
@@ -106,16 +109,17 @@ class user_interrupt_handler_t {
     }
 
     auto remaining = force_quit_threshold - static_cast<int>(self.interrupt_times_.size());
-    CUOPT_LOG_INFO(
-      "Interrupt received. Stopping solver cleanly... (press Ctrl-C %d more time(s) to force quit)",
-      remaining);
+    fprintf(stderr,
+            "Interrupt received. Stopping solver... (press Ctrl-C %d more time(s) to force quit)",
+            remaining);
   }
 
   std::mutex mutex_;
   std::unordered_map<size_t, std::function<void()>> callbacks_;
+  std::atomic<bool> terminate_signal_received_{false};
   size_t next_id_{0};
   std::deque<time_point> interrupt_times_;
   void (*previous_handler_)(int) = SIG_ERR;
 };
 
-}  // namespace cuopt::linear_programming
+}  // namespace cuopt

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -77,8 +77,11 @@ class fp_recombiner_t : public recombiner_t<i_t, f_t> {
       lp_settings.save_state            = true;
       lp_settings.check_infeasibility   = true;
       // run lp with infeasibility detection on
-      auto lp_response =
-        get_relaxed_lp_solution(fixed_problem, fixed_assignment, offspring.lp_state, lp_settings);
+      auto lp_response = get_relaxed_lp_solution(fixed_problem,
+                                                 fixed_assignment,
+                                                 offspring.lp_state,
+                                                 lp_settings,
+                                                 this->context.termination);
       if (lp_response.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
           lp_response.get_termination_status() == pdlp_termination_status_t::DualInfeasible ||
           lp_response.get_termination_status() == pdlp_termination_status_t::TimeLimit) {
@@ -96,7 +99,7 @@ class fp_recombiner_t : public recombiner_t<i_t, f_t> {
       offspring.handle_ptr->sync_stream();
       offspring.assignment = std::move(fixed_assignment);
       cuopt_func_call(offspring.test_variable_bounds(false));
-      timer_t timer(fp_recombiner_config_t::fp_time_limit);
+      termination_checker_t timer(fp_recombiner_config_t::fp_time_limit, this->context.termination);
       fp.timer = timer;
       fp.cycle_queue.reset(offspring);
       fp.reset();

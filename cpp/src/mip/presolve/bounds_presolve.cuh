@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -57,7 +57,8 @@ class bound_presolve_t {
   void set_updated_bounds(const raft::handle_t* handle_ptr,
                           raft::device_span<f_t> output_lb,
                           raft::device_span<f_t> output_ub);
-  termination_criterion_t bound_update_loop(problem_t<i_t, f_t>& pb, timer_t timer);
+  termination_criterion_t bound_update_loop(problem_t<i_t, f_t>& pb,
+                                            const termination_checker_t& timer);
   void set_bounds(raft::device_span<f_t> var_lb,
                   raft::device_span<f_t> var_ub,
                   const std::vector<thrust::pair<i_t, f_t>>& var_probe_vals,

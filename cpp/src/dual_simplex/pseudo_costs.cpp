@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -53,7 +53,7 @@ void strong_branch_helper(i_t start,
       child_settings.set_log(false);
       f_t lp_start_time = tic();
       f_t elapsed_time  = toc(start_time);
-      if (elapsed_time > settings.time_limit) { break; }
+      if (settings.check_termination(start_time)) { break; }
       child_settings.time_limit      = std::max(0.0, settings.time_limit - elapsed_time);
       child_settings.iteration_limit = 200;
       lp_solution_t<i_t, f_t> solution(original_lp.num_rows, original_lp.num_cols);
@@ -112,9 +112,9 @@ void strong_branch_helper(i_t start,
             toc(start_time));
         }
       }
-      if (toc(start_time) > settings.time_limit) { break; }
+      if (settings.check_termination(start_time)) { break; }
     }
-    if (toc(start_time) > settings.time_limit) { break; }
+    if (settings.check_termination(start_time)) { break; }
 
     const i_t completed = pc.num_strong_branches_completed++;
 
@@ -129,7 +129,7 @@ void strong_branch_helper(i_t start,
     child_problem.lower[j] = original_lp.lower[j];
     child_problem.upper[j] = original_lp.upper[j];
 
-    if (toc(start_time) > settings.time_limit) { break; }
+    if (settings.check_termination(start_time)) { break; }
   }
 }
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import IntEnum, auto
@@ -110,6 +110,7 @@ class SolverSettings:
         self.settings_dict = {}
         self.pdlp_warm_start_data = None
         self.mip_callbacks = []
+        self.lp_callbacks = []
 
     def to_base_type(self, value):
         """Convert a string to a base type.
@@ -249,13 +250,13 @@ class SolverSettings:
         """
         Note: Only supported for MILP
 
-        Set the callback to receive incumbent solution.
+        Set the callback to receive incumbent solution or check termination.
 
         Parameters
         ----------
         callback : class for function callback
-            Callback class that inherits from GetSolutionCallback
-            or SetSolutionCallback.
+            Callback class that inherits from GetSolutionCallback,
+            SetSolutionCallback, or CheckTerminationCallback.
 
         Examples
         --------
@@ -297,6 +298,18 @@ class SolverSettings:
         >>> set_callback = CustomSetSolutionCallback(get_callback)
         >>> settings.set_mip_callback(get_callback)
         >>> settings.set_mip_callback(set_callback)
+        >>>
+        >>> # Callback for termination check
+        >>> class CustomCheckTerminationCallback(CheckTerminationCallback):
+        >>>     def __init__(self):
+        >>>         super().__init__()
+        >>>         self.should_terminate = False
+        >>>
+        >>>     def check_termination(self):
+        >>>         return self.should_terminate
+        >>>
+        >>> termination_callback = CustomCheckTerminationCallback()
+        >>> settings.set_mip_callback(termination_callback)
         """
         self.mip_callbacks.append(callback)
 
@@ -305,6 +318,39 @@ class SolverSettings:
         Return callback class object
         """
         return self.mip_callbacks
+
+    def set_lp_callback(self, callback):
+        """
+        Note: Only supported for LP
+
+        Set the callback for LP solving, e.g., to check termination.
+
+        Parameters
+        ----------
+        callback : class for function callback
+            Callback class that inherits from CheckTerminationCallback.
+
+        Examples
+        --------
+        >>> # Callback for termination check
+        >>> class CustomCheckTerminationCallback(CheckTerminationCallback):
+        >>>     def __init__(self):
+        >>>         super().__init__()
+        >>>         self.should_terminate = False
+        >>>
+        >>>     def check_termination(self):
+        >>>         return self.should_terminate
+        >>>
+        >>> termination_callback = CustomCheckTerminationCallback()
+        >>> settings.set_lp_callback(termination_callback)
+        """
+        self.lp_callbacks.append(callback)
+
+    def get_lp_callbacks(self):
+        """
+        Return LP callback class objects
+        """
+        return self.lp_callbacks
 
     def get_pdlp_warm_start_data(self):
         """

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -25,6 +25,7 @@
 #include <mip/local_search/local_search.cuh>
 #include <mip/solution/solution.cuh>
 #include <mip/solver.cuh>
+#include <utilities/termination_checker.hpp>
 #include <utilities/timer.hpp>
 
 namespace cuopt::linear_programming::detail {
@@ -63,7 +64,7 @@ class diversity_manager_t {
                               solution_t<i_t, f_t>& sol2);
   bool run_local_search(solution_t<i_t, f_t>& solution,
                         const weight_t<i_t, f_t>& weights,
-                        timer_t& timer,
+                        termination_checker_t& timer,
                         ls_config_t<i_t, f_t>& ls_config);
 
   void set_simplex_solution(const std::vector<f_t>& solution,
@@ -79,7 +80,7 @@ class diversity_manager_t {
   rmm::device_uvector<f_t> lp_dual_optimal_solution;
   std::atomic<bool> simplex_solution_exists{false};
   local_search_t<i_t, f_t> ls;
-  cuopt::timer_t timer;
+  termination_checker_t timer;
   bound_prop_recombiner_t<i_t, f_t> bound_prop_recombiner;
   fp_recombiner_t<i_t, f_t> fp_recombiner;
   line_segment_recombiner_t<i_t, f_t> line_segment_recombiner;

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -9,6 +9,7 @@
 
 #include <cuopt/linear_programming/constants.h>
 #include <cuopt/linear_programming/pdlp/pdlp_warm_start_data.hpp>
+#include <cuopt/linear_programming/utilities/internals.hpp>
 #include <optional>
 #include <raft/core/device_span.hpp>
 #include <rmm/device_uvector.hpp>
@@ -170,6 +171,16 @@ class pdlp_solver_settings_t {
   bool has_initial_primal_solution() const;
   bool has_initial_dual_solution() const;
 
+  const std::vector<internals::base_solution_callback_t*> get_lp_callbacks() const
+  {
+    return lp_callbacks_;
+  }
+
+  void set_lp_callback(internals::base_solution_callback_t* callback)
+  {
+    lp_callbacks_.push_back(callback);
+  }
+
   struct tolerances_t {
     f_t absolute_dual_tolerance     = 1.0e-4;
     f_t relative_dual_tolerance     = 1.0e-4;
@@ -214,6 +225,8 @@ class pdlp_solver_settings_t {
   // For concurrent termination
   std::atomic<int>* concurrent_halt{nullptr};
   static constexpr f_t minimal_absolute_tolerance = 1.0e-12;
+
+  std::vector<internals::base_solution_callback_t*> lp_callbacks_;
 
  private:
   /** Initial primal solution */

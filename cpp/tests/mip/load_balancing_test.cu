@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -136,7 +136,8 @@ void test_multi_probe(std::string path)
                                                                problem.reverse_constraints,
                                                                nullptr,
                                                                true);
-  detail::mip_solver_t<int, double> solver(problem, default_settings, scaling, cuopt::timer_t(0));
+  detail::mip_solver_t<int, double> solver(
+    problem, default_settings, scaling, termination_checker_t(0));
   detail::load_balanced_problem_t<int, double> lb_problem(problem);
   detail::load_balanced_bounds_presolve_t<int, double> lb_prs(lb_problem, solver.context);
 

@@ -8,9 +8,9 @@
 #include <cuopt/linear_programming/mip/solver_stats.hpp>
 
 #include <linear_programming/initial_scaling_strategy/initial_scaling.cuh>
-#include <linear_programming/solver_termination.hpp>
 #include <mip/problem/problem.cuh>
 #include <mip/relaxed_lp/lp_state.cuh>
+#include <utilities/termination_checker.hpp>
 
 #pragma once
 
@@ -29,12 +29,12 @@ struct mip_solver_context_t {
                                 problem_t<i_t, f_t>* problem_ptr_,
                                 mip_solver_settings_t<i_t, f_t> settings_,
                                 pdlp_initial_scaling_strategy_t<i_t, f_t>& scaling,
-                                double time_limit)
+                                termination_checker_t& termination)
     : handle_ptr(handle_ptr_),
       problem_ptr(problem_ptr_),
       settings(settings_),
       scaling(scaling),
-      termination(time_limit)
+      termination(termination)
   {
     cuopt_assert(problem_ptr != nullptr, "problem_ptr is nullptr");
     stats.solution_bound = problem_ptr->maximize ? std::numeric_limits<f_t>::infinity()
@@ -48,7 +48,7 @@ struct mip_solver_context_t {
   const mip_solver_settings_t<i_t, f_t> settings;
   pdlp_initial_scaling_strategy_t<i_t, f_t>& scaling;
   solver_stats_t<i_t, f_t> stats;
-  solver_termination_t termination;
+  termination_checker_t& termination;
 };
 
 }  // namespace cuopt::linear_programming::detail

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -128,7 +128,7 @@ bool line_segment_search_t<i_t, f_t>::search_line_segment(
   const rmm::device_uvector<f_t>& point_2,
   const rmm::device_uvector<f_t>& delta_vector,
   bool is_feasibility_run,
-  cuopt::timer_t& timer)
+  const termination_checker_t& timer)
 {
   CUOPT_LOG_DEBUG("Running line segment search with a given delta vector");
   cuopt_assert(point_1.size() == point_2.size(), "size mismatch");
@@ -186,7 +186,7 @@ bool line_segment_search_t<i_t, f_t>::search_line_segment(
                               best_feasible_cost,
                               curr_cost);
     }
-    if (timer.check_time_limit()) { break; }
+    if (timer.check()) { break; }
     i_t number_of_integer_var_diff = compute_number_of_integer_var_diff<i_t, f_t>(
       solution.problem_ptr->integer_indices,
       solution.assignment,
@@ -224,7 +224,7 @@ bool line_segment_search_t<i_t, f_t>::search_line_segment(
                               best_feasible_cost,
                               curr_cost);
     }
-    if (timer.check_time_limit()) { break; }
+    if (timer.check()) { break; }
   }
   // if not recombiner mode but local search mode
   if (!settings.recombiner_mode) {
@@ -263,7 +263,7 @@ bool line_segment_search_t<i_t, f_t>::search_line_segment(solution_t<i_t, f_t>& 
                                                           const rmm::device_uvector<f_t>& point_1,
                                                           const rmm::device_uvector<f_t>& point_2,
                                                           bool is_feasibility_run,
-                                                          cuopt::timer_t& timer)
+                                                          const termination_checker_t& timer)
 {
   CUOPT_LOG_DEBUG("Running line segment search");
   cuopt_assert(point_1.size() == point_2.size(), "size mismatch");

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -12,6 +12,7 @@
 #include <cuopt/linear_programming/mip/solver_solution.hpp>
 #include <cuopt/linear_programming/optimization_problem.hpp>
 #include <cuopt/linear_programming/solve.hpp>
+#include <cuopt/utilities/user_interrupt_handler.hpp>
 #include <mps_parser/parser.hpp>
 #include <utilities/logger.hpp>
 
@@ -39,6 +40,14 @@
 #include <vector>
 
 #include "initial_problem_check.hpp"
+
+class check_termination_callback_t : public cuopt::internals::check_termination_callback_t {
+ public:
+  virtual bool check_termination() override
+  {
+    return cuopt::user_interrupt_handler_t::instance().termination_requested();
+  }
+};
 
 void merge_result_files(const std::string& out_dir,
                         const std::string& final_result_file,
@@ -197,6 +206,8 @@ int run_single_file(std::string file_path,
     }
   }
 
+  check_termination_callback_t termination_callback;
+  settings.set_mip_callback(&termination_callback);
   settings.time_limit                    = time_limit;
   settings.heuristics_only               = heuristics_only;
   settings.num_cpu_threads               = num_cpu_threads;

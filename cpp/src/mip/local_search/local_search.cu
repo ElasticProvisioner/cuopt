@@ -150,7 +150,7 @@ bool local_search_t<i_t, f_t>::do_fj_solve(solution_t<i_t, f_t>& solution,
 {
   if (time_limit == 0.) return solution.get_feasible();
 
-  timer_t timer(time_limit);
+  termination_checker_t timer(time_limit, context.termination);
 
   auto h_weights          = cuopt::host_copy(in_fj.cstr_weights, solution.handle_ptr->get_stream());
   auto h_objective_weight = in_fj.objective_weight.value(solution.handle_ptr->get_stream());
@@ -233,7 +233,8 @@ bool local_search_t<i_t, f_t>::do_fj_solve(solution_t<i_t, f_t>& solution,
 }
 
 template <typename i_t, typename f_t>
-void local_search_t<i_t, f_t>::generate_fast_solution(solution_t<i_t, f_t>& solution, timer_t timer)
+void local_search_t<i_t, f_t>::generate_fast_solution(solution_t<i_t, f_t>& solution,
+                                                      const termination_checker_t& timer)
 {
   thrust::fill(solution.handle_ptr->get_thrust_policy(),
                solution.assignment.begin(),
@@ -245,12 +246,13 @@ void local_search_t<i_t, f_t>::generate_fast_solution(solution_t<i_t, f_t>& solu
   fj.settings.update_weights         = true;
   fj.settings.feasibility_run        = true;
   fj.settings.time_limit             = std::min(30., timer.remaining_time());
-  while (!timer.check_time_limit()) {
-    timer_t constr_prop_timer = timer_t(std::min(timer.remaining_time(), 2.));
+  while (!timer.check()) {
+    termination_checker_t constr_prop_timer =
+      termination_checker_t(std::min(timer.remaining_time(), 2.), context.termination);
     // do constraint prop on lp optimal solution
     constraint_prop.apply_round(solution, 1., constr_prop_timer);
     if (solution.compute_feasibility()) { return; }
-    if (timer.check_time_limit()) { return; };
+    if (timer.check()) { return; };
     f_t time_limit = std::min(3., timer.remaining_time());
     // run fj on the solution
     do_fj_solve(solution, fj, time_limit, "fast");
@@ -263,20 +265,21 @@ void local_search_t<i_t, f_t>::generate_fast_solution(solution_t<i_t, f_t>& solu
 template <typename i_t, typename f_t>
 bool local_search_t<i_t, f_t>::run_local_search(solution_t<i_t, f_t>& solution,
                                                 const weight_t<i_t, f_t>& weights,
-                                                timer_t timer,
+                                                const termination_checker_t& in_timer,
                                                 const ls_config_t<i_t, f_t>& ls_config)
 {
   raft::common::nvtx::range fun_scope("local search");
   fj_settings_t fj_settings;
-  if (timer.check_time_limit()) return false;
+  auto timer = in_timer;
+  if (timer.check()) return false;
   // adjust these time limits
   if (!solution.get_feasible()) {
     if (ls_config.at_least_one_parent_feasible) {
       fj_settings.time_limit = 0.5;
-      timer                  = timer_t(fj_settings.time_limit);
+      timer                  = termination_checker_t(fj_settings.time_limit, context.termination);
     } else {
       fj_settings.time_limit = 0.25;
-      timer                  = timer_t(fj_settings.time_limit);
+      timer                  = termination_checker_t(fj_settings.time_limit, context.termination);
     }
   } else {
     fj_settings.time_limit = std::min(1., timer.remaining_time());
@@ -307,7 +310,7 @@ bool local_search_t<i_t, f_t>::run_local_search(solution_t<i_t, f_t>& solution,
 template <typename i_t, typename f_t>
 bool local_search_t<i_t, f_t>::run_fj_until_timer(solution_t<i_t, f_t>& solution,
                                                   const weight_t<i_t, f_t>& weights,
-                                                  timer_t timer)
+                                                  const termination_checker_t& timer)
 {
   bool is_feasible;
   fj.settings.n_of_minimums_for_exit = 1e6;
@@ -319,13 +322,13 @@ bool local_search_t<i_t, f_t>::run_fj_until_timer(solution_t<i_t, f_t>& solution
   do_fj_solve(solution, fj, time_limit, "until_timer");
   CUOPT_LOG_DEBUG("Initial FJ feasibility done");
   is_feasible = solution.compute_feasibility();
-  if (fj.settings.feasibility_run || timer.check_time_limit()) { return is_feasible; }
+  if (fj.settings.feasibility_run || timer.check()) { return is_feasible; }
   return is_feasible;
 }
 
 template <typename i_t, typename f_t>
 bool local_search_t<i_t, f_t>::run_fj_annealing(solution_t<i_t, f_t>& solution,
-                                                timer_t timer,
+                                                const termination_checker_t& timer,
                                                 const ls_config_t<i_t, f_t>& ls_config)
 {
   raft::common::nvtx::range fun_scope("run_fj_annealing");
@@ -355,7 +358,7 @@ bool local_search_t<i_t, f_t>::run_fj_annealing(solution_t<i_t, f_t>& solution,
 
 template <typename i_t, typename f_t>
 bool local_search_t<i_t, f_t>::run_fj_line_segment(solution_t<i_t, f_t>& solution,
-                                                   timer_t timer,
+                                                   const termination_checker_t& timer,
                                                    const ls_config_t<i_t, f_t>& ls_config)
 {
   raft::common::nvtx::range fun_scope("run_fj_line_segment");
@@ -378,7 +381,7 @@ bool local_search_t<i_t, f_t>::run_fj_line_segment(solution_t<i_t, f_t>& solutio
 template <typename i_t, typename f_t>
 bool local_search_t<i_t, f_t>::check_fj_on_lp_optimal(solution_t<i_t, f_t>& solution,
                                                       bool perturb,
-                                                      timer_t timer)
+                                                      const termination_checker_t& timer)
 {
   raft::common::nvtx::range fun_scope("check_fj_on_lp_optimal");
   if (lp_optimal_exists) {
@@ -395,7 +398,8 @@ bool local_search_t<i_t, f_t>::check_fj_on_lp_optimal(solution_t<i_t, f_t>& solu
   }
   cuopt_func_call(solution.test_variable_bounds(false));
   f_t lp_run_time_after_feasible = std::min(1., timer.remaining_time());
-  timer_t bounds_prop_timer      = timer_t(std::min(timer.remaining_time(), 10.));
+  termination_checker_t bounds_prop_timer =
+    termination_checker_t(std::min(timer.remaining_time(), 10.), context.termination);
   bool is_feasible =
     constraint_prop.apply_round(solution, lp_run_time_after_feasible, bounds_prop_timer);
   if (!is_feasible) {
@@ -404,7 +408,7 @@ bool local_search_t<i_t, f_t>::check_fj_on_lp_optimal(solution_t<i_t, f_t>& solu
     lp_settings.time_limit = std::min(lp_run_time, timer.remaining_time());
     lp_settings.tolerance  = solution.problem_ptr->tolerances.absolute_tolerance;
     run_lp_with_vars_fixed(
-      *solution.problem_ptr, solution, solution.problem_ptr->integer_indices, lp_settings);
+      *solution.problem_ptr, solution, solution.problem_ptr->integer_indices, lp_settings, timer);
   } else {
     return is_feasible;
   }
@@ -419,7 +423,8 @@ bool local_search_t<i_t, f_t>::check_fj_on_lp_optimal(solution_t<i_t, f_t>& solu
 }
 
 template <typename i_t, typename f_t>
-bool local_search_t<i_t, f_t>::run_fj_on_zero(solution_t<i_t, f_t>& solution, timer_t timer)
+bool local_search_t<i_t, f_t>::run_fj_on_zero(solution_t<i_t, f_t>& solution,
+                                              const termination_checker_t& timer)
 {
   raft::common::nvtx::range fun_scope("run_fj_on_zero");
   thrust::fill(solution.handle_ptr->get_thrust_policy(),
@@ -438,7 +443,7 @@ bool local_search_t<i_t, f_t>::run_fj_on_zero(solution_t<i_t, f_t>& solution, ti
 
 template <typename i_t, typename f_t>
 bool local_search_t<i_t, f_t>::run_staged_fp(solution_t<i_t, f_t>& solution,
-                                             timer_t timer,
+                                             const termination_checker_t& timer,
                                              population_t<i_t, f_t>* population_ptr)
 {
   raft::common::nvtx::range fun_scope("run_staged_fp");
@@ -458,19 +463,19 @@ bool local_search_t<i_t, f_t>::run_staged_fp(solution_t<i_t, f_t>& solution,
     fp.cycle_queue.reset(solution);
     fp.reset();
     fp.resize_vectors(*solution.problem_ptr, solution.handle_ptr);
-    for (i_t i = 0; i < n_fp_iterations && !timer.check_time_limit(); ++i) {
+    for (i_t i = 0; i < n_fp_iterations && !timer.check(); ++i) {
       population_ptr->add_external_solutions_to_population();
-      if (context.preempt_heuristic_solver_.load() || context.termination.should_terminate()) {
+      if (context.preempt_heuristic_solver_.load() || context.termination.check()) {
         CUOPT_LOG_DEBUG("Preempting heuristic solver!");
         return false;
       }
       CUOPT_LOG_DEBUG("Running staged FP from beginning it %d", i);
       fp.relax_general_integers(solution);
-      timer_t binary_timer(timer.remaining_time() / 3);
+      termination_checker_t binary_timer(timer.remaining_time() / 3, context.termination);
       i_t binary_it_counter = 0;
       for (; binary_it_counter < 100; ++binary_it_counter) {
         population_ptr->add_external_solutions_to_population();
-        if (context.preempt_heuristic_solver_.load() || context.termination.should_terminate()) {
+        if (context.preempt_heuristic_solver_.load() || context.termination.check()) {
           CUOPT_LOG_DEBUG("Preempting heuristic solver!");
           return false;
         }
@@ -478,7 +483,7 @@ bool local_search_t<i_t, f_t>::run_staged_fp(solution_t<i_t, f_t>& solution,
           "Running binary problem from it %d large_restart_it %d", binary_it_counter, i);
         is_feasible = fp.run_single_fp_descent(solution);
         if (is_feasible) { break; }
-        if (timer.check_time_limit()) {
+        if (timer.check()) {
           fp.revert_relaxation(solution);
           solution.round_nearest();
           CUOPT_LOG_DEBUG("Time limit reached during binary stage!");
@@ -487,7 +492,7 @@ bool local_search_t<i_t, f_t>::run_staged_fp(solution_t<i_t, f_t>& solution,
         is_feasible = fp.restart_fp(solution);
         if (is_feasible) { break; }
         // give the integer FP some chance
-        if (binary_timer.check_time_limit()) {
+        if (binary_timer.check()) {
           CUOPT_LOG_DEBUG("Binary FP time limit reached during binary stage!");
           break;
         }
@@ -505,7 +510,7 @@ bool local_search_t<i_t, f_t>::run_staged_fp(solution_t<i_t, f_t>& solution,
           "Running integer problem from it %d large_restart_it %d", integer_it_counter, i);
         is_feasible = fp.run_single_fp_descent(solution);
         if (is_feasible) { return true; }
-        if (timer.check_time_limit()) {
+        if (timer.check()) {
           CUOPT_LOG_DEBUG("FP time limit reached during integer stage!");
           solution.round_nearest();
           return false;
@@ -631,7 +636,7 @@ void local_search_t<i_t, f_t>::reset_alpha_and_run_recombiners(
 
 template <typename i_t, typename f_t>
 bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
-                                      timer_t timer,
+                                      const termination_checker_t& timer,
                                       population_t<i_t, f_t>* population_ptr)
 {
   raft::common::nvtx::range fun_scope("run_fp");
@@ -643,7 +648,7 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
     is_feasible ? solution.get_objective() : std::numeric_limits<double>::max();
   rmm::device_uvector<f_t> best_solution(solution.assignment, solution.handle_ptr->get_stream());
   problem_t<i_t, f_t>* old_problem_ptr = solution.problem_ptr;
-  fp.timer                             = timer_t(timer.remaining_time());
+  fp.timer = termination_checker_t(timer.remaining_time(), context.termination);
   // if it has not been initialized yet, create a new problem and move it to the cut problem
   if (!problem_with_objective_cut.cutting_plane_added) {
     problem_with_objective_cut = std::move(problem_t<i_t, f_t>(*old_problem_ptr));
@@ -661,21 +666,21 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
     resize_to_new_problem();
   }
   i_t last_improved_iteration = 0;
-  for (i_t i = 0; i < n_fp_iterations && !timer.check_time_limit(); ++i) {
-    if (timer.check_time_limit()) {
+  for (i_t i = 0; i < n_fp_iterations && !timer.check(); ++i) {
+    if (timer.check()) {
       is_feasible = false;
       break;
     }
     CUOPT_LOG_DEBUG("fp_loop it %d last_improved_iteration %d", i, last_improved_iteration);
     population_ptr->add_external_solutions_to_population();
-    if (context.preempt_heuristic_solver_.load() || context.termination.should_terminate()) {
+    if (context.preempt_heuristic_solver_.load() || context.termination.check()) {
       CUOPT_LOG_DEBUG("Preempting heuristic solver!");
       break;
     }
     is_feasible = fp.run_single_fp_descent(solution);
     population_ptr->add_external_solutions_to_population();
     CUOPT_LOG_DEBUG("Population size at iteration %d: %d", i, population_ptr->current_size());
-    if (context.preempt_heuristic_solver_.load() || context.termination.should_terminate()) {
+    if (context.preempt_heuristic_solver_.load() || context.termination.check()) {
       CUOPT_LOG_DEBUG("Preempting heuristic solver!");
       break;
     }
@@ -693,13 +698,13 @@ bool local_search_t<i_t, f_t>::run_fp(solution_t<i_t, f_t>& solution,
     }
     // if not feasible, it means it is a cycle
     else {
-      if (timer.check_time_limit()) {
+      if (timer.check()) {
         is_feasible = false;
         break;
       }
       is_feasible = fp.restart_fp(solution);
       population_ptr->add_external_solutions_to_population();
-      if (context.preempt_heuristic_solver_.load() || context.termination.should_terminate()) {
+      if (context.preempt_heuristic_solver_.load() || context.termination.check()) {
         CUOPT_LOG_DEBUG("Preempting heuristic solver!");
         break;
       }
@@ -744,7 +749,7 @@ bool local_search_t<i_t, f_t>::generate_solution(solution_t<i_t, f_t>& solution,
 {
   raft::common::nvtx::range fun_scope("generate_solution");
   cuopt_assert(population_ptr != nullptr, "Population pointer must not be null");
-  timer_t timer(time_limit);
+  termination_checker_t timer(time_limit, context.termination);
   auto n_vars         = solution.problem_ptr->n_variables;
   auto n_binary_vars  = solution.problem_ptr->get_n_binary_variables();
   auto n_integer_vars = solution.problem_ptr->n_integer_vars;
@@ -754,7 +759,7 @@ bool local_search_t<i_t, f_t>::generate_solution(solution_t<i_t, f_t>& solution,
     return true;
   }
   population_ptr->add_external_solutions_to_population();
-  if (context.preempt_heuristic_solver_.load() || context.termination.should_terminate()) {
+  if (context.preempt_heuristic_solver_.load() || context.termination.check()) {
     CUOPT_LOG_DEBUG("Preempting heuristic solver!");
     return is_feasible;
   }
@@ -775,7 +780,7 @@ bool local_search_t<i_t, f_t>::generate_solution(solution_t<i_t, f_t>& solution,
                solution.handle_ptr->get_stream());
   }
   population_ptr->add_external_solutions_to_population();
-  if (context.preempt_heuristic_solver_.load() || context.termination.should_terminate()) {
+  if (context.preempt_heuristic_solver_.load() || context.termination.check()) {
     CUOPT_LOG_DEBUG("Preempting heuristic solver!");
     return is_feasible;
   }

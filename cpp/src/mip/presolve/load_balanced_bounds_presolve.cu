@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -526,7 +526,7 @@ bool load_balanced_bounds_presolve_t<i_t, f_t>::update_bounds_from_slack(
 
 template <typename i_t, typename f_t>
 termination_criterion_t load_balanced_bounds_presolve_t<i_t, f_t>::bound_update_loop(
-  const raft::handle_t* handle_ptr, timer_t timer)
+  const raft::handle_t* handle_ptr, const termination_checker_t& timer)
 {
   termination_criterion_t criteria = termination_criterion_t::ITERATION_LIMIT;
 
@@ -541,7 +541,7 @@ termination_criterion_t load_balanced_bounds_presolve_t<i_t, f_t>::bound_update_
       }
       break;
     }
-    if (timer.check_time_limit()) {
+    if (timer.check()) {
       criteria = termination_criterion_t::TIME_LIMIT;
       CUOPT_LOG_DEBUG("Exiting bounds prop because of time limit at iter %d", iter);
       break;
@@ -626,7 +626,7 @@ termination_criterion_t load_balanced_bounds_presolve_t<i_t, f_t>::solve(f_t var
                                                                          f_t var_ub,
                                                                          i_t var_idx)
 {
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit);
   auto& handle_ptr = pb->handle_ptr;
   copy_input_bounds(*pb);
   vars_bnd.set_element_async(2 * var_idx, var_lb, handle_ptr->get_stream());
@@ -638,7 +638,7 @@ template <typename i_t, typename f_t>
 termination_criterion_t load_balanced_bounds_presolve_t<i_t, f_t>::solve(
   raft::device_span<f_t> input_bounds)
 {
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit);
   auto& handle_ptr = pb->handle_ptr;
   if (input_bounds.size() != 0) {
     raft::copy(vars_bnd.data(), input_bounds.data(), input_bounds.size(), handle_ptr->get_stream());
@@ -667,7 +667,7 @@ template <typename i_t, typename f_t>
 termination_criterion_t load_balanced_bounds_presolve_t<i_t, f_t>::solve(
   const std::vector<thrust::pair<i_t, f_t>>& var_probe_val_pairs, bool use_host_bounds)
 {
-  timer_t timer(settings.time_limit);
+  termination_checker_t timer(settings.time_limit);
   auto& handle_ptr = pb->handle_ptr;
   if (use_host_bounds) {
     update_device_bounds(handle_ptr);

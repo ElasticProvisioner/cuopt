@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -159,7 +159,8 @@ class load_balanced_bounds_presolve_t {
   void calculate_constraint_slack_iter(const raft::handle_t* handle_ptr);
   bool update_bounds_from_slack(const raft::handle_t* handle_ptr);
 
-  termination_criterion_t bound_update_loop(const raft::handle_t* handle_ptr, timer_t timer);
+  termination_criterion_t bound_update_loop(const raft::handle_t* handle_ptr,
+                                            const termination_checker_t& timer);
   bool calculate_infeasible_redundant_constraints(const raft::handle_t* handle_ptr);
 
   // void calculate_constraint_slack_on_problem_bounds();

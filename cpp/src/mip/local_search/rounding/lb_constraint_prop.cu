@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -453,7 +453,7 @@ bool lb_constraint_prop_t<i_t, f_t>::run_repair_procedure(
   load_balanced_problem_t<i_t, f_t>* problem,
   load_balanced_bounds_presolve_t<i_t, f_t>& lb_bounds_update,
   problem_t<i_t, f_t>& original_problem,
-  timer_t& timer,
+  termination_checker_t& timer,
   const raft::handle_t* handle_ptr)
 {
   lb_bounds_update.set_updated_bounds(problem);
@@ -462,7 +462,7 @@ bool lb_constraint_prop_t<i_t, f_t>::run_repair_procedure(
   i_t n_of_repairs_needed_for_feasible = 0;
   do {
     n_of_repairs_needed_for_feasible++;
-    if (timer.check_time_limit()) {
+    if (timer.check()) {
       CUOPT_LOG_DEBUG("Time limit is reached in repair loop!");
       f_t repair_end_time = timer.remaining_time();
       total_time_spent_on_repair += repair_start_time - repair_end_time;
@@ -487,7 +487,7 @@ bool lb_constraint_prop_t<i_t, f_t>::run_repair_procedure(
     lb_bounds_update.settings.iteration_limit = 20;
     // if time limit is reached, this is needed sometimes we reach time limit and decide that it is
     // not ii but propagation eventually will make it ii
-    if (timer.check_time_limit()) {
+    if (timer.check()) {
       CUOPT_LOG_DEBUG("Time limit is reached in repair loop!");
       f_t repair_end_time = timer.remaining_time();
       total_time_spent_on_repair += repair_start_time - repair_end_time;
@@ -700,14 +700,14 @@ template <typename i_t, typename f_t>
 bool lb_constraint_prop_t<i_t, f_t>::apply_round(
   solution_t<i_t, f_t>& sol,
   f_t lp_run_time_after_feasible,
-  timer_t& timer,
+  termination_checker_t& timer,
   std::optional<std::vector<thrust::pair<f_t, f_t>>> probing_candidates)
 {
   raft::common::nvtx::range fun_scope("constraint prop round");
 
   // this is second timer that can continue but without recovery mode
   const f_t max_time_for_bounds_prop = 5.;
-  max_timer                          = timer_t{max_time_for_bounds_prop};
+  max_timer                          = termination_checker_t{max_time_for_bounds_prop};
   if (check_brute_force_rounding(sol)) { return true; }
   recovery_mode      = false;
   rounding_ii        = false;
@@ -754,7 +754,7 @@ bool lb_constraint_prop_t<i_t, f_t>::find_integer(
   load_balanced_bounds_presolve_t<i_t, f_t>& lb_bounds_update,
   solution_t<i_t, f_t>& orig_sol,
   f_t lp_run_time_after_feasible,
-  timer_t& timer,
+  termination_checker_t& timer,
   std::optional<std::vector<thrust::pair<f_t, f_t>>> probing_candidates)
 {
   RAFT_CHECK_CUDA(problem.handle_ptr->get_stream());
@@ -778,7 +778,7 @@ bool lb_constraint_prop_t<i_t, f_t>::find_integer(
   lb_bounds_update.settings.iteration_limit = 20;
   RAFT_CHECK_CUDA(problem.handle_ptr->get_stream());
 
-  if (max_timer.check_time_limit()) {
+  if (max_timer.check()) {
     CUOPT_LOG_DEBUG("Time limit is reached before bounds prop rounding!");
     orig_sol.round_nearest();
     cuopt_func_call(orig_sol.test_variable_bounds());
@@ -825,13 +825,13 @@ bool lb_constraint_prop_t<i_t, f_t>::find_integer(
 
   while (set_count < unset_integer_vars.size()) {
     update_host_assignment(assignment, orig_sol.handle_ptr);
-    if (max_timer.check_time_limit()) {
+    if (max_timer.check()) {
       CUOPT_LOG_DEBUG("Second time limit is reached returning nearest rounding!");
       // sol.round_nearest();
       timeout_happened = true;
       break;
     }
-    if (!rounding_ii && timer.check_time_limit()) {
+    if (!rounding_ii && timer.check()) {
       CUOPT_LOG_DEBUG("First time limit is reached! Continuing without backtracking!");
       rounding_ii = true;
     }
@@ -868,7 +868,8 @@ bool lb_constraint_prop_t<i_t, f_t>::find_integer(
           &set_count,
           unset_integer_vars);
     if (!repair_tried && rounding_ii && !timeout_happened) {
-      timer_t repair_timer{std::min(timer.remaining_time() / 5, timer.elapsed_time() / 3)};
+      termination_checker_t repair_timer{
+        std::min(timer.remaining_time() / 5, timer.elapsed_time() / 3)};
       save_bounds(problem, assignment, orig_sol.handle_ptr);
       // update bounds and run repair procedure
       // infeasible cnst_slack invalid

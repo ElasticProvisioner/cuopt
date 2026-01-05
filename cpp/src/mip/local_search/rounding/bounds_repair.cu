@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -30,7 +30,8 @@ bounds_repair_t<i_t, f_t>::bounds_repair_t(const problem_t<i_t, f_t>& pb,
     violated_cstr_map(0, pb.handle_ptr->get_stream()),
     total_vio(pb.handle_ptr->get_stream()),
     gen(cuopt::seed_generator::get_seed()),
-    cycle_vector(MAX_CYCLE_SEQUENCE, -1)
+    cycle_vector(MAX_CYCLE_SEQUENCE, -1),
+    timer(0, bound_presolve.context.termination)
 {
 }
 
@@ -377,7 +378,7 @@ void bounds_repair_t<i_t, f_t>::apply_move(problem_t<i_t, f_t>& problem,
 template <typename i_t, typename f_t>
 bool bounds_repair_t<i_t, f_t>::repair_problem(problem_t<i_t, f_t>& problem,
                                                problem_t<i_t, f_t>& original_problem,
-                                               timer_t timer_,
+                                               termination_checker_t timer_,
                                                const raft::handle_t* handle_ptr_)
 {
   CUOPT_LOG_DEBUG("Running bounds repair");
@@ -394,7 +395,7 @@ bool bounds_repair_t<i_t, f_t>::repair_problem(problem_t<i_t, f_t>& problem,
                     h_n_violated_cstr,
                     best_violation,
                     curr_violation);
-    if (timer.check_time_limit()) { break; }
+    if (timer.check()) { break; }
     i_t curr_cstr = get_random_cstr();
     // best way would be to check a variable cycle, but this is easier and more performant
     bool is_cycle = detect_cycle(curr_cstr);

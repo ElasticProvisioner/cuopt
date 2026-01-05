@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -44,7 +44,7 @@ population_t<i_t, f_t>::population_t(std::string const& name_,
     rng(cuopt::seed_generator::get_seed()),
     early_exit_primal_generation(false),
     population_hash_map(*problem_ptr),
-    timer(0)
+    timer(0, context.termination)
 {
   best_feasible_objective = std::numeric_limits<f_t>::max();
 }
@@ -724,7 +724,7 @@ void population_t<i_t, f_t>::start_threshold_adjustment()
 }
 
 template <typename i_t, typename f_t>
-void population_t<i_t, f_t>::adjust_threshold(cuopt::timer_t timer)
+void population_t<i_t, f_t>::adjust_threshold(const termination_checker_t& timer)
 {
   double time_ratio = (timer.elapsed_time() - population_start_time) /
                       (timer.get_time_limit() - population_start_time);

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -27,9 +27,11 @@ template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   problem_t<i_t, f_t>& op_problem,
   solution_t<i_t, f_t>& solution,
-  const relaxed_lp_settings_t& settings)
+  const relaxed_lp_settings_t& settings,
+  const termination_checker_t& termination)
 {
-  return get_relaxed_lp_solution(op_problem, solution.assignment, solution.lp_state, settings);
+  return get_relaxed_lp_solution(
+    op_problem, solution.assignment, solution.lp_state, settings, termination);
 }
 
 template <typename i_t, typename f_t>
@@ -37,7 +39,8 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   problem_t<i_t, f_t>& op_problem,
   rmm::device_uvector<f_t>& assignment,
   lp_state_t<i_t, f_t>& lp_state,
-  const relaxed_lp_settings_t& settings)
+  const relaxed_lp_settings_t& settings,
+  const termination_checker_t& termination)
 {
   raft::common::nvtx::range fun_scope("get_relaxed_lp_solution");
   pdlp_solver_settings_t<i_t, f_t> pdlp_settings{};
@@ -84,7 +87,7 @@ optimization_problem_solution_t<i_t, f_t> get_relaxed_lp_solution(
   // before LP flush the logs as it takes quite some time
   cuopt::default_logger().flush();
   // temporarily add timer
-  auto start_time = timer_t(pdlp_settings.time_limit);
+  auto start_time = termination_checker_t(pdlp_settings.time_limit, termination);
   lp_solver.set_inside_mip(true);
   auto solver_response = lp_solver.run_solver(start_time);
 
@@ -118,6 +121,7 @@ bool run_lp_with_vars_fixed(problem_t<i_t, f_t>& op_problem,
                             rmm::device_uvector<f_t>& fixed_assignment,
                             rmm::device_uvector<i_t>& variable_map,
                             relaxed_lp_settings_t& settings,
+                            const termination_checker_t& termination,
                             bound_presolve_t<i_t, f_t>* bound_presolve,
                             bool check_fixed_assignment_feasibility)
 {
@@ -155,7 +159,7 @@ bool run_lp_with_vars_fixed(problem_t<i_t, f_t>& op_problem,
   CUOPT_LOG_TRACE("save_state %d", settings.save_state);
   auto& lp_state = fixed_problem.lp_state;
   auto solver_response =
-    get_relaxed_lp_solution(fixed_problem, fixed_assignment, lp_state, settings);
+    get_relaxed_lp_solution(fixed_problem, fixed_assignment, lp_state, settings, termination);
   // unfix the assignment on given result no matter if it is feasible
   solution.unfix_variables(fixed_assignment, variable_map);
   if (bound_presolve != nullptr) { bound_presolve->resize(op_problem); }
@@ -168,6 +172,7 @@ bool run_lp_with_vars_fixed(problem_t<i_t, f_t>& op_problem,
                             solution_t<i_t, f_t>& solution,
                             const rmm::device_uvector<i_t>& variables_to_fix,
                             relaxed_lp_settings_t& settings,
+                            const termination_checker_t& termination,
                             bound_presolve_t<i_t, f_t>* bound_presolve,
                             bool check_fixed_assignment_feasibility,
                             bool use_integer_fixed_problem)
@@ -184,6 +189,7 @@ bool run_lp_with_vars_fixed(problem_t<i_t, f_t>& op_problem,
                                   fixed_assignment,
                                   op_problem.integer_fixed_variable_map,
                                   settings,
+                                  termination,
                                   bound_presolve,
                                   check_fixed_assignment_feasibility);
   } else {
@@ -194,6 +200,7 @@ bool run_lp_with_vars_fixed(problem_t<i_t, f_t>& op_problem,
                                   fixed_assignment,
                                   variable_map,
                                   settings,
+                                  termination,
                                   bound_presolve,
                                   check_fixed_assignment_feasibility);
   }
@@ -203,17 +210,20 @@ bool run_lp_with_vars_fixed(problem_t<i_t, f_t>& op_problem,
   template optimization_problem_solution_t<int, F_TYPE> get_relaxed_lp_solution<int, F_TYPE>( \
     problem_t<int, F_TYPE> & op_problem,                                                      \
     solution_t<int, F_TYPE> & solution,                                                       \
-    const relaxed_lp_settings_t& settings);                                                   \
+    const relaxed_lp_settings_t& settings,                                                    \
+    const termination_checker_t& termination);                                                \
   template optimization_problem_solution_t<int, F_TYPE> get_relaxed_lp_solution<int, F_TYPE>( \
     problem_t<int, F_TYPE> & op_problem,                                                      \
     rmm::device_uvector<F_TYPE> & assignment,                                                 \
     lp_state_t<int, F_TYPE> & lp_state,                                                       \
-    const relaxed_lp_settings_t& settings);                                                   \
+    const relaxed_lp_settings_t& settings,                                                    \
+    const termination_checker_t& termination);                                                \
   template bool run_lp_with_vars_fixed<int, F_TYPE>(                                          \
     problem_t<int, F_TYPE> & op_problem,                                                      \
     solution_t<int, F_TYPE> & solution,                                                       \
     const rmm::device_uvector<int>& variables_to_fix,                                         \
     relaxed_lp_settings_t& settings,                                                          \
+    const termination_checker_t& termination,                                                 \
     bound_presolve_t<int, F_TYPE>* bound_presolve,                                            \
     bool check_fixed_assignment_feasibility,                                                  \
     bool use_integer_fixed_problem);

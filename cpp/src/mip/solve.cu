@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -61,7 +61,7 @@ static void setup_device_symbols(rmm::cuda_stream_view stream_view)
 template <typename i_t, typename f_t>
 mip_solution_t<i_t, f_t> run_mip(detail::problem_t<i_t, f_t>& problem,
                                  mip_solver_settings_t<i_t, f_t> const& settings,
-                                 cuopt::timer_t& timer)
+                                 termination_checker_t& timer)
 {
   raft::common::nvtx::range fun_scope("run_mip");
   auto constexpr const running_mip = true;
@@ -183,15 +183,47 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
                                       op_problem.get_handle_ptr()->get_stream());
     }
 
-    auto timer = cuopt::timer_t(time_limit);
+    auto termination = termination_checker_t(time_limit, termination_checker_t::root_tag_t{});
+    termination.set_termination_callback(
+      [](void* termination_callback_data) {
+        auto settings = static_cast<mip_solver_settings_t<i_t, f_t>*>(termination_callback_data);
+        for (auto callback : settings->get_mip_callbacks()) {
+          if (callback->get_type() != internals::base_solution_callback_type::CHECK_TERMINATION) {
+            continue;
+          }
+          auto check_termination_callback =
+            static_cast<internals::check_termination_callback_t*>(callback);
+          if (check_termination_callback->check_termination()) { return true; }
+        }
+        return false;
+      },
+      (void*)&settings);
 
     double presolve_time = 0.0;
     std::unique_ptr<detail::third_party_presolve_t<i_t, f_t>> presolver;
     detail::problem_t<i_t, f_t> problem(op_problem, settings.get_tolerances());
 
     auto run_presolve = settings.presolve;
-    run_presolve      = run_presolve && settings.get_mip_callbacks().empty();
-    run_presolve      = run_presolve && settings.initial_solutions.size() == 0;
+
+    // Check for get_solution or set_solution callbacks
+    bool has_solution_callbacks = false;
+    for (auto callback : settings.get_mip_callbacks()) {
+      auto type = callback->get_type();
+      if (type == internals::base_solution_callback_type::GET_SOLUTION ||
+          type == internals::base_solution_callback_type::SET_SOLUTION) {
+        has_solution_callbacks = true;
+        break;
+      }
+    }
+    if (has_solution_callbacks) {
+      CUOPT_LOG_WARN("Presolve is not yet supported with solution callbacks");
+      run_presolve = false;
+    }
+
+    if (settings.initial_solutions.size() > 0) {
+      CUOPT_LOG_WARN("Presolve is not yet supported with initial solutions");
+      run_presolve = false;
+    }
 
     if (!run_presolve) { CUOPT_LOG_INFO("Presolve is disabled, skipping"); }
 
@@ -217,7 +249,7 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
 
       problem = detail::problem_t<i_t, f_t>(result->reduced_problem);
       problem.set_implied_integers(result->implied_integer_indices);
-      presolve_time = timer.elapsed_time();
+      presolve_time = termination.elapsed_time();
       if (result->implied_integer_indices.size() > 0) {
         CUOPT_LOG_INFO("%d implied integers", result->implied_integer_indices.size());
       }
@@ -232,7 +264,7 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     // this is for PDLP, i think this should be part of pdlp solver
     setup_device_symbols(op_problem.get_handle_ptr()->get_stream());
 
-    auto sol = run_mip(problem, settings, timer);
+    auto sol = run_mip(problem, settings, termination);
 
     if (run_presolve) {
       auto status_to_skip = sol.get_termination_status() == mip_termination_status_t::TimeLimit ||

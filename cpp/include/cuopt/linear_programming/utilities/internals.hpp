@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -20,7 +20,7 @@ class Callback {
   virtual ~Callback() {}
 };
 
-enum class base_solution_callback_type { GET_SOLUTION, SET_SOLUTION };
+enum class base_solution_callback_type { GET_SOLUTION, SET_SOLUTION, CHECK_TERMINATION };
 
 class base_solution_callback_t : public Callback {
  public:
@@ -56,6 +56,14 @@ class set_solution_callback_t : public base_solution_callback_t {
   }
 };
 
+class check_termination_callback_t : public base_solution_callback_t {
+ public:
+  virtual bool check_termination() = 0;
+  base_solution_callback_type get_type() const override
+  {
+    return base_solution_callback_type::CHECK_TERMINATION;
+  }
+};
 }  // namespace internals
 
 namespace linear_programming {

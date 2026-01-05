@@ -8,7 +8,10 @@
 #pragma once
 
 #include <dual_simplex/logger.hpp>
+#include <dual_simplex/tic_toc.hpp>
 #include <dual_simplex/types.hpp>
+
+#include <utilities/termination_checker.hpp>
 
 #include <omp.h>
 #include <algorithm>
@@ -16,10 +19,6 @@
 #include <functional>
 #include <limits>
 #include <vector>
-
-namespace cuopt::linear_programming {
-class solver_termination_t;
-}
 
 namespace cuopt::linear_programming::dual_simplex {
 
@@ -88,6 +87,13 @@ struct simplex_solver_settings_t {
   void enable_log_to_file() { log.enable_log_to_file(); }
   void set_log_filename(const std::string& log_filename) { log.set_log_file(log_filename); }
   void close_log_file() { log.close_log_file(); }
+  bool check_termination(double start_time) const
+  {
+    bool terminate =
+      toc(start_time) > time_limit || (termination != nullptr && termination->check());
+    if (terminate && concurrent_halt != nullptr) *concurrent_halt = 1;
+    return terminate;
+  }
   i_t iteration_limit;
   i_t node_limit;
   f_t time_limit;
@@ -151,7 +157,7 @@ struct simplex_solver_settings_t {
   mutable logger_t log;
   std::atomic<int>* concurrent_halt;  // if nullptr ignored, if !nullptr, 0 if solver should
                                       // continue, 1 if solver should halt
-  solver_termination_t* termination{nullptr};  // if not nullptr, check for user interrupt
+  termination_checker_t* termination{nullptr};  // if not nullptr, check for user interrupt
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex
