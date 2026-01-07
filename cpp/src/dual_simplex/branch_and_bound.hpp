@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -22,7 +22,6 @@
 #include <utilities/omp_helpers.hpp>
 
 #include <omp.h>
-#include <queue>
 #include <vector>
 
 namespace cuopt::linear_programming::dual_simplex {
@@ -155,9 +154,12 @@ class branch_and_bound_t {
   // Search tree
   search_tree_t<i_t, f_t> search_tree_;
 
-  // Count the number of tasks per type that either being executed or
-  // waiting to be executed.
-  std::array<omp_atomic_t<i_t>, 5> active_workers_per_type;
+  // Count the number of workers per type that either are being executed or
+  // are waiting to be executed.
+  std::array<omp_atomic_t<i_t>, bnb_num_worker_types> active_workers_per_type;
+
+  // Worker pool
+  bnb_worker_pool_t<i_t, f_t> worker_pool_;
 
   // Global status of the solver.
   omp_atomic_t<mip_exploration_status_t> solver_status_;
@@ -170,14 +172,6 @@ class branch_and_bound_t {
 
   void report_heuristic(f_t obj);
   void report(std::string symbol, f_t obj, f_t lower_bound, i_t node_depth);
-
-  
-  // Worker pool
-  std::vector<std::unique_ptr<bnb_worker_t<i_t, f_t>>> workers_;
-
-  // FIXME: Implement a lock-free queue
-  omp_mutex_t mutex_available_workers_;
-  std::deque<i_t> available_workers_;
 
   // Set the final solution.
   mip_status_t set_final_solution(mip_solution_t<i_t, f_t>& solution, f_t lower_bound);

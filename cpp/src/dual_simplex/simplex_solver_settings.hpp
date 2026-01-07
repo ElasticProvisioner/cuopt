@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -20,52 +20,20 @@
 
 namespace cuopt::linear_programming::dual_simplex {
 
-// Indicate the search and variable selection algorithms used by each worker
-// in B&B (See [1]).
-//
-// [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
-// Berlin, 2007. doi: 10.14279/depositonce-1634.
-enum bnb_worker_type_t {
-  EXPLORATION        = 0,  // Best-First + Plunging.
-  PSEUDOCOST_DIVING  = 1,  // Pseudocost diving (9.2.5)
-  LINE_SEARCH_DIVING = 2,  // Line search diving (9.2.4)
-  GUIDED_DIVING = 3,  // Guided diving (9.2.3). If no incumbent is found yet, use pseudocost diving.
-  COEFFICIENT_DIVING = 4  // Coefficient diving (9.2.1)
-};
-
-// Settings for each worker in B&B.
 template <typename i_t, typename f_t>
-struct bnb_worker_settings_t {
-  // Type of the worker.
-  bnb_worker_type_t type;
+struct diving_heuristics_settings_t {
+  i_t num_diving_workers = -1;
 
-  // Is this worker enabled?
-  // This will be ignored if `type == EXPLORATION`.
-  bool is_enabled;
+  bool disable_line_search_diving = false;
+  bool disable_pseudocost_diving  = false;
+  bool disable_guided_diving      = false;
+  bool disable_coefficient_diving = false;
 
-  // Number of workers of this type.
-  i_t num_workers;
-
-  // Minimum node depth to start this worker
-  // This will be ignored if `type == EXPLORATION`.
-  i_t min_node_depth;
-
-  // Maximum number of nodes explored in this worker.
-  i_t node_limit;
-
-  // Maximum fraction of the number of simplex iterations for this worker
-  // compared to the number of simplex iterations for normal exploration.
-  // This will be ignored if `type == EXPLORATION`.
-  f_t iteration_limit_factor;
-
-  // Number of nodes that it allows to backtrack when
-  // reaching the bottom of a given branch of the tree.
-  // This will be ignored if `type == EXPLORATION`.
-  i_t backtrack;
+  i_t min_node_depth         = 0;
+  i_t node_limit             = 500;
+  f_t iteration_limit_factor = 0.05;
+  i_t backtrack              = 5;
 };
-
-template <typename i_t, typename f_t>
-bnb_worker_settings_t<i_t, f_t> get_default_diving_settings(bnb_worker_type_t type);
 
 template <typename i_t, typename f_t>
 struct simplex_solver_settings_t {
@@ -117,66 +85,21 @@ struct simplex_solver_settings_t {
       refactor_frequency(100),
       iteration_log_frequency(1000),
       first_iteration_log(2),
+      num_threads(omp_get_max_threads() - 1),
+      num_bfs_workers(std::min(num_threads / 4, 1)),
       random_seed(0),
       inside_mip(0),
       solution_callback(nullptr),
       heuristic_preemption_callback(nullptr),
       concurrent_halt(nullptr)
   {
-    bnb_worker_settings[EXPLORATION] =
-      bnb_worker_settings_t<i_t, f_t>{.type                   = EXPLORATION,
-                                      .is_enabled             = true,
-                                      .num_workers            = -1,
-                                      .min_node_depth         = 0,
-                                      .node_limit             = std::numeric_limits<i_t>::max(),
-                                      .iteration_limit_factor = std::numeric_limits<f_t>::max(),
-                                      .backtrack              = 1};
-
-    bnb_worker_settings[PSEUDOCOST_DIVING] =
-      get_default_diving_settings<i_t, f_t>(PSEUDOCOST_DIVING);
-
-    bnb_worker_settings[LINE_SEARCH_DIVING] =
-      get_default_diving_settings<i_t, f_t>(LINE_SEARCH_DIVING);
-
-    bnb_worker_settings[GUIDED_DIVING] = get_default_diving_settings<i_t, f_t>(GUIDED_DIVING);
-
-    bnb_worker_settings[COEFFICIENT_DIVING] =
-      get_default_diving_settings<i_t, f_t>(COEFFICIENT_DIVING);
-
-    set_bnb_tasks(omp_get_max_threads() - 1);
-  }
-
-  void set_bnb_tasks(i_t num_threads)
-  {
-    this->num_threads                            = num_threads;
-    bnb_worker_settings[EXPLORATION].num_workers = std::max(1, num_threads / 2);
-
-    i_t diving_tasks = num_threads - bnb_worker_settings[EXPLORATION].num_workers;
-    i_t num_enabled  = 0;
-
-    for (size_t i = 1; i < bnb_worker_settings.size(); ++i) {
-      num_enabled += static_cast<i_t>(bnb_worker_settings[i].is_enabled);
-    }
-
-    for (size_t i = 1, k = 0; i < bnb_worker_settings.size(); ++i) {
-      i_t start = (double)k * diving_tasks / num_enabled;
-      i_t end   = (double)(k + 1) * diving_tasks / num_enabled;
-
-      if (bnb_worker_settings[i].is_enabled) {
-        bnb_worker_settings[i].num_workers = 2 * (end - start);
-        ++k;
-
-      } else {
-        bnb_worker_settings[i].num_workers = 0;
-      }
-    }
+    diving_settings.num_diving_workers = std::max(num_threads - num_bfs_workers, 1);
   }
 
   void set_log(bool logging) const { log.log = logging; }
   void enable_log_to_file() { log.enable_log_to_file(); }
   void set_log_filename(const std::string& log_filename) { log.set_log_file(log_filename); }
   void close_log_file() { log.close_log_file(); }
-
   i_t iteration_limit;
   i_t node_limit;
   f_t time_limit;
@@ -230,10 +153,9 @@ struct simplex_solver_settings_t {
   i_t first_iteration_log;         // number of iterations to log at beginning of solve
   i_t num_threads;                 // number of threads to use
   i_t random_seed;                 // random seed
+  i_t num_bfs_workers;             // number of threads dedicated to the best-first search
 
-  // Indicate the settings used by each task
-  // The position in the array is indicated by the `bnb_task_type_t`.
-  std::array<bnb_worker_settings_t<i_t, f_t>, 5> bnb_worker_settings;
+  diving_heuristics_settings_t<i_t, f_t> diving_settings;  // Settings for the diving heuristics
 
   i_t inside_mip;  // 0 if outside MIP, 1 if inside MIP at root node, 2 if inside MIP at leaf node
   std::function<void(std::vector<f_t>&, f_t)> solution_callback;

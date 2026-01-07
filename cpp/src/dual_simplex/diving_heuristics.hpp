@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -19,9 +19,6 @@ struct branch_variable_t {
   i_t variable;
   rounding_direction_t direction;
 };
-
-template <typename i_t, typename f_t>
-bnb_worker_settings_t<i_t, f_t> get_default_diving_settings(bnb_worker_type_t type);
 
 template <typename i_t, typename f_t>
 branch_variable_t<i_t> line_search_diving(const std::vector<i_t>& fractional,
