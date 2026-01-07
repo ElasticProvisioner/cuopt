@@ -946,6 +946,7 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bnb_worker_t<i_t, f_t>* worker)
 
     ++exploration_stats_.nodes_explored;
     --exploration_stats_.nodes_unexplored;
+    ++nodes_since_last_log;
 
     if (status == node_solve_info_t::TIME_LIMIT) {
       break;
@@ -1058,8 +1059,7 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
   f_t rel_gap         = user_relative_gap(original_lp_, upper_bound, lower_bound);
   i_t last_node_depth = 0;
 
-  f_t last_log             = 0.0;
-  i_t nodes_since_last_log = 0;
+  f_t last_log = 0.0;
 
   diving_heuristics_settings_t<i_t, f_t> diving_settings = settings_.diving_settings;
   if (!std::isfinite(upper_bound)) { diving_settings.disable_guided_diving = true; }
@@ -1096,10 +1096,12 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
         (time_since_last_log > 30) || now > settings_.time_limit) {
       i_t depth =
         node_queue.best_first_queue_size() > 0 ? node_queue.bfs_top()->depth : last_node_depth;
-      report(" ", upper_bound, lower_bound, depth);
+      report("  ", upper_bound, lower_bound, depth);
       last_log             = tic();
       nodes_since_last_log = 0;
     }
+
+    if (now > settings_.time_limit) { break; }
 
     // There is no node in the queue, so we suspend temporarily the execution of the master
     // so it can execute a worker task instead.
@@ -1118,7 +1120,7 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
         // If there any node left in the heap, we pop the top node and explore it.
         std::optional<mip_node_t<i_t, f_t>*> start_node = node_queue.pop_best_first();
 
-        if (start_node.has_value()) {
+        if (!start_node.has_value()) {
           worker_pool_.return_worker_to_pool(worker);
           continue;
         }
@@ -1144,7 +1146,7 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
       } else {
         std::optional<mip_node_t<i_t, f_t>*> start_node = node_queue.pop_diving();
 
-        if (start_node.has_value()) {
+        if (!start_node.has_value()) {
           worker_pool_.return_worker_to_pool(worker);
           continue;
         }

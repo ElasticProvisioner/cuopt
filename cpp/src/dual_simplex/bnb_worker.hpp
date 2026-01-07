@@ -113,6 +113,7 @@ class bnb_worker_pool_t {
             const std::vector<variable_type_t>& var_type,
             const simplex_solver_settings_t<i_t, f_t>& settings)
   {
+    workers_.resize(num_workers);
     for (i_t i = 0; i < num_workers; ++i) {
       workers_[i] =
         std::make_unique<bnb_worker_t<i_t, f_t>>(i, original_lp, Arow, var_type, settings);

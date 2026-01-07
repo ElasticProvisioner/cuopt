@@ -165,6 +165,7 @@ class branch_and_bound_t {
   omp_atomic_t<mip_exploration_status_t> solver_status_;
 
   omp_atomic_t<bool> should_report_;
+  omp_atomic_t<i_t> nodes_since_last_log;
 
   // In case, a best-first thread encounters a numerical issue when solving a node,
   // its blocks the progression of the lower bound.

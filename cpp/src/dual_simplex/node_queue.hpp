@@ -25,14 +25,12 @@ class heap_t {
   {
     buffer.push_back(node);
     std::push_heap(buffer.begin(), buffer.end(), comp);
-    buffer_size++;
   }
 
   void push(T&& node)
   {
     buffer.push_back(std::move(node));
     std::push_heap(buffer.begin(), buffer.end(), comp);
-    buffer_size++;
   }
 
   template <typename... Args>
@@ -40,7 +38,6 @@ class heap_t {
   {
     buffer.emplace_back(std::forward<Args&&>(args)...);
     std::push_heap(buffer.begin(), buffer.end(), comp);
-    buffer_size++;
   }
 
   std::optional<T> pop()
@@ -50,18 +47,16 @@ class heap_t {
     std::pop_heap(buffer.begin(), buffer.end(), comp);
     T node = std::move(buffer.back());
     buffer.pop_back();
-    buffer_size--;
     return node;
   }
 
-  size_t size() const { return buffer_size.load(); }
+  size_t size() const { return buffer.size(); }
   T& top() { return buffer.front(); }
   void clear() { buffer.clear(); }
   bool empty() const { return buffer.empty(); }
 
  private:
   std::vector<T> buffer;
-  omp_atomic_t<size_t> buffer_size;
   Comp comp;
 };
 
@@ -138,8 +133,17 @@ class node_queue_t {
     return std::nullopt;
   }
 
-  size_t diving_queue_size() const { return diving_heap.size(); }
-  size_t best_first_queue_size() const { return best_first_heap.size(); }
+  i_t diving_queue_size()
+  {
+    std::lock_guard<omp_mutex_t> lock(mutex);
+    return diving_heap.size();
+  }
+
+  i_t best_first_queue_size()
+  {
+    std::lock_guard<omp_mutex_t> lock(mutex);
+    return best_first_heap.size();
+  }
 
   f_t get_lower_bound()
   {
