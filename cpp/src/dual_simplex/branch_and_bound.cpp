@@ -1086,6 +1086,7 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
         diving_settings.disable_guided_diving = settings_.diving_settings.disable_guided_diving;
         max_num_workers_per_type =
           bnb_get_num_workers_round_robin(settings_.num_threads, diving_settings);
+        worker_types = bnb_get_worker_types(diving_settings);
       }
     }
 
@@ -1403,7 +1404,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                       original_lp_,
                       log);
 
-  worker_pool_.init(settings_.num_threads, original_lp_, Arow_, var_types_, settings_);
+  worker_pool_.init(2 * settings_.num_threads, original_lp_, Arow_, var_types_, settings_);
   active_workers_per_type.fill(0);
 
   settings_.log.printf("Exploring the B&B tree using %d threads (best-first = %d, diving = %d)\n",
