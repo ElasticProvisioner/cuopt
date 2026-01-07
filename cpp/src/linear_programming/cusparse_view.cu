@@ -356,14 +356,14 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
       op_problem_scaled.n_constraints,
       climber_strategies.size(),
       (use_row_row) ? climber_strategies.size() : op_problem_scaled.n_constraints,
-      (use_row_row) ? batch_dual_solutions_data_transposed_.data() : current_saddle_point_state.get_dual_solution().data(),
+      current_saddle_point_state.get_dual_solution().data(),
       (use_row_row) ? CUSPARSE_ORDER_ROW : CUSPARSE_ORDER_COL));
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
       &batch_current_AtYs,
       op_problem_scaled.n_variables,
       climber_strategies.size(),
       (use_row_row) ? climber_strategies.size() : op_problem_scaled.n_variables,
-      (use_row_row) ? batch_current_AtYs_data_transposed_.data() : current_saddle_point_state.get_current_AtY().data(),
+     current_saddle_point_state.get_current_AtY().data(),
       (use_row_row) ? CUSPARSE_ORDER_ROW : CUSPARSE_ORDER_COL));
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
       &batch_potential_next_dual_solution,
@@ -385,14 +385,14 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
       op_problem_scaled.n_variables,
       climber_strategies.size(),
       (use_row_row) ? climber_strategies.size() : op_problem_scaled.n_variables,
-      (use_row_row) ? batch_reflected_primal_solutions_data_transposed_.data() : _reflected_primal_solution.data(),
+      _reflected_primal_solution.data(),
       (use_row_row) ? CUSPARSE_ORDER_ROW : CUSPARSE_ORDER_COL));
       RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
         &batch_dual_gradients,
         op_problem_scaled.n_constraints,
         climber_strategies.size(),
         (use_row_row) ? climber_strategies.size() : op_problem_scaled.n_constraints,
-        (use_row_row) ? batch_dual_gradients_data_transposed_.data() : current_saddle_point_state.get_dual_gradient().data(),
+        current_saddle_point_state.get_dual_gradient().data(),
         (use_row_row) ? CUSPARSE_ORDER_ROW : CUSPARSE_ORDER_COL));
 
     if (deterministic_batch_pdlp)

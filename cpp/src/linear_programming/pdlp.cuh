@@ -178,8 +178,8 @@ class pdlp_solver_t {
 
   pdlp_warm_start_data_t<i_t, f_t> get_filled_warmed_start_data();
 
-  void transpose_primal_dual_to_row();
-  void transpose_primal_dual_back_to_col();
+  void transpose_primal_dual_to_row(rmm::device_uvector<f_t>& primal_to_transpose, rmm::device_uvector<f_t>& dual_to_transpose, rmm::device_uvector<f_t>& dual_slack_to_transpose);
+  void transpose_primal_dual_back_to_col(rmm::device_uvector<f_t>& primal_to_transpose, rmm::device_uvector<f_t>& dual_to_transpose, rmm::device_uvector<f_t>& dual_slack_to_transpose);
 
   bool matrix_transposed_{false};
 

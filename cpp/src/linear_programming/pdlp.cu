@@ -1240,7 +1240,7 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
       make_span(step_size_),
       make_span(step_size_strategy_.get_interaction()),
       make_span(restart_strategy_.fixed_point_error_));
-      RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_)); // To make sure all the data is written from device to host
+    RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_)); // To make sure all the data is written from device to host
     RAFT_CUDA_TRY(cudaPeekAtLastError());
     #ifdef CUPDLP_DEBUG_MODE
       RAFT_CUDA_TRY(cudaDeviceSynchronize());
@@ -1282,6 +1282,12 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
     }
   }
 
+  #ifdef CUPDLP_DEBUG_MODE
+  for (size_t i = 0; i < climber_strategies_.size(); ++i) {
+    printf("fixed_point_error %lf\n", restart_strategy_.fixed_point_error_[i]);
+  }
+  #endif
+
   for (size_t i = 0; i < climber_strategies_.size(); ++i)
   {
     if (has_restarted[i]) {
@@ -1294,11 +1300,12 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
 // Tranpose all the data we use in termination condition and restart:
 // potential_next_primal_solution, potential_next_dual_solution, dual_slack
 template <typename i_t, typename f_t>
-void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_to_row()
+void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_to_row(rmm::device_uvector<f_t>& primal_to_transpose, rmm::device_uvector<f_t>& dual_to_transpose, rmm::device_uvector<f_t>& dual_slack_to_transpose)
 {
+  bool is_dual_slack_empty = dual_slack_to_transpose.size() == 0;
   rmm::device_uvector<f_t> primal_transposed(primal_size_h_ * climber_strategies_.size(), stream_view_);
   rmm::device_uvector<f_t> dual_transposed(dual_size_h_ * climber_strategies_.size(), stream_view_);
-  rmm::device_uvector<f_t> dual_slack_transposed(primal_size_h_ * climber_strategies_.size(), stream_view_);
+  rmm::device_uvector<f_t> dual_slack_transposed(is_dual_slack_empty ? 0 : primal_size_h_ * climber_strategies_.size(), stream_view_);
 
 
   CUBLAS_CHECK(cublasDgeam(
@@ -1307,7 +1314,7 @@ void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_to_row()
     climber_strategies_.size(),
     primal_size_h_,
     reusable_device_scalar_value_1_.data(),
-    pdhg_solver_.get_potential_next_primal_solution().data(),
+    primal_to_transpose.data(),
     primal_size_h_,
     reusable_device_scalar_value_0_.data(),
     nullptr,                   
@@ -1316,13 +1323,14 @@ void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_to_row()
     climber_strategies_.size()
   ));
 
+  if (!is_dual_slack_empty) {
   CUBLAS_CHECK(cublasDgeam(
     handle_ptr_->get_cublas_handle(),
     CUBLAS_OP_T, CUBLAS_OP_N,
     climber_strategies_.size(),
     primal_size_h_,
     reusable_device_scalar_value_1_.data(),
-    pdhg_solver_.get_dual_slack().data(),
+    dual_slack_to_transpose.data(),
     primal_size_h_,
     reusable_device_scalar_value_0_.data(),
     nullptr,                   
@@ -1330,47 +1338,49 @@ void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_to_row()
     dual_slack_transposed.data(),
     climber_strategies_.size()
   ));
-
-  CUBLAS_CHECK(cublasDgeam(
-    handle_ptr_->get_cublas_handle(),
-    CUBLAS_OP_T, CUBLAS_OP_N,
-    climber_strategies_.size(),
-    dual_size_h_,
-    reusable_device_scalar_value_1_.data(),
-    pdhg_solver_.get_potential_next_dual_solution().data(),
-    dual_size_h_,
-    reusable_device_scalar_value_0_.data(),
-    nullptr,                   
-    climber_strategies_.size(),
-    dual_transposed.data(),
-    climber_strategies_.size()
-  ));
+  }
+    CUBLAS_CHECK(cublasDgeam(
+      handle_ptr_->get_cublas_handle(),
+      CUBLAS_OP_T, CUBLAS_OP_N,
+      climber_strategies_.size(),
+      dual_size_h_,
+      reusable_device_scalar_value_1_.data(),
+      dual_to_transpose.data(),
+      dual_size_h_,
+      reusable_device_scalar_value_0_.data(),
+      nullptr,                   
+      climber_strategies_.size(),
+      dual_transposed.data(),
+      climber_strategies_.size()
+    ));
 
   // Copy that holds the tranpose to the original vector
-  raft::copy(pdhg_solver_.get_potential_next_primal_solution().data(),
+  raft::copy(primal_to_transpose.data(),
              primal_transposed.data(),
              primal_size_h_ * climber_strategies_.size(),
              stream_view_);
 
-  raft::copy(pdhg_solver_.get_dual_slack().data(),
+            if (!is_dual_slack_empty) {
+  raft::copy(dual_slack_to_transpose.data(),
              dual_slack_transposed.data(),
              primal_size_h_ * climber_strategies_.size(),
              stream_view_);
+            }
 
   // Copy that holds the tranpose to the original vector
-  raft::copy(pdhg_solver_.get_potential_next_dual_solution().data(),
+  raft::copy(dual_to_transpose.data(),
              dual_transposed.data(),
              dual_size_h_ * climber_strategies_.size(),
              stream_view_);
 }
 
 template <typename i_t, typename f_t>
-void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_back_to_col()
+void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_back_to_col(rmm::device_uvector<f_t>& primal_to_transpose, rmm::device_uvector<f_t>& dual_to_transpose, rmm::device_uvector<f_t>& dual_slack_to_transpose)
 {
+  bool is_dual_slack_empty = dual_slack_to_transpose.size() == 0;
   rmm::device_uvector<f_t> primal_transposed(primal_size_h_ * climber_strategies_.size(), stream_view_);
   rmm::device_uvector<f_t> dual_transposed(dual_size_h_ * climber_strategies_.size(), stream_view_);
-  rmm::device_uvector<f_t> dual_slack_transposed(primal_size_h_ * climber_strategies_.size(), stream_view_);
-
+  rmm::device_uvector<f_t> dual_slack_transposed(is_dual_slack_empty ? 0 : primal_size_h_ * climber_strategies_.size(), stream_view_);
 
   CUBLAS_CHECK(cublasDgeam(
     handle_ptr_->get_cublas_handle(),
@@ -1378,7 +1388,7 @@ void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_back_to_col()
     primal_size_h_,
     climber_strategies_.size(),
     reusable_device_scalar_value_1_.data(),
-    pdhg_solver_.get_potential_next_primal_solution().data(),
+    primal_to_transpose.data(),
     climber_strategies_.size(),
     reusable_device_scalar_value_0_.data(),
     nullptr,                   
@@ -1387,13 +1397,14 @@ void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_back_to_col()
     primal_size_h_
   ));
 
+  if (!is_dual_slack_empty) {
   CUBLAS_CHECK(cublasDgeam(
     handle_ptr_->get_cublas_handle(),
     CUBLAS_OP_T, CUBLAS_OP_N,
     primal_size_h_,
     climber_strategies_.size(),
     reusable_device_scalar_value_1_.data(),
-    pdhg_solver_.get_dual_slack().data(),
+    dual_slack_to_transpose.data(),
     climber_strategies_.size(),
     reusable_device_scalar_value_0_.data(),
     nullptr,                   
@@ -1401,6 +1412,7 @@ void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_back_to_col()
     dual_slack_transposed.data(),
     primal_size_h_
   ));
+  }
 
   CUBLAS_CHECK(cublasDgeam(
     handle_ptr_->get_cublas_handle(),
@@ -1408,7 +1420,7 @@ void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_back_to_col()
     dual_size_h_,
     climber_strategies_.size(),
     reusable_device_scalar_value_1_.data(),
-    pdhg_solver_.get_potential_next_dual_solution().data(),
+    dual_to_transpose.data(),
     climber_strategies_.size(),
     reusable_device_scalar_value_0_.data(),
     nullptr,                   
@@ -1418,18 +1430,20 @@ void pdlp_solver_t<i_t, f_t>::transpose_primal_dual_back_to_col()
   ));
 
   // Copy that holds the tranpose to the original vector
-  raft::copy(pdhg_solver_.get_potential_next_primal_solution().data(),
+  raft::copy(primal_to_transpose.data(),
              primal_transposed.data(),
              primal_size_h_ * climber_strategies_.size(),
              stream_view_);
 
-  raft::copy(pdhg_solver_.get_dual_slack().data(),
+  if (!is_dual_slack_empty) {
+  raft::copy(dual_slack_to_transpose.data(),
              dual_slack_transposed.data(),
              primal_size_h_ * climber_strategies_.size(),
              stream_view_);
+  }
 
   // Copy that holds the tranpose to the original vector
-  raft::copy(pdhg_solver_.get_potential_next_dual_solution().data(),
+  raft::copy(dual_to_transpose.data(),
              dual_transposed.data(),
              dual_size_h_ * climber_strategies_.size(),
              stream_view_);
@@ -1518,7 +1532,6 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
 
   // Project initial primal solution
   if (settings_.hyper_params.project_initial_primal) {
-    // TODO batch mode: handle different variable bounds
     using f_t2 = typename type_2<f_t>::type;
     cub::DeviceTransform::Transform(
       cuda::std::make_tuple(pdhg_solver_.get_primal_solution().data(),
@@ -1540,6 +1553,13 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
         clamp<f_t, f_t2>(),
         stream_view_);
     }
+  }
+
+  // Need to to tranpose primal solution to row format as there might be initial values or clamping
+  // Value may not be all 0
+  if (batch_mode_) {
+    rmm::device_uvector<f_t> dummy(0, stream_view_);
+    transpose_primal_dual_to_row(pdhg_solver_.get_primal_solution(), pdhg_solver_.get_dual_solution(), dummy);
   }
 
 #ifdef CUPDLP_DEBUG_MODE
@@ -1572,7 +1592,7 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
 
   // In batch mode, before running the solver, we need to transpose the primal and dual solution to row format
   if (batch_mode_) {
-    transpose_primal_dual_to_row();
+    transpose_primal_dual_to_row(pdhg_solver_.get_potential_next_primal_solution(), pdhg_solver_.get_potential_next_dual_solution(), pdhg_solver_.get_dual_slack());
     matrix_transposed_ = true;
   }
 
@@ -1644,7 +1664,10 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
       // We need to transpose them to column format before doing any checks
       if (batch_mode_) {
         cuopt_assert(matrix_transposed_, "Matrix should be transposed");
-        transpose_primal_dual_back_to_col();
+        rmm::device_uvector<f_t> dummy(0, stream_view_);
+        transpose_primal_dual_back_to_col(pdhg_solver_.get_potential_next_primal_solution(), pdhg_solver_.get_potential_next_dual_solution(), pdhg_solver_.get_dual_slack());
+        transpose_primal_dual_back_to_col(restart_strategy_.last_restart_duality_gap_.primal_solution_, restart_strategy_.last_restart_duality_gap_.dual_solution_, dummy);
+        transpose_primal_dual_back_to_col(pdhg_solver_.get_primal_solution(), pdhg_solver_.get_dual_solution(), dummy);
         matrix_transposed_ = false;
       }
 
@@ -1735,7 +1758,18 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
       // In batch mode, after having checked for termination and restart
       // We transpose back to row for the PDHG iterations
       if (batch_mode_) {
-        transpose_primal_dual_to_row();
+        transpose_primal_dual_to_row(pdhg_solver_.get_potential_next_primal_solution(), pdhg_solver_.get_potential_next_dual_solution(), pdhg_solver_.get_dual_slack());
+        // If restart has happend, the following has been written in column format:
+        // last_restart_duality_gap_.primal_solution_.data(), pdhg_solver.get_primal_solution().data(), last_restart_duality_gap_.dual_solution_.data(), pdhg_solver.get_dual_solution().data(),
+        // And thus should also be transposed to row
+        // TODO batch mode: works because all restart currently
+        //if (has_restarted[0])
+        {
+          //cuopt_assert(std::all_of(has_restarted.begin(), has_restarted.end(), [](int restarted){ return restarted == 1; }), "If any, all should be true");
+          rmm::device_uvector<f_t> dummy(0, stream_view_);
+          transpose_primal_dual_to_row(restart_strategy_.last_restart_duality_gap_.primal_solution_, restart_strategy_.last_restart_duality_gap_.dual_solution_, dummy);
+          transpose_primal_dual_to_row(pdhg_solver_.get_primal_solution(), pdhg_solver_.get_dual_solution(), dummy);
+        }
         matrix_transposed_ = true;
       }
     }
@@ -1756,12 +1790,16 @@ optimization_problem_solution_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::run_solver(co
             cuopt_assert(std::all_of(has_restarted.begin(), has_restarted.end(), [](int restarted){ return restarted == 1; }), "If any, all should be true");
           if (batch_mode_) {
             cuopt_assert(matrix_transposed_, "Matrix should be transposed");
-            transpose_primal_dual_back_to_col();
+            rmm::device_uvector<f_t> dummy(0, stream_view_);
+            transpose_primal_dual_back_to_col(pdhg_solver_.get_reflected_primal(), pdhg_solver_.get_reflected_dual(), pdhg_solver_.get_saddle_point_state().get_current_AtY());
+            transpose_primal_dual_back_to_col(pdhg_solver_.get_primal_solution(), pdhg_solver_.get_dual_solution(), dummy);
             matrix_transposed_ = false;
           }
           compute_fixed_error(has_restarted);  // May set has_restarted to false
           if (batch_mode_) {
-            transpose_primal_dual_to_row();
+            rmm::device_uvector<f_t> dummy(0, stream_view_);
+            transpose_primal_dual_to_row(pdhg_solver_.get_reflected_primal(), pdhg_solver_.get_reflected_dual(), pdhg_solver_.get_saddle_point_state().get_current_AtY());
+            transpose_primal_dual_to_row(pdhg_solver_.get_primal_solution(), pdhg_solver_.get_dual_solution(), dummy);
             matrix_transposed_ = true;
           }
         }

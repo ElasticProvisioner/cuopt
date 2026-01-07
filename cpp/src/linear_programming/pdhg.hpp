@@ -39,6 +39,8 @@ class pdhg_solver_t {
   const rmm::device_uvector<f_t>& get_potential_next_primal_solution() const;
   rmm::device_uvector<f_t>& get_potential_next_dual_solution();
   const rmm::device_uvector<f_t>& get_potential_next_dual_solution() const;
+   rmm::device_uvector<f_t>& get_reflected_dual() ;
+   rmm::device_uvector<f_t>& get_reflected_primal() ;
   const rmm::device_uvector<f_t>& get_reflected_dual() const;
   const rmm::device_uvector<f_t>& get_reflected_primal() const;
   i_t get_total_pdhg_iterations();
@@ -62,19 +64,19 @@ class pdhg_solver_t {
   void refine_initial_primal_projection();
 
   i_t total_pdhg_iterations_;
-
- private:
+  
+  private:
   void compute_next_primal_dual_solution(rmm::device_uvector<f_t>& primal_step_size,
-                                         i_t iterations_since_last_restart,
-                                         bool last_restart_was_average,
-                                         rmm::device_uvector<f_t>& dual_step_size,
-                                         i_t total_pdlp_iterations);
-  void compute_next_dual_solution(rmm::device_uvector<f_t>& dual_step_size);
-  void compute_next_primal_dual_solution_reflected(rmm::device_uvector<f_t>& primal_step_size,
-                                                   rmm::device_uvector<f_t>& dual_step_size,
-                                                   bool should_major);
+    i_t iterations_since_last_restart,
+    bool last_restart_was_average,
+    rmm::device_uvector<f_t>& dual_step_size,
+    i_t total_pdlp_iterations);
+    void compute_next_dual_solution(rmm::device_uvector<f_t>& dual_step_size);    
+    void compute_next_primal_dual_solution_reflected(rmm::device_uvector<f_t>& primal_step_size,
+                                                      rmm::device_uvector<f_t>& dual_step_size,
+                                                      bool should_major);
 
-  void compute_primal_projection_with_gradient(rmm::device_uvector<f_t>& primal_step_size);
+    void compute_primal_projection_with_gradient(rmm::device_uvector<f_t>& primal_step_size);
   void compute_primal_projection(rmm::device_uvector<f_t>& primal_step_size);
   void compute_At_y();
   void compute_A_x();

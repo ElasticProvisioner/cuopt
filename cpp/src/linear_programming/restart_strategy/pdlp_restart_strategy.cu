@@ -686,9 +686,9 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_cupdlpx_restart(i_t total_number_
     // For now just taking the average and restarting everyone or no one
     for (size_t i = 0; i < climber_strategies_.size(); ++i)
     {
-      cuopt_assert(initial_fixed_point_error_[i] != std::numeric_limits<f_t>::signaling_NaN(),
+      cuopt_assert(!isnan(initial_fixed_point_error_[i]),
                   "Numerical error: initial_fixed_point_error_ should not be at nan at this stage");
-      cuopt_assert(fixed_point_error_[i] != std::numeric_limits<f_t>::signaling_NaN(),
+      cuopt_assert(!isnan(fixed_point_error_[i]),
                   "Numerical error: fixed_point_error_ should not be at nan at this stage");
     }
 
@@ -696,8 +696,13 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_cupdlpx_restart(i_t total_number_
     const f_t average_fixed_point_error = std::reduce(fixed_point_error_.begin(), fixed_point_error_.end()) / fixed_point_error_.size();
     const f_t average_initial_fixed_point_error = std::reduce(initial_fixed_point_error_.begin(), initial_fixed_point_error_.end()) / initial_fixed_point_error_.size();
     const f_t average_last_trial_fixed_point_error = std::reduce(last_trial_fixed_point_error_.begin(), last_trial_fixed_point_error_.end()) / last_trial_fixed_point_error_.size();
-    cuopt_assert(average_fixed_point_error != std::numeric_limits<f_t>::signaling_NaN(), "Numerical error: average_fixed_point_error should not be at nan at this stage");
-    cuopt_assert(average_initial_fixed_point_error != std::numeric_limits<f_t>::signaling_NaN(), "Numerical error: average_initial_fixed_point_error should not be at nan at this stage");
+    cuopt_assert(!isnan(average_fixed_point_error), "Numerical error: average_fixed_point_error should not be at nan at this stage");
+    cuopt_assert(!isnan(average_initial_fixed_point_error), "Numerical error: average_initial_fixed_point_error should not be at nan at this stage");
+
+
+    #ifdef CUPDLP_DEBUG_MODE
+    printf("average_fixed_point_error %lf average_initial_fixed_point_error %lf average_last_trial_fixed_point_error %lf\n", average_fixed_point_error, average_initial_fixed_point_error, average_last_trial_fixed_point_error);
+    #endif
 
     if (average_fixed_point_error <= hyper_params_.sufficient_reduction_for_restart *
                                 average_initial_fixed_point_error) {

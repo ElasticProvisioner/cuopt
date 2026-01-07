@@ -40,7 +40,7 @@ bool is_frational(double in)
   return std::fabs(in - std::round(in)) > 1e-5;
 }
 
-std::pair<cuopt::mps_parser::mps_data_model_t<int, double>, std::vector<cuopt::mps_parser::mps_data_model_t<int, double>>> create_batch_problem(const cuopt::mps_parser::mps_data_model_t<int, double>& op_problem, const cuopt::linear_programming::optimization_problem_solution_t<int, double>& solution, bool no_init_lower)
+std::tuple<cuopt::mps_parser::mps_data_model_t<int, double>, std::vector<cuopt::mps_parser::mps_data_model_t<int, double>>, std::vector<std::pair<int, double>>> create_batch_problem(const cuopt::mps_parser::mps_data_model_t<int, double>& op_problem, const cuopt::linear_programming::optimization_problem_solution_t<int, double>& solution, bool no_init_lower)
 { 
   std::vector<double> primal_sol = host_copy(solution.get_primal_solution());
   
@@ -83,7 +83,7 @@ std::pair<cuopt::mps_parser::mps_data_model_t<int, double>, std::vector<cuopt::m
       problems[i + batch_size].get_variable_lower_bounds()[pairs[i].first] = std::ceil(pairs[i].second);
   // Create batch problem on the original problem
   cuopt::mps_parser::mps_data_model_t<int, double> batch_problem(op_problem);
-  const auto& variable_lower_bounds = op_problem.get_variable_lower_bounds();
+  /*const auto& variable_lower_bounds = op_problem.get_variable_lower_bounds();
   const auto& variable_upper_bounds = op_problem.get_variable_upper_bounds();
 
   std::vector<double> new_variable_lower_bounds(variable_lower_bounds.size() * total_size);
@@ -97,9 +97,9 @@ std::pair<cuopt::mps_parser::mps_data_model_t<int, double>, std::vector<cuopt::m
       new_variable_upper_bounds[i * variable_upper_bounds.size() + j] = problems[i].get_variable_upper_bounds()[j];
 
   batch_problem.set_variable_lower_bounds(new_variable_lower_bounds.data(), new_variable_lower_bounds.size());
-  batch_problem.set_variable_upper_bounds(new_variable_upper_bounds.data(), new_variable_upper_bounds.size());
+  batch_problem.set_variable_upper_bounds(new_variable_upper_bounds.data(), new_variable_upper_bounds.size());*/
 
-  return {batch_problem, problems};
+  return {batch_problem, problems, pairs};
 }
 
 static bool is_incorrect_objective(double reference, double objective)
@@ -124,6 +124,7 @@ void bench(
   cuopt::mps_parser::mps_data_model_t<int, double>& original_problem, // Only useful for warm start
   cuopt::mps_parser::mps_data_model_t<int, double>& batch_problem,
   std::vector<cuopt::mps_parser::mps_data_model_t<int, double>>& problems,
+  std::vector<std::pair<int, double>>& pairs,
   bool compare_with_baseline,
   bool deterministic, // For now useless, need 13.1 for cuSparse deterministic
   bool init_primal_dual,
@@ -210,6 +211,9 @@ void bench(
   settings_local.method = cuopt::linear_programming::method_t::PDLP;
   settings_local.detect_infeasibility = true;
   settings_local.iteration_limit = 100000;
+  // Only change the upper bound
+  for (size_t i = 0; i < pairs.size(); ++i)
+    settings_local.new_bounds.push_back({pairs[i].first, problems[i].get_variable_lower_bounds()[pairs[i].first], std::floor(pairs[i].second)});
 
   if (init_primal_dual)
   {
@@ -283,7 +287,7 @@ int main(int argc, char* argv[])
     std::cout << "Original problem solved in " << solution.get_additional_termination_information().solve_time << " and " << solution.get_additional_termination_information().number_of_steps_taken << " steps" << std::endl;
 
     // Create a list of problems for each variante and update op_problem to batchify it
-    auto [batch_problem, problems] = create_batch_problem(op_problem, solution, true);
+    auto [batch_problem, problems, pairs] = create_batch_problem(op_problem, solution, true);
 
     // The five commented bench calls below correspond to warm start combinations:
 
@@ -302,7 +306,7 @@ int main(int argc, char* argv[])
     // Primal dual + primal weight + step size + iteration count (the fullest warm start)
     //bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, false /*step size*/, false /*primal weight*/);
     //bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, true /*step size*/, false /*primal weight*/, false /*use optimal batch size*/);
-    bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, true /*step size*/, false /*primal weight*/, true /*use optimal batch size*/);
+    bench(handle_, op_problem, batch_problem, problems, pairs, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, true /*step size*/, false /*primal weight*/, false /*use optimal batch size*/);
     //bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, true /*step size*/, true /*primal weight*/);
   }
 

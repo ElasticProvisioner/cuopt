@@ -315,6 +315,16 @@ void print(std::string_view const name, std::vector<T> const& container)
 }
 
 template <typename T>
+void print(std::string_view const name, thrust::universal_host_pinned_vector<T> const& container)
+{
+  std::cout << name << "=[";
+  for (auto const& item : container) {
+    std::cout << item << ",";
+  }
+  std::cout << "]\n";
+}
+
+template <typename T>
 void print(std::string_view const name, rmm::device_uvector<T> const& container)
 {
   raft::print_device_vector(name.data(), container.data(), container.size(), std::cout);
