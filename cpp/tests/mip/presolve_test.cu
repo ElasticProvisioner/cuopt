@@ -59,7 +59,7 @@ std::tuple<std::vector<int>, std::vector<double>, std::vector<double>> select_k_
   std::cerr << "Tested with seed " << seed << "\n";
   problem.compute_n_integer_vars();
   auto [v_lb, v_ub] = extract_host_bounds<double>(problem.variable_bounds, problem.handle_ptr);
-  auto int_var_id   = host_copy(problem.integer_indices);
+  auto int_var_id   = host_copy(problem.integer_indices, problem.handle_ptr->get_stream());
   int_var_id.erase(
     std::remove_if(int_var_id.begin(),
                    int_var_id.end(),

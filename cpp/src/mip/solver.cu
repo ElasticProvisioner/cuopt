@@ -191,11 +191,11 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     i_t num_threads        = branch_and_bound_settings.num_threads;
     i_t num_bfs_threads    = std::max(1, num_threads / 4);
     i_t num_diving_threads = num_threads - num_bfs_threads;
-    // deterministic mode: no diving for now
+    // deterministic mode: use BSP coordinator with multiple workers, no diving
     if (context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC) {
-      num_threads        = 1;
-      num_bfs_threads    = 1;
-      num_diving_threads = 0;
+      // BSP mode can use multiple workers deterministically
+      num_bfs_threads    = std::max(1, num_threads);
+      num_diving_threads = 0;  // No diving in deterministic mode
     }
     branch_and_bound_settings.num_bfs_threads    = num_bfs_threads;
     branch_and_bound_settings.num_diving_threads = num_diving_threads;
@@ -236,6 +236,16 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
         std::bind(&dual_simplex::branch_and_bound_t<i_t, f_t>::set_new_solution,
                   branch_and_bound.get(),
                   std::placeholders::_1);
+    } else if (context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC) {
+      // In deterministic mode, use VT-aware solution injection
+      // Use the B&B's current horizon as the VT timestamp
+      // This ensures heuristic solutions are processed at the END of the current horizon,
+      // maintaining determinism regardless of when the GPU heuristic actually finds the solution
+      context.problem_ptr->branch_and_bound_callback =
+        [bb = branch_and_bound.get()](const std::vector<f_t>& solution) {
+          double vt = bb->get_current_bsp_horizon();
+          bb->set_new_solution_deterministic(solution, vt);
+        };
     }
 
     context.work_unit_scheduler_.register_context(branch_and_bound->get_work_unit_context());

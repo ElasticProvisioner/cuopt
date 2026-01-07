@@ -29,6 +29,12 @@ enum class node_status_t : int {
 
 enum class rounding_direction_t : int8_t { NONE = -1, DOWN = 0, UP = 1 };
 
+// BSP state for deterministic parallel B&B
+enum class bsp_node_state_t : int8_t {
+  READY  = 0,  // Node is ready to be processed
+  PAUSED = 1   // Node processing was paused at horizon boundary
+};
+
 bool inactive_status(node_status_t status);
 
 template <typename i_t, typename f_t>
@@ -233,6 +239,11 @@ class mip_node_t {
     copy.branch_var_upper = branch_var_upper;
     copy.fractional_val   = fractional_val;
     copy.node_id          = node_id;
+    // Copy BSP fields
+    copy.accumulated_vt   = accumulated_vt;
+    copy.bsp_state        = bsp_state;
+    copy.provisional_id   = provisional_id;
+    copy.final_id         = final_id;
     return copy;
   }
 
@@ -250,6 +261,25 @@ class mip_node_t {
   std::unique_ptr<mip_node_t> children[2];
 
   std::vector<variable_status_t> vstatus;
+
+  // BSP fields for deterministic parallel B&B
+  f_t accumulated_vt{0.0};                            // Virtual time spent on this node so far
+  bsp_node_state_t bsp_state{bsp_node_state_t::READY};  // BSP processing state
+
+  // For deterministic node ID assignment in BSP mode:
+  // - provisional_id is assigned atomically during parallel execution
+  // - final_id is assigned deterministically during sync phase based on event order
+  // - Use final_id for sorting if set (>= 0), otherwise fall back to provisional_id/node_id
+  i_t provisional_id{-1};
+  i_t final_id{-1};
+
+  // Get the ID to use for deterministic ordering
+  i_t get_deterministic_id() const
+  {
+    if (final_id >= 0) return final_id;
+    if (provisional_id >= 0) return provisional_id;
+    return node_id;
+  }
 };
 
 template <typename i_t, typename f_t>

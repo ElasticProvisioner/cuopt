@@ -7,6 +7,9 @@
 
 #pragma once
 
+#include <dual_simplex/bb_event.hpp>
+#include <dual_simplex/bb_worker_state.hpp>
+#include <dual_simplex/bsp_debug.hpp>
 #include <dual_simplex/diving_queue.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/mip_node.hpp>
@@ -151,6 +154,10 @@ class branch_and_bound_t {
 
   // Set a solution based on the user problem during the course of the solve
   void set_new_solution(const std::vector<f_t>& solution);
+
+  // BSP-aware solution injection for deterministic mode
+  // This queues the solution to be processed at the correct virtual time
+  void set_new_solution_deterministic(const std::vector<f_t>& solution, double vt_timestamp);
 
   void set_concurrent_lp_root_solve(bool enable) { enable_concurrent_lp_root_solve_ = enable; }
 
@@ -328,6 +335,63 @@ class branch_and_bound_t {
 
   // Sort the children based on the Martin's criteria.
   rounding_direction_t child_selection(mip_node_t<i_t, f_t>* node_ptr);
+
+  // ============================================================================
+  // BSP (Bulk Synchronous Parallel) methods for deterministic parallel B&B
+  // ============================================================================
+
+  // Main BSP coordinator loop - runs in deterministic mode
+  void run_bsp_coordinator(const csr_matrix_t<i_t, f_t>& Arow);
+
+  // Refill worker queues from the global pool
+  void refill_worker_queues(i_t target_queue_size);
+
+  // Run a single worker until it reaches the horizon
+  void run_worker_until_horizon(bb_worker_state_t<i_t, f_t>& worker,
+                                search_tree_t<i_t, f_t>& search_tree,
+                                double current_horizon);
+
+  // Process history and synchronize - the "brain" of BSP
+  void process_history_and_sync(const bb_event_batch_t<i_t, f_t>& events);
+
+  // Prune nodes held by workers based on new incumbent
+  void prune_worker_nodes_vs_incumbent();
+
+  // BSP-specific node solving that records events
+  node_solve_info_t solve_node_bsp(bb_worker_state_t<i_t, f_t>& worker,
+                                   mip_node_t<i_t, f_t>* node_ptr,
+                                   search_tree_t<i_t, f_t>& search_tree,
+                                   double current_horizon);
+
+ private:
+  // BSP state
+  std::unique_ptr<bb_worker_pool_t<i_t, f_t>> bsp_workers_;
+  double bsp_horizon_step_{5.0};    // Virtual time step per horizon (tunable)
+  double bsp_current_horizon_{0.0}; // Current horizon target
+  bool bsp_mode_enabled_{false};    // Whether BSP mode is active
+  int bsp_horizon_number_{0};       // Current horizon number (for debugging)
+
+  // Counter for deterministic final_id assignment during sync phase
+  // Starts at 2 (root's children are 1 and 2), incremented by 2 for each branch
+  i_t bsp_next_final_id_{3};
+
+  // BSP heuristic solution queue - solutions received from GPU heuristics
+  // Stored with VT timestamp for deterministic ordering
+  struct queued_heuristic_solution_t {
+    std::vector<f_t> solution;
+    f_t objective;
+    double vt_timestamp;
+  };
+  omp_mutex_t mutex_heuristic_queue_;
+  std::vector<queued_heuristic_solution_t> heuristic_solution_queue_;
+
+  // BSP debug logger (settings read from environment variables)
+  bsp_debug_settings_t bsp_debug_settings_;
+  bsp_debug_logger_t<i_t, f_t> bsp_debug_logger_;
+
+ public:
+  // Accessor for GPU heuristics to get the current BSP horizon
+  double get_current_bsp_horizon() const { return bsp_current_horizon_; }
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex

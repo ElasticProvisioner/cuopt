@@ -28,6 +28,7 @@
 #include <deque>
 #include <future>
 #include <limits>
+#include <unordered_map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -226,7 +227,8 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
     root_relax_soln_(1, 1),
     root_crossover_soln_(1, 1),
     pc_(1),
-    solver_status_(mip_exploration_status_t::UNSET)
+    solver_status_(mip_exploration_status_t::UNSET),
+    bsp_debug_settings_(bsp_debug_settings_t::from_environment())
 {
   exploration_stats_.start_time = tic();
   dualize_info_t<i_t, f_t> dualize_info;
@@ -495,6 +497,45 @@ void branch_and_bound_t<i_t, f_t>::set_new_solution(const std::vector<f_t>& solu
 }
 
 template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::set_new_solution_deterministic(const std::vector<f_t>& solution,
+                                                                   double vt_timestamp)
+{
+  // In BSP mode, queue the solution to be processed at the correct virtual time
+  // This ensures deterministic ordering of solution events
+
+  if (solution.size() != original_problem_.num_cols) {
+    settings_.log.printf(
+      "Solution size mismatch %ld %d\n", solution.size(), original_problem_.num_cols);
+    return;
+  }
+
+  std::vector<f_t> crushed_solution;
+  crush_primal_solution<i_t, f_t>(
+    original_problem_, original_lp_, solution, new_slacks_, crushed_solution);
+  f_t obj = compute_objective(original_lp_, crushed_solution);
+
+  // Validate solution before queueing
+  f_t primal_err;
+  f_t bound_err;
+  i_t num_fractional;
+  bool is_feasible = check_guess(
+    original_lp_, settings_, var_types_, crushed_solution, primal_err, bound_err, num_fractional);
+
+  if (!is_feasible) {
+    // Queue for repair
+    mutex_repair_.lock();
+    repair_queue_.push_back(crushed_solution);
+    mutex_repair_.unlock();
+    return;
+  }
+
+  // Queue the solution with its VT timestamp
+  mutex_heuristic_queue_.lock();
+  heuristic_solution_queue_.push_back({std::move(crushed_solution), obj, vt_timestamp});
+  mutex_heuristic_queue_.unlock();
+}
+
+template <typename i_t, typename f_t>
 bool branch_and_bound_t<i_t, f_t>::repair_solution(const std::vector<f_t>& edge_norms,
                                                    const std::vector<f_t>& potential_solution,
                                                    f_t& repaired_obj,
@@ -693,9 +734,10 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
                                                          i_t leaf_depth,
                                                          thread_type_t thread_type)
 {
-  bool send_solution   = false;
-  i_t nodes_explored   = exploration_stats_.nodes_explored;
-  i_t nodes_unexplored = exploration_stats_.nodes_unexplored;
+  bool send_solution     = false;
+  bool improved_incumbent = false;
+  i_t nodes_explored     = exploration_stats_.nodes_explored;
+  i_t nodes_unexplored   = exploration_stats_.nodes_unexplored;
 
   mutex_upper_.lock();
   if (leaf_objective < upper_bound_) {
@@ -716,7 +758,8 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
       user_mip_gap<f_t>(obj, lower).c_str(),
       toc(exploration_stats_.start_time));
 
-    send_solution = true;
+    send_solution      = true;
+    improved_incumbent = true;
   }
 
   if (send_solution && settings_.solution_callback != nullptr) {
@@ -725,6 +768,12 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
     settings_.solution_callback(original_x, upper_bound_);
   }
   mutex_upper_.unlock();
+
+  // Debug: Log incumbent update (after releasing mutex to avoid potential issues)
+  if (improved_incumbent && bsp_debug_settings_.any_enabled() && bsp_mode_enabled_) {
+    std::string source = (thread_type == thread_type_t::EXPLORATION) ? "bb_integer" : "diving";
+    bsp_debug_logger_.log_incumbent_update(bsp_current_horizon_, leaf_objective, source);
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -1748,34 +1797,42 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   work_unit_context_.deterministic        = settings_.deterministic;
   should_report_                          = true;
 
+  // Choose between BSP coordinator (deterministic) and opportunistic exploration
+  if (settings_.deterministic && settings_.num_bfs_threads > 0) {
+    // Use deterministic BSP coordinator for parallel execution
+    settings_.log.printf("Using BSP coordinator for deterministic parallel B&B\n");
+    run_bsp_coordinator(Arow);
+  } else {
+    // Use traditional opportunistic parallel exploration
 #pragma omp parallel num_threads(settings_.num_threads)
-  {
-    raft::common::nvtx::range scope_tree("BB::tree_exploration");
-#pragma omp master
     {
-      auto down_child  = search_tree_.root.get_down_child();
-      auto up_child    = search_tree_.root.get_up_child();
-      i_t initial_size = 2 * settings_.num_threads;
+      raft::common::nvtx::range scope_tree("BB::tree_exploration");
+#pragma omp master
+      {
+        auto down_child  = search_tree_.root.get_down_child();
+        auto up_child    = search_tree_.root.get_up_child();
+        i_t initial_size = 2 * settings_.num_threads;
 
 #pragma omp task
-      exploration_ramp_up(down_child, &search_tree_, Arow, initial_size);
+        exploration_ramp_up(down_child, &search_tree_, Arow, initial_size);
 
 #pragma omp task
-      exploration_ramp_up(up_child, &search_tree_, Arow, initial_size);
-    }
+        exploration_ramp_up(up_child, &search_tree_, Arow, initial_size);
+      }
 
 #pragma omp barrier
 
 #pragma omp master
-    {
-      for (i_t i = 0; i < settings_.num_bfs_threads; i++) {
+      {
+        for (i_t i = 0; i < settings_.num_bfs_threads; i++) {
 #pragma omp task
-        best_first_thread(i, search_tree_, Arow);
-      }
+          best_first_thread(i, search_tree_, Arow);
+        }
 
-      for (i_t i = 0; i < settings_.num_diving_threads; i++) {
+        for (i_t i = 0; i < settings_.num_diving_threads; i++) {
 #pragma omp task
-        diving_thread(Arow);
+          diving_thread(Arow);
+        }
       }
     }
   }
@@ -1787,6 +1844,690 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   f_t lower_bound = heap_.size() > 0 ? heap_.top()->lower_bound : search_tree_.root.lower_bound;
   return set_final_solution(solution, lower_bound);
+}
+
+// ============================================================================
+// BSP (Bulk Synchronous Parallel) Implementation
+// ============================================================================
+
+template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f_t>& Arow)
+{
+  raft::common::nvtx::range scope("BB::bsp_coordinator");
+
+  const int num_workers = settings_.num_bfs_threads;
+  bsp_mode_enabled_     = true;
+  bsp_current_horizon_  = bsp_horizon_step_;
+  bsp_horizon_number_   = 0;
+
+  // Initialize worker pool
+  bsp_workers_ = std::make_unique<bb_worker_pool_t<i_t, f_t>>();
+  bsp_workers_->initialize(num_workers,
+                           original_lp_,
+                           Arow,
+                           var_types_,
+                           settings_.refactor_frequency,
+                           settings_.deterministic);
+
+  // Initialize debug logger
+  bsp_debug_logger_.set_settings(bsp_debug_settings_);
+  bsp_debug_logger_.set_num_workers(num_workers);
+  bsp_debug_logger_.set_horizon_step(bsp_horizon_step_);
+
+  settings_.log.printf("BSP Mode: %d workers, horizon step = %.2f work units\n",
+                       num_workers,
+                       bsp_horizon_step_);
+
+  // Push initial children to the global heap
+  // Set deterministic final_ids for root children (1 and 2)
+  search_tree_.root.get_down_child()->final_id = 1;
+  search_tree_.root.get_up_child()->final_id = 2;
+  bsp_next_final_id_ = 3;  // Next ID to assign
+
+  heap_.push(search_tree_.root.get_down_child());
+  heap_.push(search_tree_.root.get_up_child());
+
+  const f_t inf     = std::numeric_limits<f_t>::infinity();
+  f_t lower_bound   = get_lower_bound();
+  f_t upper_bound   = get_upper_bound();
+  f_t abs_gap       = upper_bound - lower_bound;
+  f_t rel_gap       = user_relative_gap(original_lp_, upper_bound, lower_bound);
+
+  constexpr i_t target_queue_size = 5;  // Target nodes per worker
+
+  // Main BSP coordinator loop
+  while (solver_status_ == mip_exploration_status_t::RUNNING &&
+         abs_gap > settings_.absolute_mip_gap_tol && rel_gap > settings_.relative_mip_gap_tol &&
+         (heap_.size() > 0 || bsp_workers_->any_has_work())) {
+
+    ++bsp_horizon_number_;
+    double horizon_start = bsp_current_horizon_ - bsp_horizon_step_;
+    double horizon_end   = bsp_current_horizon_;
+
+    // Debug: Log horizon start
+    if (bsp_debug_settings_.any_enabled()) {
+      bsp_debug_logger_.log_horizon_start(bsp_horizon_number_, horizon_start, horizon_end);
+    }
+
+    // PHASE 1: ASSIGNMENT - Fill worker queues
+    refill_worker_queues(target_queue_size);
+
+    // Flush assignment trace after all assignments
+    if (bsp_debug_settings_.any_enabled()) {
+      bsp_debug_logger_.flush_assign_trace();
+    }
+
+    // Reset workers for new horizon
+    bsp_workers_->reset_for_horizon(horizon_start, horizon_end);
+
+    // PHASE 2: PARALLEL EXECUTION - Workers run until horizon
+#pragma omp parallel num_threads(num_workers)
+    {
+      int worker_id = omp_get_thread_num();
+      auto& worker  = (*bsp_workers_)[worker_id];
+
+      // Run worker until horizon
+      run_worker_until_horizon(worker, search_tree_, bsp_current_horizon_);
+    }
+
+    // PHASE 3: SYNCHRONIZATION - The Barrier
+    // Collect and sort all events deterministically
+    bb_event_batch_t<i_t, f_t> all_events = bsp_workers_->collect_and_sort_events();
+
+    // Debug: Log sync phase
+    if (bsp_debug_settings_.any_enabled()) {
+      bsp_debug_logger_.log_sync_phase_start(horizon_end, all_events.size());
+    }
+
+    // Process history and sync
+    process_history_and_sync(all_events);
+
+    // Debug: Flush final IDs trace and log sync end
+    if (bsp_debug_settings_.any_enabled()) {
+      bsp_debug_logger_.flush_final_ids_trace();
+      bsp_debug_logger_.log_sync_phase_end(horizon_end);
+    }
+
+    // Prune paused nodes that are now dominated by new incumbent
+    prune_worker_nodes_vs_incumbent();
+
+    // Debug: Log horizon end, emit tree state and JSON state
+    if (bsp_debug_settings_.any_enabled()) {
+      bsp_debug_logger_.log_horizon_end(bsp_horizon_number_, horizon_end);
+
+      // Emit tree state (DOT format)
+      bsp_debug_logger_.emit_tree_state(bsp_horizon_number_, search_tree_.root, get_upper_bound());
+
+      // Collect heap nodes for JSON state
+      std::vector<mip_node_t<i_t, f_t>*> heap_snapshot;
+      // Note: We can't easily iterate the heap, so just log the size
+      bsp_debug_logger_.emit_state_json(bsp_horizon_number_, horizon_start, horizon_end,
+                                        bsp_next_final_id_, get_upper_bound(), get_lower_bound(),
+                                        exploration_stats_.nodes_explored,
+                                        exploration_stats_.nodes_unexplored, *bsp_workers_,
+                                        heap_snapshot, all_events);
+    }
+
+    // Advance the horizon
+    bsp_current_horizon_ += bsp_horizon_step_;
+
+    // Update gap info
+    lower_bound = get_lower_bound();
+    upper_bound = get_upper_bound();
+    abs_gap     = upper_bound - lower_bound;
+    rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
+
+    // Check time/work limits
+    if (toc(exploration_stats_.start_time) > settings_.time_limit) {
+      solver_status_ = mip_exploration_status_t::TIME_LIMIT;
+    }
+    if (settings_.deterministic &&
+        work_unit_context_.global_work_units_elapsed >= settings_.work_limit) {
+      solver_status_ = mip_exploration_status_t::WORK_LIMIT;
+    }
+
+    // Progress logging
+    f_t obj              = compute_user_objective(original_lp_, upper_bound);
+    f_t user_lower       = compute_user_objective(original_lp_, lower_bound);
+    std::string gap_user = user_mip_gap<f_t>(obj, user_lower);
+    i_t nodes_explored   = exploration_stats_.nodes_explored;
+    i_t nodes_unexplored = exploration_stats_.nodes_unexplored;
+
+    settings_.log.printf(" %10d   %10lu    %+13.6e    %+10.6e                           %s %9.2f\n",
+                         nodes_explored,
+                         nodes_unexplored,
+                         obj,
+                         user_lower,
+                         gap_user.c_str(),
+                         toc(exploration_stats_.start_time));
+  }
+
+  // Finalize debug logger
+  if (bsp_debug_settings_.any_enabled()) {
+    bsp_debug_logger_.finalize();
+  }
+
+  // Mark completed if we finished exploring
+  if (solver_status_ == mip_exploration_status_t::RUNNING) {
+    solver_status_ = mip_exploration_status_t::COMPLETED;
+  }
+}
+
+template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::refill_worker_queues(i_t target_queue_size)
+{
+  // Distribute nodes from global pool to workers in round-robin fashion
+  // This ensures deterministic assignment based on node ordering in the heap
+
+  std::vector<mip_node_t<i_t, f_t>*> nodes_to_assign;
+
+  // Pop nodes from heap while respecting incumbent bound
+  mutex_heap_.lock();
+  while (!heap_.empty()) {
+    mip_node_t<i_t, f_t>* node = heap_.top();
+
+    // Skip pruned nodes
+    if (node->lower_bound >= get_upper_bound()) {
+      heap_.pop();
+      search_tree_.update(node, node_status_t::FATHOMED);
+      --exploration_stats_.nodes_unexplored;
+      continue;
+    }
+
+    // Check if we have enough nodes
+    if (nodes_to_assign.size() >= static_cast<size_t>(target_queue_size * bsp_workers_->size())) {
+      break;
+    }
+
+    heap_.pop();
+    nodes_to_assign.push_back(node);
+  }
+  mutex_heap_.unlock();
+
+  // Assign nodes to workers deterministically (round-robin by deterministic ID order)
+  // Use get_deterministic_id() which returns final_id if set, else provisional_id, else node_id
+  std::sort(nodes_to_assign.begin(), nodes_to_assign.end(),
+            [](const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) {
+              return a->get_deterministic_id() < b->get_deterministic_id();
+            });
+
+  for (size_t i = 0; i < nodes_to_assign.size(); ++i) {
+    int worker_id = i % bsp_workers_->size();
+    auto* node    = nodes_to_assign[i];
+    (*bsp_workers_)[worker_id].enqueue_node(node);
+
+    // Debug: Log node assignment
+    if (bsp_debug_settings_.any_enabled()) {
+      double vt = bsp_current_horizon_ - bsp_horizon_step_;  // Start of current horizon
+      bsp_debug_logger_.log_node_assigned(vt, worker_id, node->node_id, node->final_id,
+                                          node->lower_bound);
+    }
+  }
+}
+
+template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::run_worker_until_horizon(bb_worker_state_t<i_t, f_t>& worker,
+                                                            search_tree_t<i_t, f_t>& search_tree,
+                                                            double current_horizon)
+{
+  raft::common::nvtx::range scope("BB::worker_run");
+
+  while (worker.clock < current_horizon && worker.has_work() &&
+         solver_status_ == mip_exploration_status_t::RUNNING) {
+
+    mip_node_t<i_t, f_t>* node = worker.dequeue_node();
+    if (node == nullptr) break;
+
+    // Check if node should be pruned
+    f_t upper_bound = get_upper_bound();
+    if (node->lower_bound >= upper_bound) {
+      worker.record_fathomed(node, node->lower_bound);
+      search_tree.update(node, node_status_t::FATHOMED);
+      --exploration_stats_.nodes_unexplored;
+      continue;
+    }
+
+    // Solve the node (this records events)
+    node_solve_info_t status = solve_node_bsp(worker, node, search_tree, current_horizon);
+
+    // Handle result
+    if (status == node_solve_info_t::TIME_LIMIT) {
+      solver_status_ = mip_exploration_status_t::TIME_LIMIT;
+      break;
+    } else if (status == node_solve_info_t::WORK_LIMIT) {
+      // Node paused at horizon - already handled in solve_node_bsp
+      break;
+    }
+  }
+}
+
+template <typename i_t, typename f_t>
+node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(
+  bb_worker_state_t<i_t, f_t>& worker,
+  mip_node_t<i_t, f_t>* node_ptr,
+  search_tree_t<i_t, f_t>& search_tree,
+  double current_horizon)
+{
+  raft::common::nvtx::range scope("BB::solve_node_bsp");
+
+  // Track work units at start (from work_context, which simplex solver updates)
+  double work_units_at_start = worker.work_context.global_work_units_elapsed;
+  double clock_at_start      = worker.clock;
+  bool is_resumed            = (node_ptr->bsp_state == bsp_node_state_t::PAUSED);
+
+  // Debug: Log solve start
+  if (bsp_debug_settings_.any_enabled()) {
+    double work_limit = current_horizon - worker.clock;
+    bsp_debug_logger_.log_solve_start(worker.clock, worker.worker_id, node_ptr->node_id,
+                                      node_ptr->final_id, work_limit, is_resumed);
+  }
+
+  // Setup leaf problem bounds
+  std::fill(worker.node_presolver->bounds_changed.begin(),
+            worker.node_presolver->bounds_changed.end(),
+            false);
+
+  if (worker.recompute_bounds_and_basis) {
+    worker.leaf_problem->lower = original_lp_.lower;
+    worker.leaf_problem->upper = original_lp_.upper;
+    node_ptr->get_variable_bounds(worker.leaf_problem->lower,
+                                  worker.leaf_problem->upper,
+                                  worker.node_presolver->bounds_changed);
+  } else {
+    node_ptr->update_branched_variable_bounds(worker.leaf_problem->lower,
+                                              worker.leaf_problem->upper,
+                                              worker.node_presolver->bounds_changed);
+  }
+
+  // Bounds strengthening
+  simplex_solver_settings_t<i_t, f_t> lp_settings = settings_;
+  lp_settings.set_log(false);
+  lp_settings.cut_off       = get_upper_bound() + settings_.dual_tol;
+  lp_settings.inside_mip    = 2;
+  lp_settings.time_limit    = settings_.time_limit - toc(exploration_stats_.start_time);
+  // Work limit is the remaining VT budget in this horizon
+  // Note: accumulated_vt tracks work already spent (for statistics), but doesn't increase budget
+  lp_settings.work_limit    = current_horizon - worker.clock;
+  lp_settings.scale_columns = false;
+
+  bool feasible = worker.node_presolver->bounds_strengthening(
+    worker.leaf_problem->lower, worker.leaf_problem->upper, lp_settings);
+
+  if (!feasible) {
+    node_ptr->lower_bound = std::numeric_limits<f_t>::infinity();
+    search_tree.update(node_ptr, node_status_t::INFEASIBLE);
+    worker.record_infeasible(node_ptr);
+    --exploration_stats_.nodes_unexplored;
+    ++exploration_stats_.nodes_explored;
+    worker.recompute_bounds_and_basis = true;
+    return node_solve_info_t::NO_CHILDREN;
+  }
+
+  // Solve LP relaxation
+  lp_solution_t<i_t, f_t> leaf_solution(worker.leaf_problem->num_rows, worker.leaf_problem->num_cols);
+  std::vector<variable_status_t>& leaf_vstatus = node_ptr->vstatus;
+  i_t node_iter                                = 0;
+  f_t lp_start_time                            = tic();
+  std::vector<f_t> leaf_edge_norms             = edge_norms_;
+
+  dual::status_t lp_status = dual_phase2_with_advanced_basis(
+    2,
+    0,
+    worker.recompute_bounds_and_basis,
+    lp_start_time,
+    *worker.leaf_problem,
+    lp_settings,
+    leaf_vstatus,
+    *worker.basis_factors,
+    worker.basic_list,
+    worker.nonbasic_list,
+    leaf_solution,
+    node_iter,
+    leaf_edge_norms,
+    &worker.work_context);
+
+  // Update worker clock with work performed
+  // The simplex solver recorded work to work_context.global_work_units_elapsed
+  // Compute the delta and advance the worker clock (but don't double-record to work_context)
+  double work_performed = worker.work_context.global_work_units_elapsed - work_units_at_start;
+  worker.clock += work_performed;
+  worker.work_units_this_horizon += work_performed;
+  // Note: don't call advance_clock() as work_context was already updated by simplex solver
+
+  // Check if we hit the horizon mid-solve
+  if (lp_status == dual::status_t::WORK_LIMIT || worker.clock >= current_horizon) {
+    // Pause this node - accumulated_vt is the total work spent on this node
+    double accumulated_vt = (worker.clock - clock_at_start) + node_ptr->accumulated_vt;
+    worker.pause_current_node(node_ptr, accumulated_vt);
+
+    // Debug: Log solve end (paused)
+    if (bsp_debug_settings_.any_enabled()) {
+      bsp_debug_logger_.log_solve_end(worker.clock, worker.worker_id, node_ptr->node_id,
+                                      node_ptr->final_id, "PAUSED", node_ptr->lower_bound);
+      bsp_debug_logger_.log_paused(worker.clock, worker.worker_id, node_ptr->node_id,
+                                   node_ptr->final_id, static_cast<f_t>(accumulated_vt));
+    }
+    return node_solve_info_t::WORK_LIMIT;
+  }
+
+  exploration_stats_.total_lp_solve_time += toc(lp_start_time);
+  exploration_stats_.total_lp_iters += node_iter;
+  ++exploration_stats_.nodes_explored;
+  --exploration_stats_.nodes_unexplored;
+
+  // Process LP result
+  if (lp_status == dual::status_t::DUAL_UNBOUNDED) {
+    node_ptr->lower_bound = std::numeric_limits<f_t>::infinity();
+    search_tree.update(node_ptr, node_status_t::INFEASIBLE);
+    worker.record_infeasible(node_ptr);
+    worker.recompute_bounds_and_basis = true;
+
+    // Debug: Log solve end (infeasible)
+    if (bsp_debug_settings_.any_enabled()) {
+      bsp_debug_logger_.log_solve_end(worker.clock, worker.worker_id, node_ptr->node_id,
+                                      node_ptr->final_id, "INFEASIBLE", node_ptr->lower_bound);
+      bsp_debug_logger_.log_infeasible(worker.clock, worker.worker_id, node_ptr->node_id);
+    }
+    return node_solve_info_t::NO_CHILDREN;
+
+  } else if (lp_status == dual::status_t::CUTOFF) {
+    node_ptr->lower_bound = get_upper_bound();
+    search_tree.update(node_ptr, node_status_t::FATHOMED);
+    worker.record_fathomed(node_ptr, node_ptr->lower_bound);
+    worker.recompute_bounds_and_basis = true;
+
+    // Debug: Log solve end (fathomed - cutoff)
+    if (bsp_debug_settings_.any_enabled()) {
+      bsp_debug_logger_.log_solve_end(worker.clock, worker.worker_id, node_ptr->node_id,
+                                      node_ptr->final_id, "FATHOMED", node_ptr->lower_bound);
+      bsp_debug_logger_.log_fathomed(worker.clock, worker.worker_id, node_ptr->node_id,
+                                     node_ptr->lower_bound);
+    }
+    return node_solve_info_t::NO_CHILDREN;
+
+  } else if (lp_status == dual::status_t::OPTIMAL) {
+    std::vector<i_t> leaf_fractional;
+    i_t leaf_num_fractional =
+      fractional_variables(settings_, leaf_solution.x, var_types_, leaf_fractional);
+
+    f_t leaf_objective    = compute_objective(*worker.leaf_problem, leaf_solution.x);
+    node_ptr->lower_bound = leaf_objective;
+    pc_.update_pseudo_costs(node_ptr, leaf_objective);
+
+    if (leaf_num_fractional == 0) {
+      // Integer feasible
+      add_feasible_solution(leaf_objective, leaf_solution.x, node_ptr->depth, thread_type_t::EXPLORATION);
+      search_tree.update(node_ptr, node_status_t::INTEGER_FEASIBLE);
+      worker.record_integer_solution(node_ptr, leaf_objective);
+      worker.recompute_bounds_and_basis = true;
+
+      // Debug: Log solve end (integer)
+      if (bsp_debug_settings_.any_enabled()) {
+        bsp_debug_logger_.log_solve_end(worker.clock, worker.worker_id, node_ptr->node_id,
+                                        node_ptr->final_id, "INTEGER", leaf_objective);
+        bsp_debug_logger_.log_integer(worker.clock, worker.worker_id, node_ptr->node_id,
+                                      leaf_objective);
+      }
+      return node_solve_info_t::NO_CHILDREN;
+
+    } else if (leaf_objective <= get_upper_bound() + settings_.absolute_mip_gap_tol / 10) {
+      // Branch
+      logger_t log;
+      log.log = false;
+      const i_t branch_var = pc_.variable_selection(leaf_fractional, leaf_solution.x, log);
+
+      search_tree.branch(node_ptr, branch_var, leaf_solution.x[branch_var], leaf_vstatus, *worker.leaf_problem, log);
+      search_tree.update(node_ptr, node_status_t::HAS_CHILDREN);
+
+      i_t down_child_id = node_ptr->get_down_child()->node_id;
+      i_t up_child_id   = node_ptr->get_up_child()->node_id;
+      worker.record_branched(node_ptr, down_child_id, up_child_id, branch_var, leaf_solution.x[branch_var]);
+
+      // Debug: Log solve end (branched) and branched event
+      if (bsp_debug_settings_.any_enabled()) {
+        bsp_debug_logger_.log_solve_end(worker.clock, worker.worker_id, node_ptr->node_id,
+                                        node_ptr->final_id, "BRANCH", leaf_objective);
+        bsp_debug_logger_.log_branched(worker.clock, worker.worker_id, node_ptr->node_id,
+                                       down_child_id, up_child_id);
+      }
+
+      exploration_stats_.nodes_unexplored += 2;
+      worker.recompute_bounds_and_basis = false;
+
+      // Add children to worker's local queue (deterministic order: down first)
+      worker.enqueue_node(node_ptr->get_down_child());
+      worker.enqueue_node(node_ptr->get_up_child());
+
+      return rounding_direction_t::DOWN == child_selection(node_ptr)
+               ? node_solve_info_t::DOWN_CHILD_FIRST
+               : node_solve_info_t::UP_CHILD_FIRST;
+
+    } else {
+      search_tree.update(node_ptr, node_status_t::FATHOMED);
+      worker.record_fathomed(node_ptr, leaf_objective);
+      worker.recompute_bounds_and_basis = true;
+
+      // Debug: Log solve end (fathomed by bound)
+      if (bsp_debug_settings_.any_enabled()) {
+        bsp_debug_logger_.log_solve_end(worker.clock, worker.worker_id, node_ptr->node_id,
+                                        node_ptr->final_id, "FATHOMED", leaf_objective);
+        bsp_debug_logger_.log_fathomed(worker.clock, worker.worker_id, node_ptr->node_id,
+                                       leaf_objective);
+      }
+      return node_solve_info_t::NO_CHILDREN;
+    }
+
+  } else if (lp_status == dual::status_t::TIME_LIMIT) {
+    return node_solve_info_t::TIME_LIMIT;
+
+  } else {
+    // Numerical issue
+    search_tree.update(node_ptr, node_status_t::NUMERICAL);
+    worker.record_numerical(node_ptr);
+    worker.recompute_bounds_and_basis = true;
+    return node_solve_info_t::NUMERICAL;
+  }
+}
+
+template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::process_history_and_sync(const bb_event_batch_t<i_t, f_t>& events)
+{
+  // Collect queued heuristic solutions
+  std::vector<queued_heuristic_solution_t> heuristic_solutions;
+  mutex_heuristic_queue_.lock();
+  heuristic_solutions = std::move(heuristic_solution_queue_);
+  heuristic_solution_queue_.clear();
+  mutex_heuristic_queue_.unlock();
+
+  // Sort heuristic solutions by VT
+  std::sort(heuristic_solutions.begin(), heuristic_solutions.end(),
+            [](const queued_heuristic_solution_t& a, const queued_heuristic_solution_t& b) {
+              return a.vt_timestamp < b.vt_timestamp;
+            });
+
+  // Build mapping from provisional_id -> final_id for deterministic node ordering
+  // This is populated during event processing and applied to nodes afterward
+  std::unordered_map<i_t, i_t> provisional_to_final_id;
+
+  // Merge B&B events and heuristic solutions for unified timeline replay
+  // Both are sorted by VT, so we can do a merge-style iteration
+  size_t event_idx     = 0;
+  size_t heuristic_idx = 0;
+
+  while (event_idx < events.events.size() || heuristic_idx < heuristic_solutions.size()) {
+    bool process_event = false;
+    bool process_heuristic = false;
+
+    if (event_idx >= events.events.size()) {
+      process_heuristic = true;
+    } else if (heuristic_idx >= heuristic_solutions.size()) {
+      process_event = true;
+    } else {
+      // Both have items - pick the one with smaller VT
+      if (events.events[event_idx].vt_timestamp <= heuristic_solutions[heuristic_idx].vt_timestamp) {
+        process_event = true;
+      } else {
+        process_heuristic = true;
+      }
+    }
+
+    if (process_event) {
+      const auto& event = events.events[event_idx++];
+      switch (event.type) {
+        case bb_event_type_t::NODE_INTEGER: {
+          // Check if this solution beats the incumbent KNOWN AT THAT VIRTUAL TIME
+          f_t obj = event.payload.integer_solution.objective_value;
+          mutex_upper_.lock();
+          if (obj < upper_bound_) {
+            // Note: The actual solution was already stored during solve_node_bsp
+            // Here we just acknowledge the event order
+          }
+          mutex_upper_.unlock();
+          break;
+        }
+
+        case bb_event_type_t::NODE_BRANCHED: {
+          // Assign deterministic final IDs to the children
+          // Events are processed in sorted (deterministic) order, so this assignment is deterministic
+          i_t down_provisional = event.payload.branched.down_child_id;
+          i_t up_provisional   = event.payload.branched.up_child_id;
+
+          i_t down_final_id = bsp_next_final_id_++;
+          i_t up_final_id   = bsp_next_final_id_++;
+          provisional_to_final_id[down_provisional] = down_final_id;
+          provisional_to_final_id[up_provisional]   = up_final_id;
+
+          // Debug: Log final ID assignments
+          if (bsp_debug_settings_.any_enabled()) {
+            bsp_debug_logger_.log_final_id_assigned(down_provisional, down_final_id);
+            bsp_debug_logger_.log_final_id_assigned(up_provisional, up_final_id);
+          }
+          break;
+        }
+
+        case bb_event_type_t::NODE_FATHOMED:
+        case bb_event_type_t::NODE_INFEASIBLE:
+        case bb_event_type_t::NODE_NUMERICAL:
+        case bb_event_type_t::NODE_PAUSED:
+        case bb_event_type_t::HEURISTIC_SOLUTION:
+          // These events don't need additional processing during replay
+          break;
+      }
+    }
+
+    if (process_heuristic) {
+      const auto& hsol = heuristic_solutions[heuristic_idx++];
+
+      // Debug: Log heuristic received
+      if (bsp_debug_settings_.any_enabled()) {
+        bsp_debug_logger_.log_heuristic_received(hsol.vt_timestamp, hsol.objective);
+      }
+
+      // Process heuristic solution at its correct VT position
+      // FIX: Release mutex before calling get_lower_bound() to avoid deadlock
+      f_t new_upper = std::numeric_limits<f_t>::infinity();
+
+      mutex_upper_.lock();
+      if (hsol.objective < upper_bound_) {
+        upper_bound_ = hsol.objective;
+        incumbent_.set_incumbent_solution(hsol.objective, hsol.solution);
+        new_upper = hsol.objective;
+
+        // Debug: Log incumbent update
+        if (bsp_debug_settings_.any_enabled()) {
+          bsp_debug_logger_.log_incumbent_update(hsol.vt_timestamp, hsol.objective, "heuristic");
+        }
+      }
+      mutex_upper_.unlock();
+
+      // Log after releasing mutex to avoid holding mutex while calling get_lower_bound()
+      if (new_upper < std::numeric_limits<f_t>::infinity()) {
+        f_t user_obj    = compute_user_objective(original_lp_, new_upper);
+        f_t user_lower  = compute_user_objective(original_lp_, get_lower_bound());
+        std::string gap = user_mip_gap<f_t>(user_obj, user_lower);
+
+        settings_.log.printf(
+          "H                           %+13.6e    %+10.6e                        %s %9.2f\n",
+          user_obj,
+          user_lower,
+          gap.c_str(),
+          toc(exploration_stats_.start_time));
+      }
+    }
+  }
+
+  // Apply final IDs to all nodes in worker queues and global heap
+  // Helper lambda to apply final_id mapping to a node
+  auto apply_final_id = [&provisional_to_final_id](mip_node_t<i_t, f_t>* node) {
+    if (node->final_id < 0 && node->node_id > 0) {
+      // Use node_id as provisional_id (they are the same during BSP)
+      auto it = provisional_to_final_id.find(node->node_id);
+      if (it != provisional_to_final_id.end()) {
+        node->final_id = it->second;
+      }
+    }
+  };
+
+  // Apply to worker local queues
+  for (auto& worker : *bsp_workers_) {
+    for (auto* node : worker.local_queue) {
+      apply_final_id(node);
+    }
+    if (worker.current_node != nullptr) {
+      apply_final_id(worker.current_node);
+    }
+  }
+
+  // Get current upper bound for pruning decisions
+  f_t upper_bound = get_upper_bound();
+
+  // Move ALL nodes from worker local queues to global heap for redistribution
+  // This ensures proper work distribution across workers each horizon
+  mutex_heap_.lock();
+  for (auto& worker : *bsp_workers_) {
+    while (!worker.local_queue.empty()) {
+      mip_node_t<i_t, f_t>* node = worker.local_queue.front();
+      worker.local_queue.pop_front();
+      // Only push non-pruned nodes
+      if (node->lower_bound < upper_bound) {
+        heap_.push(node);
+      } else {
+        search_tree_.update(node, node_status_t::FATHOMED);
+        --exploration_stats_.nodes_unexplored;
+      }
+    }
+  }
+  mutex_heap_.unlock();
+}
+
+template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::prune_worker_nodes_vs_incumbent()
+{
+  f_t upper_bound = get_upper_bound();
+
+  for (auto& worker : *bsp_workers_) {
+    // Check paused node
+    if (worker.current_node != nullptr) {
+      if (worker.current_node->lower_bound >= upper_bound) {
+        // Prune the paused node
+        search_tree_.update(worker.current_node, node_status_t::FATHOMED);
+        --exploration_stats_.nodes_unexplored;
+        worker.current_node = nullptr;
+      }
+    }
+
+    // Check nodes in local queue
+    auto it = worker.local_queue.begin();
+    while (it != worker.local_queue.end()) {
+      if ((*it)->lower_bound >= upper_bound) {
+        search_tree_.update(*it, node_status_t::FATHOMED);
+        --exploration_stats_.nodes_unexplored;
+        it = worker.local_queue.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
 }
 
 #ifdef DUAL_SIMPLEX_INSTANTIATE_DOUBLE
