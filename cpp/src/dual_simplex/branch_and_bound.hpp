@@ -162,7 +162,9 @@ class branch_and_bound_t {
 
   // Global status of the solver.
   omp_atomic_t<mip_exploration_status_t> solver_status_;
-  omp_atomic_t<i_t> nodes_since_last_log;
+
+  omp_atomic_t<i_t> nodes_since_last_log_;
+  i_t min_node_queue_size_;
 
   // In case, a best-first thread encounters a numerical issue when solving a node,
   // its blocks the progression of the lower bound.
@@ -183,10 +185,6 @@ class branch_and_bound_t {
 
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
-
-  // Ramp-up phase of the solver, where we greedily expand the tree until
-  // there is enough unexplored nodes. This is done recursively using OpenMP tasks.
-  void exploration_ramp_up(mip_node_t<i_t, f_t>* node, i_t initial_heap_size);
 
   void plunge_with(bnb_worker_t<i_t, f_t>* worker);
 

@@ -114,6 +114,7 @@ class bnb_worker_pool_t {
             const simplex_solver_settings_t<i_t, f_t>& settings)
   {
     workers_.resize(num_workers);
+    num_idle_workers_ = num_workers;
     for (i_t i = 0; i < num_workers; ++i) {
       workers_[i] =
         std::make_unique<bnb_worker_t<i_t, f_t>>(i, original_lp, Arow, var_type, settings);
@@ -136,7 +137,24 @@ class bnb_worker_pool_t {
   void pop_idle_worker()
   {
     std::lock_guard<omp_mutex_t> lock(mutex_);
-    if (!idle_workers_.empty()) { idle_workers_.pop_front(); }
+    if (!idle_workers_.empty()) {
+      idle_workers_.pop_front();
+      num_idle_workers_--;
+    }
+  }
+
+  bnb_worker_t<i_t, f_t>* get_and_pop_idle_worker()
+  {
+    std::lock_guard<omp_mutex_t> lock(mutex_);
+
+    if (idle_workers_.empty()) {
+      return nullptr;
+    } else {
+      i_t idx = idle_workers_.front();
+      idle_workers_.pop_front();
+      num_idle_workers_--;
+      return workers_[idx].get();
+    }
   }
 
   void return_worker_to_pool(bnb_worker_t<i_t, f_t>* worker)
@@ -144,6 +162,7 @@ class bnb_worker_pool_t {
     worker->is_active = false;
     std::lock_guard<omp_mutex_t> lock(mutex_);
     idle_workers_.push_back(worker->worker_id);
+    num_idle_workers_++;
   }
 
   f_t get_lower_bounds()
@@ -158,6 +177,8 @@ class bnb_worker_pool_t {
 
     return lower_bound;
   }
+
+  i_t num_idle_workers() { return num_idle_workers_; }
 
  private:
   // Worker pool
