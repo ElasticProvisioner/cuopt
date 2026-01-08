@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -41,6 +41,8 @@
 #include <raft/core/handle.hpp>
 
 #include <thread>  // For std::thread
+
+#include <fenv.h>
 
 namespace cuopt::linear_programming {
 
@@ -826,6 +828,11 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
     // Init libraies before to not include it in solve time
     // This needs to be called before pdlp is initialized
     init_handler(op_problem.get_handle_ptr());
+
+#ifndef NDEBUG
+    CUOPT_LOG_DEBUG("Enabling host FPEs");
+    feenableexcept(FE_DIVBYZERO | FE_INVALID);
+#endif
 
     if (op_problem.has_quadratic_objective()) {
       CUOPT_LOG_INFO("Problem has a quadratic objective. Using Barrier.");

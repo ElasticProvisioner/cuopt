@@ -38,6 +38,8 @@
 
 #include <cuda_profiler_api.h>
 
+#include <fenv.h>
+
 namespace cuopt::linear_programming {
 
 // This serves as both a warm up but also a mandatory initial call to setup cuSparse and cuBLAS
@@ -159,6 +161,11 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
     // Init libraies before to not include it in solve time
     // This needs to be called before pdlp is initialized
     init_handler(op_problem.get_handle_ptr());
+
+#ifndef NDEBUG
+    CUOPT_LOG_DEBUG("Enabling host FPEs");
+    feenableexcept(FE_DIVBYZERO | FE_INVALID);
+#endif
 
     print_version_info();
 

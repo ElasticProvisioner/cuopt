@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -471,7 +471,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::set_final_solution(mip_solution_t<i_t
   }
 
   f_t upper_bound      = get_upper_bound();
-  f_t gap              = upper_bound - lower_bound;
+  f_t gap              = (std::isfinite(upper_bound) && std::isfinite(lower_bound))
+                           ? upper_bound - lower_bound
+                           : std::numeric_limits<f_t>::infinity();
   f_t obj              = compute_user_objective(original_lp_, upper_bound);
   f_t user_bound       = compute_user_objective(original_lp_, lower_bound);
   f_t gap_rel          = user_relative_gap(original_lp_, upper_bound, lower_bound);
