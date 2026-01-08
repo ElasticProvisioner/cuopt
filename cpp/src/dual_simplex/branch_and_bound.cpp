@@ -1014,33 +1014,34 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
       nodes_since_last_log = 0;
     }
 
-    if (now > settings_.time_limit) { break; }
+    if (now > settings_.time_limit) {
+      solver_status_ = mip_exploration_status_t::TIME_LIMIT;
+      break;
+    }
 
     for (auto type : worker_types) {
       if (active_workers_per_type[type] >= max_num_workers_per_type[type]) { continue; }
 
-      bnb_worker_t<i_t, f_t>* worker = worker_pool_.get_worker();
-      if (worker == nullptr) { continue; }
+      // Get an idle worker.
+      bnb_worker_t<i_t, f_t>* worker = worker_pool_.get_idle_worker();
+      if (worker == nullptr) { break; }
 
       if (type == EXPLORATION) {
         // If there any node left in the heap, we pop the top node and explore it.
         std::optional<mip_node_t<i_t, f_t>*> start_node = node_queue.pop_best_first();
 
-        if (!start_node.has_value()) {
-          worker_pool_.return_worker_to_pool(worker);
-          continue;
-        }
-
+        if (!start_node.has_value()) { continue; }
         if (get_upper_bound() < start_node.value()->lower_bound) {
           // This node was put on the heap earlier but its lower bound is now greater than the
           // current upper bound
           search_tree_.graphviz_node(
             settings_.log, start_node.value(), "cutoff", start_node.value()->lower_bound);
           search_tree_.update(start_node.value(), node_status_t::FATHOMED);
-          worker_pool_.return_worker_to_pool(worker);
           continue;
         }
 
+        // Remove the worker from the idle list.
+        worker_pool_.pop_idle_worker();
         worker->init_best_first(start_node.value(), original_lp_);
         last_node_depth = start_node.value()->depth;
         active_workers_per_type[type]++;
@@ -1053,23 +1054,14 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
       } else {
         std::optional<mip_node_t<i_t, f_t>*> start_node = node_queue.pop_diving();
 
-        if (!start_node.has_value()) {
-          worker_pool_.return_worker_to_pool(worker);
-          continue;
-        }
-
-        if (get_upper_bound() < start_node.value()->lower_bound) {
-          worker_pool_.return_worker_to_pool(worker);
-          continue;
-        }
+        if (!start_node.has_value()) { continue; }
+        if (get_upper_bound() < start_node.value()->lower_bound) { continue; }
 
         bool is_feasible = worker->init_diving(start_node.value(), type, original_lp_, settings_);
+        if (!is_feasible) { continue; }
 
-        if (!is_feasible) {
-          worker_pool_.return_worker_to_pool(worker);
-          continue;
-        }
-
+        // Remove the worker from the idle list.
+        worker_pool_.pop_idle_worker();
         active_workers_per_type[type]++;
         launched_any_task = true;
 
@@ -1083,6 +1075,10 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
     if (!launched_any_task) {
 #pragma omp taskyield
     }
+  }
+
+  if (solver_status_ == mip_exploration_status_t::RUNNING) {
+    solver_status_ = mip_exploration_status_t::COMPLETED;
   }
 }
 

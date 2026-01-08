@@ -121,7 +121,7 @@ class bnb_worker_pool_t {
     }
   }
 
-  bnb_worker_t<i_t, f_t>* get_worker()
+  bnb_worker_t<i_t, f_t>* get_idle_worker()
   {
     std::lock_guard<omp_mutex_t> lock(mutex_);
 
@@ -129,9 +129,14 @@ class bnb_worker_pool_t {
       return nullptr;
     } else {
       i_t idx = available_workers_.front();
-      available_workers_.pop_front();
       return workers_[idx].get();
     }
+  }
+
+  void pop_idle_worker()
+  {
+    std::lock_guard<omp_mutex_t> lock(mutex_);
+    if (!available_workers_.empty()) { available_workers_.pop_front(); }
   }
 
   void return_worker_to_pool(bnb_worker_t<i_t, f_t>* worker)
