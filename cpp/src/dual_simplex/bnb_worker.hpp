@@ -117,7 +117,7 @@ class bnb_worker_pool_t {
     for (i_t i = 0; i < num_workers; ++i) {
       workers_[i] =
         std::make_unique<bnb_worker_t<i_t, f_t>>(i, original_lp, Arow, var_type, settings);
-      available_workers_.push_front(i);
+      idle_workers_.push_front(i);
     }
   }
 
@@ -125,10 +125,10 @@ class bnb_worker_pool_t {
   {
     std::lock_guard<omp_mutex_t> lock(mutex_);
 
-    if (available_workers_.empty()) {
+    if (idle_workers_.empty()) {
       return nullptr;
     } else {
-      i_t idx = available_workers_.front();
+      i_t idx = idle_workers_.front();
       return workers_[idx].get();
     }
   }
@@ -136,14 +136,14 @@ class bnb_worker_pool_t {
   void pop_idle_worker()
   {
     std::lock_guard<omp_mutex_t> lock(mutex_);
-    if (!available_workers_.empty()) { available_workers_.pop_front(); }
+    if (!idle_workers_.empty()) { idle_workers_.pop_front(); }
   }
 
   void return_worker_to_pool(bnb_worker_t<i_t, f_t>* worker)
   {
     worker->is_active = false;
     std::lock_guard<omp_mutex_t> lock(mutex_);
-    available_workers_.push_back(worker->worker_id);
+    idle_workers_.push_back(worker->worker_id);
   }
 
   f_t get_lower_bounds()
@@ -163,10 +163,9 @@ class bnb_worker_pool_t {
   // Worker pool
   std::vector<std::unique_ptr<bnb_worker_t<i_t, f_t>>> workers_;
 
-  // FIXME: Implement a lock-free queue (it can also be used for
-  // passing feasible solutions between bnb and heuristics)
   omp_mutex_t mutex_;
-  std::deque<i_t> available_workers_;
+  std::deque<i_t> idle_workers_;
+  omp_atomic_t<i_t> num_idle_workers_;
 };
 
 template <typename f_t, typename i_t>

@@ -957,8 +957,7 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
   f_t abs_gap         = upper_bound_ - lower_bound;
   f_t rel_gap         = user_relative_gap(original_lp_, upper_bound_.load(), lower_bound);
   i_t last_node_depth = 0;
-
-  f_t last_log = 0.0;
+  f_t last_log        = 0.0;
 
   diving_heuristics_settings_t<i_t, f_t> diving_settings = settings_.diving_settings;
   if (!std::isfinite(upper_bound_)) { diving_settings.disable_guided_diving = true; }
@@ -1035,7 +1034,7 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
         nodes_since_last_log++;
         launched_any_task = true;
 
-#pragma omp task
+#pragma omp task affinity(worker)
         plunge_with(worker);
 
       } else {
@@ -1052,15 +1051,20 @@ void branch_and_bound_t<i_t, f_t>::master_loop()
         active_workers_per_type[type]++;
         launched_any_task = true;
 
-#pragma omp task
+#pragma omp task affinity(worker)
         dive_with(worker);
       }
     }
 
-    // If no new task was launched in this iteration, suspend temporarily the execution of the
-    // master
+    // If no new task was launched in this iteration, suspend temporarily the
+    // execution of the master. As of 8/Jan/2026, GCC does not
+    // implement taskyield, but LLVM does.
     if (!launched_any_task) {
+#ifndef __GNUC__
 #pragma omp taskyield
+#else
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+#endif
     }
   }
 
@@ -1314,7 +1318,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   exploration_stats_.nodes_unexplored = 2;
   solver_status_                      = mip_exploration_status_t::RUNNING;
   lower_bound_ceiling_                = inf;
-  should_report_                      = true;
 
   auto down_child = search_tree_.root.get_down_child();
   auto up_child   = search_tree_.root.get_up_child();
