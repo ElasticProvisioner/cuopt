@@ -211,9 +211,7 @@ void bench(
   settings_local.method = cuopt::linear_programming::method_t::PDLP;
   settings_local.detect_infeasibility = true;
   settings_local.iteration_limit = 100000;
-  // Only change the upper bound
-  for (size_t i = 0; i < pairs.size(); ++i)
-    settings_local.new_bounds.push_back({pairs[i].first, problems[i].get_variable_lower_bounds()[pairs[i].first], std::floor(pairs[i].second)});
+  constexpr bool only_upper = true;
 
   if (init_primal_dual)
   {
@@ -228,11 +226,28 @@ void bench(
   {
     settings_local.set_initial_primal_weight(initial_primal_weight);
   }
-  
-  settings_local.use_batch_mode = use_optimal_batch_size;
 
-  cuopt::linear_programming::optimization_problem_solution_t<int, double> batch_solution = cuopt::linear_programming::solve_lp(&handle, batch_problem, settings_local);
-
+  cuopt::linear_programming::optimization_problem_solution_t<int, double> batch_solution(cuopt::linear_programming::pdlp_termination_status_t::NumericalError, handle.get_stream());
+  if (use_optimal_batch_size)
+  {
+    std::vector<int> fractional;
+    std::vector<double> root_soln_x;
+    for (size_t i = 0; i < pairs.size(); ++i)
+    {
+      fractional.push_back(pairs[i].first);
+      root_soln_x.push_back(pairs[i].second);
+    }
+    batch_solution = cuopt::linear_programming::batch_pdlp_solve(&handle, batch_problem, fractional, root_soln_x, settings_local);
+  }
+  else
+  {
+    for (size_t i = 0; i < pairs.size(); ++i)
+      settings_local.new_bounds.push_back({pairs[i].first, problems[i].get_variable_lower_bounds()[pairs[i].first], std::floor(pairs[i].second)});
+    if (!only_upper)
+      for (size_t i = 0; i < pairs.size(); ++i)
+        settings_local.new_bounds.push_back({pairs[i].first, std::ceil(pairs[i].second), problems[i].get_variable_upper_bounds()[pairs[i].first]});
+    batch_solution = cuopt::linear_programming::solve_lp(&handle, batch_problem, settings_local);
+  }
   std::cout << "Batch problem solved in " << batch_solution.get_additional_termination_information().solve_time << " using " << batch_solution.get_additional_termination_information().number_of_steps_taken << std::endl;
   if (needs_warm_start_solution) {
     std::cout << "Total (including warm start original PDLP solve) batch solve time: " << batch_solution.get_additional_termination_information().solve_time + warm_start_time << " seconds" << std::endl;
@@ -289,25 +304,8 @@ int main(int argc, char* argv[])
     // Create a list of problems for each variante and update op_problem to batchify it
     auto [batch_problem, problems, pairs] = create_batch_problem(op_problem, solution, true);
 
-    // The five commented bench calls below correspond to warm start combinations:
-
-    // No warm start: all false
-    //bench(handle_, op_problem,batch_problem, problems, compare_with_baseline, false /*deterministic*/, false, false, false, false);
-
-    // Primal dual only: init_primal_dual = true
-    //bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true, false, false, false);
-
-    // Primal dual + step size + primal weight
-    //bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true, true, true, false);
-
-    // Primal dual + step size only (not primal weight)
-    //bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true, true, false, false);
-
-    // Primal dual + primal weight + step size + iteration count (the fullest warm start)
-    //bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, false /*step size*/, false /*primal weight*/);
-    //bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, true /*step size*/, false /*primal weight*/, false /*use optimal batch size*/);
-    bench(handle_, op_problem, batch_problem, problems, pairs, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, true /*step size*/, false /*primal weight*/, false /*use optimal batch size*/);
-    //bench(handle_, op_problem, batch_problem, problems, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, true /*step size*/, true /*primal weight*/);
+    //bench(handle_, op_problem, batch_problem, problems, pairs, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, true /*step size*/, false /*primal weight*/, false /*use optimal batch size*/);
+    bench(handle_, op_problem, batch_problem, problems, pairs, compare_with_baseline, false /*deterministic*/, true /*primal dual*/, true /*step size*/, false /*primal weight*/, true /*use optimal batch size*/);
   }
 
   return 0;

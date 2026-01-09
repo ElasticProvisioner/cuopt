@@ -6,10 +6,9 @@
 /* clang-format on */
 #pragma once
 
-#include <mip/problem/problem.cuh>
-
+#include <cuopt/linear_programming/optimization_problem.hpp>
 namespace cuopt::linear_programming::detail {
 
 template <typename i_t, typename f_t>
-int optimal_batch_size_handler(const problem_t<i_t, f_t>& op_problem, int max_batch_size);
+int optimal_batch_size_handler(const optimization_problem_t<i_t, f_t>& op_problem, int max_batch_size);
 }

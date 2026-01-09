@@ -519,12 +519,6 @@ optimization_problem_solution_t<i_t, f_t> run_dual_simplex(
 }
 
 template <typename i_t, typename f_t>
-optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
-  detail::problem_t<i_t, f_t>& problem,
-  pdlp_solver_settings_t<i_t, f_t> const& settings,
-  const timer_t& timer);
-
-template <typename i_t, typename f_t>
 static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
   detail::problem_t<i_t, f_t>& problem,
   pdlp_solver_settings_t<i_t, f_t> const& settings,
@@ -536,8 +530,6 @@ static optimization_problem_solution_t<i_t, f_t> run_pdlp_solver(
     return optimization_problem_solution_t<i_t, f_t>{pdlp_termination_status_t::NumericalError,
                                                      problem.handle_ptr->get_stream()};
   }
-  if (settings.use_batch_mode)
-    return run_batch_pdlp(problem, settings, timer);
   detail::pdlp_solver_t<i_t, f_t> solver(problem, settings, is_batch_mode);
   if (settings.inside_mip) { solver.set_inside_mip(true); }
   return solver.run_solver(timer);
@@ -633,6 +625,91 @@ optimization_problem_solution_t<i_t, f_t> run_pdlp(detail::problem_t<i_t, f_t>& 
     *settings.concurrent_halt = 1;
   }
   return sol;
+}
+
+template <typename i_t, typename f_t>
+optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
+  optimization_problem_t<i_t, f_t>& problem,
+  pdlp_solver_settings_t<i_t, f_t> const& settings)
+{
+  cuopt_assert(settings.new_bounds.size() > 0, "Batch size should be greater than 0");
+  const int max_batch_size = settings.new_bounds.size();
+  int optimal_batch_size = detail::optimal_batch_size_handler(problem, max_batch_size);
+  cuopt_assert(optimal_batch_size != 0 && optimal_batch_size <= max_batch_size, "Optimal batch size should be between 1 and max batch size");
+  using f_t2 = typename type_2<f_t>::type;
+
+  rmm::cuda_stream_view stream = problem.get_handle_ptr()->get_stream();
+
+  rmm::device_uvector<f_t> full_primal_solution(problem.get_n_variables() * max_batch_size, stream);
+  rmm::device_uvector<f_t> full_dual_solution(problem.get_n_constraints() * max_batch_size, stream);
+  rmm::device_uvector<f_t> full_reduced_cost(problem.get_n_variables() * max_batch_size, stream);
+
+  std::vector<typename optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t> full_info;
+  std::vector<pdlp_termination_status_t> full_status;
+
+  pdlp_solver_settings_t<i_t, f_t> batch_settings = settings;
+  batch_settings.method = cuopt::linear_programming::method_t::PDLP;
+  batch_settings.detect_infeasibility = true;
+  batch_settings.presolve = false;
+  batch_settings.pdlp_solver_mode = pdlp_solver_mode_t::Stable3;
+
+  for (int i = 0; i < max_batch_size; i += optimal_batch_size)
+  {
+    const int current_batch_size = std::min(optimal_batch_size, max_batch_size - i);
+
+    auto sol = solve_lp(problem, batch_settings);
+
+    // Copy results
+    raft::copy(full_primal_solution.data() + i * problem.get_n_variables(), sol.get_primal_solution().data(), problem.get_n_variables() * current_batch_size, stream);
+    raft::copy(full_dual_solution.data() + i * problem.get_n_constraints(), sol.get_dual_solution().data(), problem.get_n_constraints() * current_batch_size, stream);
+    raft::copy(full_reduced_cost.data() + i * problem.get_n_variables(), sol.get_reduced_cost().data(), problem.get_n_variables() * current_batch_size, stream);
+
+    auto info = sol.get_additional_termination_informations();
+    full_info.insert(full_info.end(), info.begin(), info.end());
+
+    auto status = sol.get_terminations_status();
+    full_status.insert(full_status.end(), status.begin(), status.end());
+  }
+
+  return optimization_problem_solution_t<i_t, f_t>(
+      full_primal_solution,
+      full_dual_solution,
+      full_reduced_cost,
+      problem.get_objective_name(),
+      problem.get_variable_names(),
+      problem.get_row_names(),
+      std::move(full_info),
+      std::move(full_status)
+  );
+}
+
+template <typename i_t, typename f_t>
+optimization_problem_solution_t<i_t, f_t> batch_pdlp_solve(
+  raft::handle_t const* handle_ptr,
+  const cuopt::mps_parser::mps_data_model_t<i_t, f_t>& mps_model,
+  const std::vector<i_t>& fractional,
+  const std::vector<f_t>& root_soln_x,
+  pdlp_solver_settings_t<i_t, f_t> const& settings_const)
+{
+  cuopt_expects(fractional.size() == root_soln_x.size(), error_type_t::ValidationError, "Fractional and root solution must have the same size");
+  cuopt_expects(settings_const.new_bounds.empty(), error_type_t::ValidationError, "Settings must not have new bounds");
+
+  pdlp_solver_settings_t<i_t, f_t> settings(settings_const);
+
+  // Lower bounds can sometimes generate infeasible instances that we struggle to detect
+  constexpr bool only_upper = false;
+  int batch_size = only_upper ? fractional.size() : fractional.size() * 2;
+
+  for (size_t i = 0; i < fractional.size(); ++i)
+    settings.new_bounds.push_back({fractional[i], mps_model.get_variable_lower_bounds()[fractional[i]], std::floor(root_soln_x[fractional[i]])});
+  if (!only_upper) {
+    for (size_t i = 0; i < fractional.size(); i++)
+      settings.new_bounds.push_back({fractional[i], std::ceil(root_soln_x[fractional[i]]), mps_model.get_variable_upper_bounds()[fractional[i]]});
+  }
+
+  optimization_problem_t<i_t, f_t> op_problem = mps_data_model_to_optimization_problem(handle_ptr, mps_model);
+
+  return run_batch_pdlp(op_problem, settings);
 }
 
 template <typename i_t, typename f_t>
@@ -793,68 +870,6 @@ optimization_problem_solution_t<i_t, f_t> run_concurrent(
     CUOPT_LOG_INFO("Using PDLP solve info");
     return sol_pdlp;
   }
-}
-
-template <typename i_t, typename f_t>
-optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
-  detail::problem_t<i_t, f_t>& problem,
-  pdlp_solver_settings_t<i_t, f_t> const& settings,
-  const timer_t& timer)
-{
-  cuopt_assert(problem.variable_bounds.size() != 0 && problem.n_variables != 0, "Those should never be 0");
-  int max_batch_size = problem.variable_bounds.size() / problem.n_variables;
-  int optimal_batch_size = optimal_batch_size_handler(problem, max_batch_size);
-  cuopt_assert(optimal_batch_size != 0 && optimal_batch_size <= max_batch_size, "Optimal batch size should be between 1 and max batch size");
-  using f_t2 = typename type_2<f_t>::type;
-  
-  rmm::cuda_stream_view stream = problem.handle_ptr->get_stream();
-  rmm::device_uvector<f_t2> full_variable_bounds = rmm::device_uvector<f_t2>(problem.variable_bounds, stream);
-  
-  rmm::device_uvector<f_t> full_primal_solution(problem.n_variables * max_batch_size, stream);
-  rmm::device_uvector<f_t> full_dual_solution(problem.n_constraints * max_batch_size, stream);
-  rmm::device_uvector<f_t> full_reduced_cost(problem.n_variables * max_batch_size, stream);
-  
-  std::vector<typename optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t> full_info;
-  std::vector<pdlp_termination_status_t> full_status;
-  
-  pdlp_solver_settings_t<i_t, f_t> batch_settings = settings;
-  batch_settings.use_batch_mode = false;
-
-  for (int i = 0; i < max_batch_size; i += optimal_batch_size)
-  {
-      const int current_batch_size = std::min(optimal_batch_size, max_batch_size - i);
-
-      // Resize and copy bounds
-      problem.variable_bounds.resize(problem.n_variables * current_batch_size, stream);
-      raft::copy(problem.variable_bounds.data(), full_variable_bounds.data() + i * problem.n_variables, problem.n_variables * current_batch_size, stream);
-
-      auto sol = run_pdlp(problem, batch_settings, timer, false);
-
-      // Copy results
-      raft::copy(full_primal_solution.data() + i * problem.n_variables, sol.get_primal_solution().data(), problem.n_variables * current_batch_size, stream);
-      raft::copy(full_dual_solution.data() + i * problem.n_constraints, sol.get_dual_solution().data(), problem.n_constraints * current_batch_size, stream);
-      raft::copy(full_reduced_cost.data() + i * problem.n_variables, sol.get_reduced_cost().data(), problem.n_variables * current_batch_size, stream);
-
-      auto info = sol.get_additional_termination_informations();
-      full_info.insert(full_info.end(), info.begin(), info.end());
-
-      auto status = sol.get_terminations_status();
-      full_status.insert(full_status.end(), status.begin(), status.end());
-  }
-
-  // Restore
-  problem.variable_bounds = rmm::device_uvector<f_t2>(full_variable_bounds, problem.handle_ptr->get_stream());
-  
-  return optimization_problem_solution_t<i_t, f_t>(
-      full_primal_solution,
-      full_dual_solution,
-      full_reduced_cost,
-      problem.objective_name,
-      problem.var_names,
-      problem.row_names,
-      std::move(full_info),
-      std::move(full_status)
-  );
 }
 
 template <typename i_t, typename f_t>
@@ -1137,11 +1152,13 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
     pdlp_solver_settings_t<int, F_TYPE> const& settings,                               \
     const timer_t& timer,                                                              \
     bool is_batch_mode);                                                               \
-                                                                                       \
-  template optimization_problem_solution_t<int, F_TYPE> run_batch_pdlp(                \
-    detail::problem_t<int, F_TYPE>& problem,                                           \
-    pdlp_solver_settings_t<int, F_TYPE> const& settings,                               \
-    const timer_t& timer);                                                             \
+                                                                                      \
+  template optimization_problem_solution_t<int, F_TYPE> batch_pdlp_solve(              \
+    raft::handle_t const* handle_ptr,                                                  \
+    const cuopt::mps_parser::mps_data_model_t<int, F_TYPE>& mps_data_model,            \
+    const std::vector<int>& fractional,                                                \
+    const std::vector<F_TYPE>& root_soln_x,                                             \
+    pdlp_solver_settings_t<int, F_TYPE> const& settings);                                \
                                                                                        \
   template optimization_problem_t<int, F_TYPE> mps_data_model_to_optimization_problem( \
     raft::handle_t const* handle_ptr,                                                  \

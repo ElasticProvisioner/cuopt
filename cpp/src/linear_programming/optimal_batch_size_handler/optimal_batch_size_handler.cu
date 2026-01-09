@@ -10,7 +10,6 @@
 #include <linear_programming/utilities/ping_pong_graph.cuh>
 #include <utilities/event_handler.cuh>
 
-#include <mip/problem/problem.cuh>
 #include <mip/mip_constants.hpp>
 
 namespace cuopt::linear_programming::detail {
@@ -162,7 +161,7 @@ static double evaluate_node(cusparse_sp_mat_descr_wrapper_t<i_t, f_t>& A, cuspar
 }
 
 template <typename i_t, typename f_t>
-int optimal_batch_size_handler(const problem_t<i_t, f_t>& op_problem, int max_batch_size)
+int optimal_batch_size_handler(const optimization_problem_t<i_t, f_t>& op_problem, int max_batch_size)
 {
   if (max_batch_size == 1)
     return 1;
@@ -179,31 +178,35 @@ int optimal_batch_size_handler(const problem_t<i_t, f_t>& op_problem, int max_ba
   constexpr int max_steps = 4; // 4 because we already do one step for direction
   constexpr int initial_batch_size = 128;
   constexpr int benchmark_runs = 5;
-  int current_batch_size = std::min(initial_batch_size, max_batch_size);
+  // Take the floor power of two
+  // This ensures that we always start with a batch size that is a power of two or initial_batch_size
+  int current_batch_size = std::pow(2, std::floor(std::log2(std::min(initial_batch_size, max_batch_size))));
   int optimal_batch_size = current_batch_size;
   double best_ratio;
-  rmm::cuda_stream_view stream_view = op_problem.handle_ptr->get_stream();
+  rmm::cuda_stream_view stream_view = op_problem.get_handle_ptr()->get_stream();
+
+  detail::problem_t<i_t, f_t> problem(op_problem);
 
   // Init cuSparse views
   cusparse_sp_mat_descr_wrapper_t<i_t, f_t> A;
   cusparse_sp_mat_descr_wrapper_t<i_t, f_t> A_T;
-  i_t primal_size = op_problem.n_variables;
-  i_t dual_size = op_problem.n_constraints;
+  i_t primal_size = problem.n_variables;
+  i_t dual_size = problem.n_constraints;
   
 
-  A.create(op_problem.n_constraints,
-    op_problem.n_variables,
-    op_problem.nnz,
-    const_cast<i_t*>(op_problem.offsets.data()),
-    const_cast<i_t*>(op_problem.variables.data()),
-    const_cast<f_t*>(op_problem.coefficients.data()));
+  A.create(problem.n_constraints,
+    problem.n_variables,
+    problem.nnz,
+    problem.offsets.data(),
+    problem.variables.data(),
+    problem.coefficients.data());
 
-  A_T.create(op_problem.n_variables,
-        op_problem.n_constraints,
-        op_problem.nnz,
-        const_cast<i_t*>(op_problem.reverse_offsets.data()),
-        const_cast<i_t*>(op_problem.reverse_constraints.data()),
-        const_cast<f_t*>(op_problem.reverse_coefficients.data()));
+  A_T.create(problem.n_variables,
+        problem.n_constraints,
+        problem.nnz,
+        problem.reverse_offsets.data(),
+        problem.reverse_constraints.data(),
+        problem.reverse_coefficients.data());
 
   // Sync before starting anything to make sure everything is done
   RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view));
@@ -212,9 +215,9 @@ int optimal_batch_size_handler(const problem_t<i_t, f_t>& op_problem, int max_ba
 
   const int left_node = current_batch_size / 2;
   const int right_node = std::min(current_batch_size * 2, max_batch_size);
-  double current_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, current_batch_size, benchmark_runs, op_problem.handle_ptr);
-  double left_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, left_node, benchmark_runs, op_problem.handle_ptr);
-  double right_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, right_node, benchmark_runs, op_problem.handle_ptr);
+  double current_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, current_batch_size, benchmark_runs, op_problem.get_handle_ptr());
+  double left_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, left_node, benchmark_runs, op_problem.get_handle_ptr());
+  double right_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, right_node, benchmark_runs, op_problem.get_handle_ptr());
   int current_step = 1;
 
 #ifdef BATCH_VERBOSE_MODE
@@ -246,7 +249,7 @@ int optimal_batch_size_handler(const problem_t<i_t, f_t>& op_problem, int max_ba
       #ifdef BATCH_VERBOSE_MODE
       std::cout << "Evaluating left node: " << current_batch_size << std::endl;
       #endif
-      left_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, current_batch_size, benchmark_runs, op_problem.handle_ptr);
+      left_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, current_batch_size, benchmark_runs, op_problem.get_handle_ptr());
       #ifdef BATCH_VERBOSE_MODE
       std::cout << "Left node ratio: " << left_ratio << std::endl;
       #endif
@@ -277,7 +280,7 @@ int optimal_batch_size_handler(const problem_t<i_t, f_t>& op_problem, int max_ba
     #ifdef BATCH_VERBOSE_MODE
     std::cout << "Testing one last time between the two at node: " << middle_node << std::endl;
     #endif
-    double middle_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, middle_node, benchmark_runs, op_problem.handle_ptr);
+    double middle_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, middle_node, benchmark_runs, op_problem.get_handle_ptr());
     #ifdef BATCH_VERBOSE_MODE
     std::cout << "Middle node ratio: " << middle_ratio << std::endl;
     #endif
@@ -322,7 +325,7 @@ int optimal_batch_size_handler(const problem_t<i_t, f_t>& op_problem, int max_ba
       #ifdef BATCH_VERBOSE_MODE
       std::cout << "Evaluating right node: " << current_batch_size << std::endl;
       #endif
-      right_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, current_batch_size, benchmark_runs, op_problem.handle_ptr);
+      right_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, current_batch_size, benchmark_runs, op_problem.get_handle_ptr());
       #ifdef BATCH_VERBOSE_MODE
       std::cout << "Right node ratio: " << right_ratio << std::endl;
       #endif
@@ -352,7 +355,7 @@ int optimal_batch_size_handler(const problem_t<i_t, f_t>& op_problem, int max_ba
     #ifdef BATCH_VERBOSE_MODE
     std::cout << "Testing one last time between the two at node: " << middle_node << std::endl;
     #endif
-    double middle_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, middle_node, benchmark_runs, op_problem.handle_ptr);
+    double middle_ratio = evaluate_node<i_t, f_t>(A, A_T, primal_size, dual_size, middle_node, benchmark_runs, op_problem.get_handle_ptr());
     #ifdef BATCH_VERBOSE_MODE
     std::cout << "Middle node ratio: " << middle_ratio << std::endl;
     #endif
@@ -385,10 +388,10 @@ int optimal_batch_size_handler(const problem_t<i_t, f_t>& op_problem, int max_ba
 }
 
 #if MIP_INSTANTIATE_FLOAT
-template int optimal_batch_size_handler<int, float>(const problem_t<int, float>& op_problem, int max_batch_size);
+template int optimal_batch_size_handler<int, float>(const optimization_problem_t<int, float>& op_problem, int max_batch_size);
 #endif
 #if MIP_INSTANTIATE_DOUBLE
-template int optimal_batch_size_handler<int, double>(const problem_t<int, double>& op_problem, int max_batch_size);
+template int optimal_batch_size_handler<int, double>(const optimization_problem_t<int, double>& op_problem, int max_batch_size);
 #endif
 
 }

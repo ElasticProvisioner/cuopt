@@ -43,6 +43,9 @@ static size_t batch_size_handler(const problem_t<i_t, f_t>& op_problem,
                                  const pdlp_solver_settings_t<i_t, f_t>& settings)
 {
   if (settings.new_bounds.empty()) { return 1; }
+  #ifdef BATCH_VERBOSE_MODE
+  std::cout << "Running batch PDLP with " << settings.new_bounds.size() << " problems" << std::endl;
+  #endif
   return settings.new_bounds.size();
 }
 
