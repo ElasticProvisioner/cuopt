@@ -189,6 +189,7 @@ bool diversity_manager_t<i_t, f_t>::run_presolve(f_t time_limit)
 {
   raft::common::nvtx::range fun_scope("run_presolve");
   CUOPT_LOG_INFO("Running presolve!");
+  CUOPT_LOG_INFO("Problem fingerprint before DM presolve: 0x%x", problem_ptr->get_fingerprint());
   work_limit_timer_t presolve_timer(context.gpu_heur_loop, time_limit);
   auto term_crit = ls.constraint_prop.bounds_update.solve(*problem_ptr);
   if (ls.constraint_prop.bounds_update.infeas_constraints_count > 0) {
@@ -197,11 +198,17 @@ bool diversity_manager_t<i_t, f_t>::run_presolve(f_t time_limit)
   }
   if (termination_criterion_t::NO_UPDATE != term_crit) {
     ls.constraint_prop.bounds_update.set_updated_bounds(*problem_ptr);
+    CUOPT_LOG_INFO("Problem fingerprint after cons prop presolve: 0x%x",
+                   problem_ptr->get_fingerprint());
     trivial_presolve(*problem_ptr);
+    CUOPT_LOG_INFO("Problem fingerprint after trivial presolve: 0x%x",
+                   problem_ptr->get_fingerprint());
     if (!problem_ptr->empty && !check_bounds_sanity(*problem_ptr)) { return false; }
   }
   // May overconstrain if Papilo presolve has been run before
-  if (!context.settings.presolve) {
+  // Skip conditional bound strengthening in deterministic mode - the knapsack kernel has
+  // race conditions where multiple blocks can update the same constraint non-deterministically.
+  if (!context.settings.presolve && context.settings.determinism_mode != CUOPT_MODE_DETERMINISTIC) {
     if (!problem_ptr->empty) {
       // do the resizing no-matter what, bounds presolve might not change the bounds but initial
       // trivial presolve might have
@@ -220,6 +227,7 @@ bool diversity_manager_t<i_t, f_t>::run_presolve(f_t time_limit)
                  problem_ptr->n_constraints,
                  problem_ptr->n_variables,
                  problem_ptr->presolve_data.objective_offset);
+  CUOPT_LOG_INFO("Problem fingerprint after DM presolve: 0x%x", problem_ptr->get_fingerprint());
   return true;
 }
 
@@ -307,7 +315,7 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
 
   // Debug: Allow disabling GPU heuristics to test B&B tree determinism in isolation
   const char* disable_heuristics_env = std::getenv("CUOPT_DISABLE_GPU_HEURISTICS");
-  disable_heuristics_env             = "1";
+  disable_heuristics_env             = "1";  // DO NOT REMOVE! intended debugging line!
   if (disable_heuristics_env != nullptr && std::string(disable_heuristics_env) == "1") {
     CUOPT_LOG_INFO("GPU heuristics disabled via CUOPT_DISABLE_GPU_HEURISTICS=1");
     // Initialize population minimally and wait for B&B to finish

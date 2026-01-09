@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -15,25 +15,48 @@
 #include <dual_simplex/types.hpp>
 #include <utilities/work_limit_timer.hpp>
 
-#include <deque>
+#include <cmath>
+#include <limits>
 #include <memory>
+#include <queue>
 #include <vector>
 
 namespace cuopt::linear_programming::dual_simplex {
+
+// Queued pseudo-cost update for BSP determinism
+// Updates are collected during horizon, then applied in deterministic order at sync
+template <typename i_t, typename f_t>
+struct pseudo_cost_update_t {
+  i_t variable;
+  rounding_direction_t direction;
+  f_t delta;      // change_in_obj / frac
+  double vt;      // virtual time when update occurred (for deterministic ordering)
+  int worker_id;  // for tie-breaking in sort
+};
 
 // Per-worker state for BSP (Bulk Synchronous Parallel) branch-and-bound
 template <typename i_t, typename f_t>
 struct bb_worker_state_t {
   int worker_id{0};
 
-  // Local node queue - buffer of nodes assigned to this worker for the current horizon
-  std::deque<mip_node_t<i_t, f_t>*> local_queue;
+  // Type alias for the BSP priority queue
+  using bsp_queue_t = std::priority_queue<mip_node_t<i_t, f_t>*,
+                                          std::vector<mip_node_t<i_t, f_t>*>,
+                                          bsp_node_compare_t<i_t, f_t>>;
+
+  // Local node queue - priority queue ordered by (lower_bound, origin_worker_id, creation_seq)
+  // Nodes are assigned BSP identity (origin_worker_id, creation_seq) when enqueued
+  bsp_queue_t local_queue;
 
   // Current node being processed (may be paused at horizon boundary)
   mip_node_t<i_t, f_t>* current_node{nullptr};
 
   // Worker's virtual time clock (cumulative work units)
   double clock{0.0};
+
+  // Creation sequence counter - cumulative across horizons for unique identity
+  // Each node created by this worker gets (worker_id, next_creation_seq++)
+  int32_t next_creation_seq{0};
 
   // Events generated during this horizon
   bb_event_batch_t<i_t, f_t> events;
@@ -60,12 +83,49 @@ struct bb_worker_state_t {
   // Whether basis needs recomputation for next node
   bool recompute_bounds_and_basis{true};
 
-  // Statistics
+  // Per-horizon statistics (reset each horizon)
   i_t nodes_processed_this_horizon{0};
   double work_units_this_horizon{0.0};
 
+  // Cumulative statistics (across all horizons)
+  i_t total_nodes_processed{0};
+  i_t total_nodes_pruned{0};
+  i_t total_nodes_branched{0};
+  i_t total_nodes_infeasible{0};
+  i_t total_integer_solutions{0};
+  i_t total_nodes_assigned{0};  // via load balancing
+  double total_work_units{0.0};
+
+  // Timing statistics (in seconds)
+  double total_runtime{0.0};       // Total time spent doing actual work
+  double total_barrier_wait{0.0};  // Total time spent waiting at horizon sync barriers
+  double horizon_finish_time{
+    0.0};  // Timestamp when worker finished current horizon (for barrier wait calc)
+
+  // Worker-local upper bound for BSP determinism (prevents cross-worker pruning races)
+  f_t local_upper_bound{std::numeric_limits<f_t>::infinity()};
+
+  // Queued integer solutions found during this horizon (merged at sync)
+  struct queued_integer_solution_t {
+    f_t objective;
+    std::vector<f_t> solution;
+    i_t depth;
+  };
+  std::vector<queued_integer_solution_t> integer_solutions;
+
+  // Queued pseudo-cost updates (applied in deterministic order at sync)
+  std::vector<pseudo_cost_update_t<i_t, f_t>> pseudo_cost_updates;
+
+  // Pseudo-cost snapshot for deterministic variable selection
+  // These are copied from global pseudo-costs at horizon start
+  std::vector<f_t> pc_sum_up_snapshot;
+  std::vector<f_t> pc_sum_down_snapshot;
+  std::vector<i_t> pc_num_up_snapshot;
+  std::vector<i_t> pc_num_down_snapshot;
+
   // Constructor
-  explicit bb_worker_state_t(int id) : worker_id(id), work_context("BB_Worker_" + std::to_string(id))
+  explicit bb_worker_state_t(int id)
+    : worker_id(id), work_context("BB_Worker_" + std::to_string(id))
   {
   }
 
@@ -80,7 +140,7 @@ struct bb_worker_state_t {
     leaf_problem = std::make_unique<lp_problem_t<i_t, f_t>>(original_lp);
 
     // Initialize basis factors
-    const i_t m = leaf_problem->num_rows;
+    const i_t m   = leaf_problem->num_rows;
     basis_factors = std::make_unique<basis_update_mpf_t<i_t, f_t>>(m, refactor_frequency);
 
     // Initialize bounds strengthening
@@ -97,35 +157,136 @@ struct bb_worker_state_t {
   }
 
   // Reset for new horizon
-  void reset_for_horizon(double horizon_start, double horizon_end)
+  void reset_for_horizon(double horizon_start, double horizon_end, f_t global_upper_bound)
   {
     // Reset clock to horizon_start for consistent VT timestamps across workers
     clock = horizon_start;
     events.clear();
-    events.horizon_start = horizon_start;
-    events.horizon_end   = horizon_end;
-    event_sequence       = 0;
+    events.horizon_start         = horizon_start;
+    events.horizon_end           = horizon_end;
+    event_sequence               = 0;
     nodes_processed_this_horizon = 0;
-    work_units_this_horizon = 0.0;
+    work_units_this_horizon      = 0.0;
     // Also sync work_context to match clock for consistent tracking
     work_context.global_work_units_elapsed = horizon_start;
+    // Note: next_creation_seq is NOT reset - it's cumulative for unique identity
+
+    // Initialize worker-local upper bound from global (for BSP determinism)
+    local_upper_bound = global_upper_bound;
+
+    // Clear queued updates from previous horizon
+    integer_solutions.clear();
+    pseudo_cost_updates.clear();
   }
 
-  // Add a node to the local queue
-  void enqueue_node(mip_node_t<i_t, f_t>* node) { local_queue.push_back(node); }
+  // Queue a pseudo-cost update (to be applied at sync in deterministic order)
+  void queue_pseudo_cost_update(i_t variable, rounding_direction_t direction, f_t delta)
+  {
+    pseudo_cost_updates.push_back({variable, direction, delta, clock, worker_id});
+  }
 
-  // Get next node to process
+  // Variable selection using snapshot (for BSP determinism)
+  // Returns the best variable to branch on based on pseudo-cost scores
+  i_t variable_selection_from_snapshot(const std::vector<i_t>& fractional,
+                                       const std::vector<f_t>& solution) const
+  {
+    const i_t num_fractional = fractional.size();
+    if (num_fractional == 0) return -1;
+
+    // Compute averages from snapshot
+    i_t num_initialized_down = 0;
+    i_t num_initialized_up   = 0;
+    f_t pseudo_cost_down_avg = 0;
+    f_t pseudo_cost_up_avg   = 0;
+
+    const i_t n = pc_sum_down_snapshot.size();
+    for (i_t j = 0; j < n; ++j) {
+      if (pc_num_down_snapshot[j] > 0) {
+        ++num_initialized_down;
+        if (std::isfinite(pc_sum_down_snapshot[j])) {
+          pseudo_cost_down_avg += pc_sum_down_snapshot[j] / pc_num_down_snapshot[j];
+        }
+      }
+      if (pc_num_up_snapshot[j] > 0) {
+        ++num_initialized_up;
+        if (std::isfinite(pc_sum_up_snapshot[j])) {
+          pseudo_cost_up_avg += pc_sum_up_snapshot[j] / pc_num_up_snapshot[j];
+        }
+      }
+    }
+    if (num_initialized_down > 0) {
+      pseudo_cost_down_avg /= num_initialized_down;
+    } else {
+      pseudo_cost_down_avg = 1.0;
+    }
+    if (num_initialized_up > 0) {
+      pseudo_cost_up_avg /= num_initialized_up;
+    } else {
+      pseudo_cost_up_avg = 1.0;
+    }
+
+    // Compute scores
+    std::vector<f_t> score(num_fractional);
+    for (i_t k = 0; k < num_fractional; ++k) {
+      const i_t j = fractional[k];
+      f_t pc_down = (pc_num_down_snapshot[j] != 0)
+                      ? pc_sum_down_snapshot[j] / pc_num_down_snapshot[j]
+                      : pseudo_cost_down_avg;
+      f_t pc_up   = (pc_num_up_snapshot[j] != 0) ? pc_sum_up_snapshot[j] / pc_num_up_snapshot[j]
+                                                 : pseudo_cost_up_avg;
+      constexpr f_t eps = 1e-6;
+      const f_t f_down  = solution[j] - std::floor(solution[j]);
+      const f_t f_up    = std::ceil(solution[j]) - solution[j];
+      score[k]          = std::max(f_down * pc_down, eps) * std::max(f_up * pc_up, eps);
+    }
+
+    // Select variable with maximum score
+    i_t branch_var = fractional[0];
+    f_t max_score  = score[0];
+    for (i_t k = 1; k < num_fractional; ++k) {
+      if (score[k] > max_score) {
+        max_score  = score[k];
+        branch_var = fractional[k];
+      }
+    }
+
+    return branch_var;
+  }
+
+  // Add a node to the local queue, assigning BSP identity if not already set
+  // The tuple (origin_worker_id, creation_seq) uniquely identifies the node
+  void enqueue_node(mip_node_t<i_t, f_t>* node)
+  {
+    // Assign BSP identity if not already set
+    // Nodes from load balancing keep their original identity
+    if (!node->has_bsp_identity()) {
+      node->origin_worker_id = worker_id;
+      node->creation_seq     = next_creation_seq++;
+    }
+    local_queue.push(node);
+  }
+
+  // Add a node that already has BSP identity (from load balancing or initial distribution)
+  // Does NOT modify the node's identity
+  void enqueue_node_with_identity(mip_node_t<i_t, f_t>* node)
+  {
+    assert(node->has_bsp_identity() &&
+           "Node must have BSP identity for enqueue_node_with_identity");
+    local_queue.push(node);
+  }
+
+  // Get next node to process (highest priority = lowest lower_bound)
   mip_node_t<i_t, f_t>* dequeue_node()
   {
     if (current_node != nullptr) {
       // Resume paused node
       mip_node_t<i_t, f_t>* node = current_node;
-      current_node = nullptr;
+      current_node               = nullptr;
       return node;
     }
     if (local_queue.empty()) { return nullptr; }
-    mip_node_t<i_t, f_t>* node = local_queue.front();
-    local_queue.pop_front();
+    mip_node_t<i_t, f_t>* node = local_queue.top();
+    local_queue.pop();
     return node;
   }
 
@@ -133,9 +294,37 @@ struct bb_worker_state_t {
   bool has_work() const { return current_node != nullptr || !local_queue.empty(); }
 
   // Get number of nodes in local queue (including paused node)
-  size_t queue_size() const
+  size_t queue_size() const { return local_queue.size() + (current_node != nullptr ? 1 : 0); }
+
+  // Extract all nodes from queue (for load balancing)
+  // Returns nodes in arbitrary order - caller should sort if deterministic order needed
+  std::vector<mip_node_t<i_t, f_t>*> extract_all_nodes()
   {
-    return local_queue.size() + (current_node != nullptr ? 1 : 0);
+    std::vector<mip_node_t<i_t, f_t>*> nodes;
+    nodes.reserve(queue_size());
+
+    // Include paused node if any
+    if (current_node != nullptr) {
+      nodes.push_back(current_node);
+      current_node = nullptr;
+    }
+
+    // Extract all nodes from priority queue
+    while (!local_queue.empty()) {
+      nodes.push_back(local_queue.top());
+      local_queue.pop();
+    }
+
+    return nodes;
+  }
+
+  // Clear the queue without returning nodes (use with caution)
+  void clear_queue()
+  {
+    current_node = nullptr;
+    while (!local_queue.empty()) {
+      local_queue.pop();
+    }
   }
 
   // Record an event
@@ -152,37 +341,37 @@ struct bb_worker_state_t {
     node->bsp_state      = bsp_node_state_t::PAUSED;
     current_node         = node;
 
-    record_event(bb_event_t<i_t, f_t>::make_paused(clock, worker_id, node->node_id, 0, accumulated_vt));
+    record_event(
+      bb_event_t<i_t, f_t>::make_paused(clock, worker_id, node->node_id, 0, accumulated_vt));
   }
 
   // Record node branching event
-  void record_branched(mip_node_t<i_t, f_t>* node,
-                       i_t down_child_id,
-                       i_t up_child_id,
-                       i_t branch_var,
-                       f_t branch_val)
+  void record_branched(
+    mip_node_t<i_t, f_t>* node, i_t down_child_id, i_t up_child_id, i_t branch_var, f_t branch_val)
   {
     record_event(bb_event_t<i_t, f_t>::make_branched(clock,
-                                                    worker_id,
-                                                    node->node_id,
-                                                    0,
-                                                    down_child_id,
-                                                    up_child_id,
-                                                    node->lower_bound,
-                                                    branch_var,
-                                                    branch_val));
+                                                     worker_id,
+                                                     node->node_id,
+                                                     0,
+                                                     down_child_id,
+                                                     up_child_id,
+                                                     node->lower_bound,
+                                                     branch_var,
+                                                     branch_val));
   }
 
   // Record integer solution found
   void record_integer_solution(mip_node_t<i_t, f_t>* node, f_t objective)
   {
-    record_event(bb_event_t<i_t, f_t>::make_integer_solution(clock, worker_id, node->node_id, 0, objective));
+    record_event(
+      bb_event_t<i_t, f_t>::make_integer_solution(clock, worker_id, node->node_id, 0, objective));
   }
 
   // Record node fathomed
   void record_fathomed(mip_node_t<i_t, f_t>* node, f_t lower_bound)
   {
-    record_event(bb_event_t<i_t, f_t>::make_fathomed(clock, worker_id, node->node_id, 0, lower_bound));
+    record_event(
+      bb_event_t<i_t, f_t>::make_fathomed(clock, worker_id, node->node_id, 0, lower_bound));
   }
 
   // Record node infeasible
@@ -202,8 +391,31 @@ struct bb_worker_state_t {
   {
     clock += work_units;
     work_units_this_horizon += work_units;
+    total_work_units += work_units;
     work_context.record_work(work_units);
   }
+
+  // Track node processed (called when a node LP solve completes)
+  void track_node_processed()
+  {
+    ++nodes_processed_this_horizon;
+    ++total_nodes_processed;
+  }
+
+  // Track node branched
+  void track_node_branched() { ++total_nodes_branched; }
+
+  // Track node pruned (fathomed due to bound)
+  void track_node_pruned() { ++total_nodes_pruned; }
+
+  // Track node infeasible
+  void track_node_infeasible() { ++total_nodes_infeasible; }
+
+  // Track integer solution found
+  void track_integer_solution() { ++total_integer_solutions; }
+
+  // Track node assigned via load balancing
+  void track_node_assigned() { ++total_nodes_assigned; }
 };
 
 // Container for all worker states in BSP B&B
@@ -237,10 +449,10 @@ class bb_worker_pool_t {
   int size() const { return static_cast<int>(workers_.size()); }
 
   // Reset all workers for new horizon
-  void reset_for_horizon(double horizon_start, double horizon_end)
+  void reset_for_horizon(double horizon_start, double horizon_end, f_t global_upper_bound)
   {
     for (auto& worker : workers_) {
-      worker.reset_for_horizon(horizon_start, horizon_end);
+      worker.reset_for_horizon(horizon_start, horizon_end, global_upper_bound);
     }
   }
 
@@ -288,4 +500,3 @@ class bb_worker_pool_t {
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex
-

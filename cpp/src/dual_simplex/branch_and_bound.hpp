@@ -374,10 +374,6 @@ class branch_and_bound_t {
   bool bsp_mode_enabled_{false};     // Whether BSP mode is active
   int bsp_horizon_number_{0};        // Current horizon number (for debugging)
 
-  // Counter for deterministic final_id assignment during sync phase
-  // Starts at 2 (root's children are 1 and 2), incremented by 2 for each branch
-  i_t bsp_next_final_id_{3};
-
   // BSP heuristic solution queue - solutions received from GPU heuristics
   // Stored with VT timestamp for deterministic ordering
   struct queued_heuristic_solution_t {

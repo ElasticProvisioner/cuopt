@@ -1,11 +1,13 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
 
 #include <dual_simplex/bounds_strengthening.hpp>
+
+#include <raft/common/nvtx.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -97,6 +99,8 @@ bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
 {
   const i_t m = A.m;
   const i_t n = A.n;
+
+  raft::common::nvtx::range fun_scope("bounds_strengthening");
 
   std::vector<bool> constraint_changed(m, true);
   std::vector<bool> variable_changed(n, false);

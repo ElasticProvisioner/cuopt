@@ -239,8 +239,6 @@ void initial_perturbation(const lp_problem_t<i_t, f_t>& lp,
 
   const f_t dual_tol = settings.dual_tol;
 
-  std::srand(static_cast<unsigned int>(std::time(nullptr)));
-
   objective.resize(n);
   f_t sum_perturb = 0.0;
   i_t num_perturb = 0;

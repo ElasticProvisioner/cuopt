@@ -240,9 +240,10 @@ class mip_node_t {
     copy.fractional_val   = fractional_val;
     copy.node_id          = node_id;
     // Copy BSP fields
-    copy.accumulated_vt = accumulated_vt;
-    copy.bsp_state      = bsp_state;
-    copy.final_id       = final_id;
+    copy.accumulated_vt   = accumulated_vt;
+    copy.bsp_state        = bsp_state;
+    copy.origin_worker_id = origin_worker_id;
+    copy.creation_seq     = creation_seq;
     return copy;
   }
 
@@ -265,17 +266,54 @@ class mip_node_t {
   f_t accumulated_vt{0.0};                              // Virtual time spent on this node so far
   bsp_node_state_t bsp_state{bsp_node_state_t::READY};  // BSP processing state
 
-  // For deterministic node ID assignment in BSP mode:
-  // - node_id is assigned non-deterministically during parallel execution (via atomic counter)
-  // - final_id is assigned deterministically during sync phase based on event order
-  // - Use final_id for sorting if set (>= 0), otherwise fall back to node_id
-  i_t final_id{-1};
+  // Worker-local identification for deterministic BSP ordering:
+  // - origin_worker_id: which worker created this node (-1 for pre-BSP/initial nodes)
+  // - creation_seq: sequence number within that worker (cumulative across horizons)
+  // The tuple (origin_worker_id, creation_seq) is unique and stable (never changes after
+  // assignment) This replaces the old final_id approach which required sync-time assignment
+  int32_t origin_worker_id{-1};
+  int32_t creation_seq{-1};
 
-  // Get the ID to use for deterministic ordering
-  i_t get_deterministic_id() const
+  // Check if this node has been assigned a BSP identity
+  bool has_bsp_identity() const { return origin_worker_id >= -1 && creation_seq >= 0; }
+
+  // Get a 64-bit identity value for hashing (combines worker_id and seq)
+  // Uses origin_worker_id + 1 to handle -1 (pre-BSP nodes) gracefully
+  uint64_t get_bsp_identity_hash() const
   {
-    if (final_id >= 0) return final_id;
-    return node_id;
+    return (static_cast<uint64_t>(origin_worker_id + 1) << 32) |
+           static_cast<uint64_t>(static_cast<uint32_t>(creation_seq));
+  }
+
+  // Compute a deterministic path hash based on branching decisions from root
+  // This uniquely identifies the node regardless of creation order
+  uint64_t compute_path_hash() const
+  {
+    uint64_t hash          = 0;
+    const mip_node_t* node = this;
+    while (node != nullptr && node->branch_var >= 0) {
+      // Combine branch_var and branch_dir into hash
+      uint64_t step = static_cast<uint64_t>(node->branch_var) << 1;
+      step |= (node->branch_dir == rounding_direction_t::UP) ? 1 : 0;
+      // FNV-1a style mixing
+      hash ^= step;
+      hash *= 0x100000001b3ULL;
+      node = node->parent;
+    }
+    return hash;
+  }
+
+  // Get the branching path as a string for debugging
+  std::string get_path_string() const
+  {
+    std::string path;
+    const mip_node_t* node = this;
+    while (node != nullptr && node->branch_var >= 0) {
+      char dir = (node->branch_dir == rounding_direction_t::UP) ? 'U' : 'D';
+      path     = std::to_string(node->branch_var) + dir + (path.empty() ? "" : "-") + path;
+      node     = node->parent;
+    }
+    return path.empty() ? "root" : path;
   }
 };
 
@@ -289,23 +327,71 @@ void remove_fathomed_nodes(std::vector<mip_node_t<i_t, f_t>*>& stack)
   }
 }
 
+// Comparator for global heap (used in non-BSP mode and for initial distribution in BSP)
+// Uses path_hash for deterministic tie-breaking when BSP identity is not available
 template <typename i_t, typename f_t>
 class node_compare_t {
  public:
   // Comparison for priority queue: returns true if 'a' has lower priority than 'b'
   // (elements with lower priority are output last from the heap).
   // Primary: prefer lower bound (best-first search)
-  // Tie-breaker: use deterministic ID for reproducibility across runs
+  // Tie-breaker: use deterministic comparison for reproducibility
   bool operator()(const mip_node_t<i_t, f_t>& a, const mip_node_t<i_t, f_t>& b) const
   {
     if (a.lower_bound != b.lower_bound) { return a.lower_bound > b.lower_bound; }
-    return a.get_deterministic_id() > b.get_deterministic_id();
+    return deterministic_compare(a, b);
   }
 
   bool operator()(const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) const
   {
     if (a->lower_bound != b->lower_bound) { return a->lower_bound > b->lower_bound; }
-    return a->get_deterministic_id() > b->get_deterministic_id();
+    return deterministic_compare(*a, *b);
+  }
+
+ private:
+  // Deterministic comparison using BSP identity tuple or path_hash fallback
+  bool deterministic_compare(const mip_node_t<i_t, f_t>& a, const mip_node_t<i_t, f_t>& b) const
+  {
+    assert(a.has_bsp_identity() && b.has_bsp_identity());
+    // If both have BSP identity, use lexicographic comparison of (origin_worker_id, creation_seq)
+    if (a.has_bsp_identity() && b.has_bsp_identity()) {
+      if (a.origin_worker_id != b.origin_worker_id) {
+        return a.origin_worker_id > b.origin_worker_id;
+      }
+      return a.creation_seq > b.creation_seq;
+    }
+
+    // If only one has BSP identity, prefer the one with identity (already established)
+    if (a.has_bsp_identity()) { return false; }  // a has priority
+    if (b.has_bsp_identity()) { return true; }   // b has priority
+
+    // Neither has BSP identity - use path_hash for deterministic comparison (non-BSP mode)
+    uint64_t hash_a = a.compute_path_hash();
+    uint64_t hash_b = b.compute_path_hash();
+    if (hash_a != hash_b) { return hash_a > hash_b; }
+
+    // Ultimate fallback: compare by depth (shouldn't happen with different paths)
+    return a.depth > b.depth;
+  }
+};
+
+// BSP-specific comparator for worker-local priority queues
+// Uses (origin_worker_id, creation_seq) tuple for deterministic ordering within a worker
+template <typename i_t, typename f_t>
+class bsp_node_compare_t {
+ public:
+  // Returns true if 'a' has lower priority than 'b' (for max-heap behavior)
+  bool operator()(const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) const
+  {
+    // Primary: lower_bound (best-first search - prefer smaller bound)
+    if (a->lower_bound != b->lower_bound) { return a->lower_bound > b->lower_bound; }
+
+    // Tie-breaker: lexicographic comparison of BSP identity tuple
+    // This is deterministic regardless of node creation order
+    if (a->origin_worker_id != b->origin_worker_id) {
+      return a->origin_worker_id > b->origin_worker_id;
+    }
+    return a->creation_seq > b->creation_seq;
   }
 };
 

@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -14,6 +14,8 @@
 #include <utilities/omp_helpers.hpp>
 
 #include <omp.h>
+#include <cmath>
+#include <cstdint>
 
 namespace cuopt::linear_programming::dual_simplex {
 
@@ -49,6 +51,59 @@ class pseudo_costs_t {
 
   void update_pseudo_costs_from_strong_branching(const std::vector<i_t>& fractional,
                                                  const std::vector<f_t>& root_soln);
+
+  // Compute a deterministic hash of the pseudo-cost state for divergence detection
+  uint32_t compute_state_hash() const
+  {
+    uint32_t hash    = 0x811c9dc5;  // FNV-1a offset basis
+    auto hash_double = [&hash](double val) {
+      // Convert to fixed-point representation for exact comparison
+      int64_t fixed = static_cast<int64_t>(val * 1000000.0);
+      hash ^= static_cast<uint32_t>(fixed & 0xFFFFFFFF);
+      hash *= 0x01000193;  // FNV-1a prime
+      hash ^= static_cast<uint32_t>((fixed >> 32) & 0xFFFFFFFF);
+      hash *= 0x01000193;
+    };
+    auto hash_int = [&hash](i_t val) {
+      hash ^= static_cast<uint32_t>(val);
+      hash *= 0x01000193;
+    };
+
+    // Hash pseudo-cost sums and counts
+    for (size_t j = 0; j < pseudo_cost_sum_down.size(); ++j) {
+      hash_double(pseudo_cost_sum_down[j]);
+      hash_double(pseudo_cost_sum_up[j]);
+      hash_int(pseudo_cost_num_down[j]);
+      hash_int(pseudo_cost_num_up[j]);
+    }
+    return hash;
+  }
+
+  // Compute hash of strong branching results
+  uint32_t compute_strong_branch_hash() const
+  {
+    uint32_t hash    = 0x811c9dc5;
+    auto hash_double = [&hash](double val) {
+      if (std::isnan(val)) {
+        hash ^= 0xDEADBEEF;  // Special marker for NaN
+      } else if (std::isinf(val)) {
+        hash ^= val > 0 ? 0xCAFEBABE : 0xBADCAFE;  // Inf markers
+      } else {
+        int64_t fixed = static_cast<int64_t>(val * 1000000.0);
+        hash ^= static_cast<uint32_t>(fixed & 0xFFFFFFFF);
+        hash *= 0x01000193;
+        hash ^= static_cast<uint32_t>((fixed >> 32) & 0xFFFFFFFF);
+      }
+      hash *= 0x01000193;
+    };
+
+    for (size_t k = 0; k < strong_branch_down.size(); ++k) {
+      hash_double(strong_branch_down[k]);
+      hash_double(strong_branch_up[k]);
+    }
+    return hash;
+  }
+
   std::vector<f_t> pseudo_cost_sum_up;
   std::vector<f_t> pseudo_cost_sum_down;
   std::vector<i_t> pseudo_cost_num_up;
