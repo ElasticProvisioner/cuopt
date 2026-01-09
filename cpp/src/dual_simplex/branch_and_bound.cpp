@@ -845,11 +845,12 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bnb_worker_t<i_t, f_t>* worker)
     worker->recompute_basis  = !has_children(status);
     worker->recompute_bounds = !has_children(status);
 
+    ++nodes_since_last_log_;
     ++exploration_stats_.nodes_explored;
     --exploration_stats_.nodes_unexplored;
-    ++nodes_since_last_log_;
 
     if (status == node_solve_info_t::TIME_LIMIT) {
+      solver_status_ = mip_exploration_status_t::TIME_LIMIT;
       break;
 
     } else if (has_children(status)) {
@@ -1189,15 +1190,25 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                       original_lp_,
                       log);
 
+  auto down_child = search_tree_.root.get_down_child();
+  auto up_child   = search_tree_.root.get_up_child();
+  node_queue.push(down_child);
+  node_queue.push(up_child);
+
   settings_.log.printf("Exploring the B&B tree using %d threads (best-first = %d, diving = %d)\n",
                        settings_.num_threads,
                        settings_.num_bfs_workers,
                        settings_.num_threads - settings_.num_bfs_workers);
 
-  auto down_child = search_tree_.root.get_down_child();
-  auto up_child   = search_tree_.root.get_up_child();
-  node_queue.push(down_child);
-  node_queue.push(up_child);
+  diving_heuristics_settings_t<i_t, f_t> diving_settings = settings_.diving_settings;
+  bool is_ramp_up_finished                               = false;
+
+  std::vector<bnb_worker_type_t> worker_types = {EXPLORATION};
+  std::array<i_t, bnb_num_worker_types> max_num_workers_per_type;
+  max_num_workers_per_type.fill(0);
+  max_num_workers_per_type[EXPLORATION] = settings_.num_threads;
+  worker_pool_.init(2 * settings_.num_threads, original_lp_, Arow_, var_types_, settings_);
+  active_workers_per_type.fill(0);
 
   f_t lower_bound     = get_lower_bound();
   f_t abs_gap         = upper_bound_ - lower_bound;
@@ -1210,16 +1221,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   solver_status_                      = mip_exploration_status_t::RUNNING;
   lower_bound_ceiling_                = inf;
   min_node_queue_size_                = 2 * settings_.num_threads;
-
-  diving_heuristics_settings_t<i_t, f_t> diving_settings = settings_.diving_settings;
-  bool is_ramp_up_finished                               = false;
-
-  std::vector<bnb_worker_type_t> worker_types = {EXPLORATION};
-  std::array<i_t, bnb_num_worker_types> max_num_workers_per_type;
-  max_num_workers_per_type.fill(0);
-  max_num_workers_per_type[EXPLORATION] = settings_.num_threads;
-  worker_pool_.init(2 * settings_.num_threads, original_lp_, Arow_, var_types_, settings_);
-  active_workers_per_type.fill(0);
 
   settings_.log.printf(
     "  | Explored | Unexplored |    Objective    |     Bound     | Depth | Iter/Node |   Gap    "
