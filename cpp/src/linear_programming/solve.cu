@@ -46,6 +46,21 @@
 
 namespace cuopt::linear_programming {
 
+class fpe_enable {
+  int old_mask;
+
+ public:
+  explicit fpe_enable(int mask = FE_INVALID) : old_mask(fegetexcept()) { feenableexcept(mask); }
+  ~fpe_enable()
+  {
+    fedisableexcept(FE_ALL_EXCEPT);
+    feenableexcept(old_mask);
+  }
+
+  fpe_enable(const fpe_enable&)            = delete;
+  fpe_enable& operator=(const fpe_enable&) = delete;
+};
+
 // This serves as both a warm up but also a mandatory initial call to setup cuSparse and cuBLAS
 static void init_handler(const raft::handle_t* handle_ptr)
 {
@@ -831,7 +846,7 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
 
 #ifndef NDEBUG
     CUOPT_LOG_DEBUG("Enabling host FPEs");
-    feenableexcept(FE_DIVBYZERO | FE_INVALID);
+    fpe_enable fpe_guard(FE_DIVBYZERO | FE_INVALID);
 #endif
 
     if (op_problem.has_quadratic_objective()) {

@@ -17,7 +17,11 @@ class fpe_disable {
 
  public:
   explicit fpe_disable(int mask = FE_INVALID) : old_mask(fegetexcept()) { fedisableexcept(mask); }
-  ~fpe_disable() { feenableexcept(old_mask); }
+  ~fpe_disable()
+  {
+    fedisableexcept(FE_ALL_EXCEPT);
+    feenableexcept(old_mask);
+  }
 
   fpe_disable(const fpe_disable&)            = delete;
   fpe_disable& operator=(const fpe_disable&) = delete;
