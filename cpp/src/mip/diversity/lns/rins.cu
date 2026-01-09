@@ -265,15 +265,9 @@ void rins_t<i_t, f_t>::run_rins()
   branch_and_bound_settings.diving_settings.num_diving_workers         = 1;
   branch_and_bound_settings.diving_settings.disable_line_search_diving = true;
   branch_and_bound_settings.diving_settings.disable_coefficient_diving = true;
-
-  if (context.settings.disable_guided_diving) {
-    branch_and_bound_settings.diving_settings.disable_guided_diving = true;
-  } else {
-    branch_and_bound_settings.diving_settings.disable_pseudocost_diving = true;
-  }
-
-  branch_and_bound_settings.log.log           = false;
-  branch_and_bound_settings.log.log_prefix    = "[RINS] ";
+  branch_and_bound_settings.diving_settings.disable_pseudocost_diving  = true;
+  branch_and_bound_settings.log.log                                    = false;
+  branch_and_bound_settings.log.log_prefix                             = "[RINS] ";
   branch_and_bound_settings.solution_callback = [this, &rins_solution_queue](
                                                   std::vector<f_t>& solution, f_t objective) {
     rins_solution_queue.push_back(solution);

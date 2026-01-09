@@ -5,10 +5,9 @@
  */
 /* clang-format on */
 
-#include <omp.h>
-#include <algorithm>
-#include <dual_simplex/bounds_strengthening.hpp>
 #include <dual_simplex/branch_and_bound.hpp>
+
+#include <dual_simplex/bounds_strengthening.hpp>
 #include <dual_simplex/crossover.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/logger.hpp>
@@ -20,6 +19,9 @@
 #include <dual_simplex/tic_toc.hpp>
 #include <dual_simplex/user_problem.hpp>
 
+#include <omp.h>
+
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
