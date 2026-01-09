@@ -1212,6 +1212,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   solver_status_                      = mip_exploration_status_t::RUNNING;
   lower_bound_ceiling_                = inf;
   min_node_queue_size_                = 2 * settings_.num_threads;
+  nodes_since_last_log_               = 0;
 
   settings_.log.printf(
     "  | Explored | Unexplored |    Objective    |     Bound     | Depth | Iter/Node |   Gap    "
