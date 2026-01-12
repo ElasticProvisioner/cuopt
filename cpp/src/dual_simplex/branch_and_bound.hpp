@@ -197,8 +197,7 @@ class branch_and_bound_t {
   branch_variable_t<i_t> variable_selection(mip_node_t<i_t, f_t>* node_ptr,
                                             const std::vector<i_t>& fractional,
                                             const std::vector<f_t>& solution,
-                                            bnb_worker_type_t type,
-                                            logger_t& log);
+                                            bnb_worker_type_t type);
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex

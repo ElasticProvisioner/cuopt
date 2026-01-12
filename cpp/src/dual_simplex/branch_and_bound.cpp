@@ -555,11 +555,13 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
   mip_node_t<i_t, f_t>* node_ptr,
   const std::vector<i_t>& fractional,
   const std::vector<f_t>& solution,
-  bnb_worker_type_t type,
-  logger_t& log)
+  bnb_worker_type_t type)
 {
+  logger_t log;
+  log.log                        = false;
   i_t branch_var                 = -1;
   rounding_direction_t round_dir = rounding_direction_t::NONE;
+  std::vector<f_t> current_incumbent;
 
   switch (type) {
     case bnb_worker_type_t::EXPLORATION:
@@ -583,7 +585,10 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
       return pseudocost_diving(pc_, fractional, solution, root_relax_soln_.x, log);
 
     case bnb_worker_type_t::GUIDED_DIVING:
-      return guided_diving(pc_, fractional, solution, incumbent_.x, log);
+      mutex_upper_.lock();
+      current_incumbent = incumbent_.x;
+      mutex_upper_.unlock();
+      return guided_diving(pc_, fractional, solution, current_incumbent, log);
 
     default:
       log.debug("Unknown variable selection method: %d\n", type);
@@ -742,12 +747,9 @@ std::pair<node_status_t, rounding_direction_t> branch_and_bound_t<i_t, f_t>::upd
       return {node_status_t::INTEGER_FEASIBLE, rounding_direction_t::NONE};
 
     } else if (leaf_objective <= upper_bound_ + abs_fathom_tol) {
-      logger_t select_log;
-      select_log.log = false;
-
       // Choose fractional variable to branch on
-      auto [branch_var, round_dir] = variable_selection(
-        node_ptr, leaf_fractional, leaf_solution.x, worker_data->worker_type, select_log);
+      auto [branch_var, round_dir] =
+        variable_selection(node_ptr, leaf_fractional, leaf_solution.x, worker_data->worker_type);
 
       assert(leaf_vstatus.size() == leaf_problem.num_cols);
       assert(branch_var >= 0);
