@@ -1218,25 +1218,14 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
                                   stream_view_);
 
   auto& cusparse_view = pdhg_solver_.get_cusparse_view();
+  // Sync to make sure all previous cuSparse operations are finished before setting the potential_next_dual_solution
+  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
   // Make potential_next_dual_solution point towards reflected dual solution to reuse the code
   RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view.potential_next_dual_solution,
                                            (void*)pdhg_solver_.get_reflected_dual().data()));
 
   if (batch_mode_)
-  {
-    if (deterministic_batch_pdlp)
-    {
-      for (size_t i = 0; i < climber_strategies_.size(); ++i)
-      {
-        RAFT_CUSPARSE_TRY(cusparseDnVecSetValues(cusparse_view.potential_next_dual_solution_vector[i],
-                          (void*)(pdhg_solver_.get_reflected_dual().data() + i * op_problem_scaled_.n_constraints)));
-      }
-    }
-    else
-    {
-      RAFT_CUSPARSE_TRY(cusparseDnMatSetValues(cusparse_view.batch_potential_next_dual_solution, (void*)pdhg_solver_.get_reflected_dual().data()));
-    }
-  }
+    RAFT_CUSPARSE_TRY(cusparseDnMatSetValues(cusparse_view.batch_potential_next_dual_solution, (void*)pdhg_solver_.get_reflected_dual().data()));
 
   step_size_strategy_.compute_interaction_and_movement(
     pdhg_solver_.get_primal_tmp_resource(), cusparse_view, pdhg_solver_.get_saddle_point_state());
@@ -1269,6 +1258,9 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
       &restart_strategy_.fixed_point_error_[0]);
   }
 
+  // Sync to make sure all previous cuSparse operations are finished before setting the potential_next_dual_solution
+  RAFT_CUDA_TRY(cudaStreamSynchronize(stream_view_));
+
   // Put back
   RAFT_CUSPARSE_TRY(
     cusparseDnVecSetValues(cusparse_view.potential_next_dual_solution,
@@ -1276,22 +1268,9 @@ void pdlp_solver_t<i_t, f_t>::compute_fixed_error(std::vector<int>& has_restarte
 
   if (batch_mode_)
   {
-    if (deterministic_batch_pdlp)
-    {
-      for (size_t i = 0; i < climber_strategies_.size(); ++i)
-      {
-        RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednvec(
-        &cusparse_view.potential_next_dual_solution_vector[i],
-        op_problem_scaled_.n_constraints,
-        const_cast<f_t*>(pdhg_solver_.get_potential_next_dual_solution().data() + i * op_problem_scaled_.n_constraints)));
-      }
-    }
-    else
-    {
-        RAFT_CUSPARSE_TRY(
+    RAFT_CUSPARSE_TRY(
     cusparseDnMatSetValues(cusparse_view.batch_potential_next_dual_solution,
                            (void*)pdhg_solver_.get_potential_next_dual_solution().data()));
-    }
   }
 
   #ifdef CUPDLP_DEBUG_MODE

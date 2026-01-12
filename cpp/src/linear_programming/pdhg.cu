@@ -206,8 +206,8 @@ void pdhg_solver_t<i_t, f_t>::compute_At_y()
                                                       cusparse_view_.batch_dual_solutions,
                                                       reusable_device_scalar_value_0_.data(),
                                                       cusparse_view_.batch_current_AtYs,
-                                                      CUSPARSE_SPMM_CSR_ALG3,
-                                                      (f_t*)cusparse_view_.buffer_transpose_batch.data(),
+                                                      (deterministic_batch_pdlp) ? CUSPARSE_SPMM_CSR_ALG3 : CUSPARSE_SPMM_CSR_ALG2,
+                                                      (f_t*)cusparse_view_.buffer_transpose_batch_row_row_.data(),
                                                       stream_view_));
   }
 }
@@ -240,8 +240,8 @@ void pdhg_solver_t<i_t, f_t>::compute_A_x()
                                                       cusparse_view_.batch_reflected_primal_solutions,
                                                       reusable_device_scalar_value_0_.data(),
                                                       cusparse_view_.batch_dual_gradients,
-                                                      CUSPARSE_SPMM_CSR_ALG3,
-                                                      (f_t*)cusparse_view_.buffer_non_transpose_batch.data(),
+                                                      (deterministic_batch_pdlp) ? CUSPARSE_SPMM_CSR_ALG3 : CUSPARSE_SPMM_CSR_ALG2,
+                                                      (f_t*)cusparse_view_.buffer_non_transpose_batch_row_row_.data(),
                                                       stream_view_));
   }
 }

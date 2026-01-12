@@ -52,7 +52,7 @@ struct SpMM_benchmarks_context_t
                                                               x_descr,
                                                               beta.data(),
                                                               y_descr,
-                                                              CUSPARSE_SPMM_CSR_ALG3,
+                                                              (deterministic_batch_pdlp) ? CUSPARSE_SPMM_CSR_ALG3 : CUSPARSE_SPMM_CSR_ALG2,
                                                               &buffer_size_non_transpose_batch,
                                                               stream_view));
 
@@ -66,7 +66,7 @@ struct SpMM_benchmarks_context_t
                                                                    y_descr,
                                                                    beta.data(),
                                                                    x_descr,
-                                                                   CUSPARSE_SPMM_CSR_ALG3,
+                                                                   (deterministic_batch_pdlp) ? CUSPARSE_SPMM_CSR_ALG3 : CUSPARSE_SPMM_CSR_ALG2,
                                                                    &buffer_size_transpose_batch,
                                                                    stream_view));
 
@@ -81,7 +81,7 @@ struct SpMM_benchmarks_context_t
   alpha.data(),
   A_T,
   y_descr,
-  beta.data(), x_descr, CUSPARSE_SPMM_CSR_ALG3, buffer_transpose_batch.data(), stream_view);
+  beta.data(), x_descr, (deterministic_batch_pdlp) ? CUSPARSE_SPMM_CSR_ALG3 : CUSPARSE_SPMM_CSR_ALG2, buffer_transpose_batch.data(), stream_view);
                                        
   my_cusparsespmm_preprocess<f_t>(handle_ptr->get_cusparse_handle(),
                           CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -89,7 +89,7 @@ struct SpMM_benchmarks_context_t
                           alpha.data(),
                           A,
                           x_descr,
-                          beta.data(), y_descr, CUSPARSE_SPMM_CSR_ALG3, buffer_non_transpose_batch.data(), stream_view);
+                          beta.data(), y_descr, (deterministic_batch_pdlp) ? CUSPARSE_SPMM_CSR_ALG3 : CUSPARSE_SPMM_CSR_ALG2, buffer_non_transpose_batch.data(), stream_view);
 #endif
 
 
@@ -103,7 +103,7 @@ struct SpMM_benchmarks_context_t
   x_descr,
   beta.data(),
   y_descr,
-  CUSPARSE_SPMM_CSR_ALG3,
+  (deterministic_batch_pdlp) ? CUSPARSE_SPMM_CSR_ALG3 : CUSPARSE_SPMM_CSR_ALG2,
   (f_t*)buffer_non_transpose_batch.data(),
   stream_view));
 
@@ -115,7 +115,7 @@ struct SpMM_benchmarks_context_t
   y_descr,
   beta.data(),
   x_descr,
-  CUSPARSE_SPMM_CSR_ALG3,
+  (deterministic_batch_pdlp) ? CUSPARSE_SPMM_CSR_ALG3 : CUSPARSE_SPMM_CSR_ALG2,
   (f_t*)buffer_transpose_batch.data(),
   stream_view));
 

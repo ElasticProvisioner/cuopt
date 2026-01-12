@@ -138,7 +138,6 @@ class cusparse_view_t {
 
   // cusparse view of batch gradients
   cusparseDnMatDescr_t batch_dual_gradients;
-  std::vector<cusparseDnVecDescr_t> dual_gradients_vector;
 
   // cusparse view of batch solutions
   cusparseDnMatDescr_t batch_primal_solutions;
@@ -149,22 +148,12 @@ class cusparse_view_t {
   cusparseDnMatDescr_t batch_reflected_primal_solutions;
   cusparseDnMatDescr_t batch_delta_primal_solutions;
   cusparseDnMatDescr_t batch_delta_dual_solutions;
-  std::vector<cusparseDnVecDescr_t> primal_solution_vector;
-  std::vector<cusparseDnVecDescr_t> dual_solution_vector;
-  std::vector<cusparseDnVecDescr_t> potential_next_dual_solution_vector;
-  std::vector<cusparseDnVecDescr_t> next_AtYs_vector;
-  std::vector<cusparseDnVecDescr_t> tmp_dual_vector;
-  std::vector<cusparseDnVecDescr_t> reflected_primal_solution_vector;
-  std::vector<cusparseDnVecDescr_t> delta_primal_solution_vector; // Will be initialized by infeasiblity_information which owns the data
-  std::vector<cusparseDnVecDescr_t> delta_dual_solution_vector; // Will be initialized by infeasiblity_information which owns the data
 
   // cusparse view of At * Y batch computation
   cusparseDnMatDescr_t batch_current_AtYs;
-  std::vector<cusparseDnVecDescr_t> current_AtYs_vector;
 
   // cusparse view of auxillirary space needed for some spmm computations
   cusparseDnMatDescr_t batch_tmp_primals;
-  std::vector<cusparseDnVecDescr_t> tmp_primal_vector;
 
   // cusparse view of At * Y computation
   cusparse_dn_vec_descr_wrapper_t<f_t>
@@ -185,6 +174,8 @@ class cusparse_view_t {
   // reuse buffers for cusparse spmm
   rmm::device_uvector<uint8_t> buffer_transpose_batch;
   rmm::device_uvector<uint8_t> buffer_non_transpose_batch;
+  rmm::device_uvector<uint8_t> buffer_transpose_batch_row_row_;
+  rmm::device_uvector<uint8_t> buffer_non_transpose_batch_row_row_;
 
   rmm::device_uvector<f_t> batch_reflected_primal_solutions_data_transposed_;
   rmm::device_uvector<f_t> batch_dual_gradients_data_transposed_;
