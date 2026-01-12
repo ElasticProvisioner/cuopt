@@ -565,20 +565,25 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
 
   switch (worker_data->worker_type) {
     case bnb_worker_type_t::EXPLORATION:
-      // branch_var = pc_.variable_selection(fractional, solution, log);
-      branch_var = pc_.reliable_variable_selection(worker_data->leaf_problem,
-                                                   settings_,
-                                                   var_types_,
-                                                   node_ptr->vstatus,
-                                                   worker_data->leaf_edge_norms,
-                                                   fractional,
-                                                   solution,
-                                                   worker_data->basis_factors,
-                                                   worker_data->basic_list,
-                                                   worker_data->nonbasic_list,
-                                                   node_ptr->lower_bound,
-                                                   upper_bound_,
-                                                   log);
+
+      // RINS/SubMIP path
+      if (!enable_concurrent_lp_root_solve()) {
+        branch_var = pc_.variable_selection(fractional, solution, log);
+      } else {
+        branch_var = pc_.reliable_variable_selection(worker_data->leaf_problem,
+                                                     settings_,
+                                                     var_types_,
+                                                     node_ptr->vstatus,
+                                                     worker_data->leaf_edge_norms,
+                                                     fractional,
+                                                     solution,
+                                                     worker_data->basis_factors,
+                                                     worker_data->basic_list,
+                                                     worker_data->nonbasic_list,
+                                                     node_ptr->lower_bound,
+                                                     upper_bound_,
+                                                     log);
+      }
 
       round_dir = martin_criteria(solution[branch_var], root_relax_soln_.x[branch_var]);
 
