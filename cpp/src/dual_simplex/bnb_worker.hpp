@@ -36,15 +36,17 @@ enum bnb_worker_type_t : int {
 
 template <typename i_t, typename f_t>
 struct bnb_stats_t {
-  f_t start_time                        = 0.0;
-  omp_atomic_t<f_t> total_lp_solve_time = 0.0;
-  omp_atomic_t<i_t> nodes_explored      = 0;
-  omp_atomic_t<i_t> nodes_unexplored    = 0;
-  omp_atomic_t<f_t> total_lp_iters      = 0;
+  f_t start_time                         = 0.0;
+  omp_atomic_t<f_t> total_lp_solve_time  = 0.0;
+  omp_atomic_t<i_t> nodes_explored       = 0;
+  omp_atomic_t<i_t> nodes_unexplored     = 0;
+  omp_atomic_t<f_t> total_lp_iters       = 0;
+  omp_atomic_t<i_t> nodes_since_last_log = 0;
+  omp_atomic_t<f_t> last_log             = 0.0;
 };
 
 template <typename i_t, typename f_t>
-class bnb_worker_t {
+class bnb_worker_data_t {
  public:
   const i_t worker_id;
   omp_atomic_t<bnb_worker_type_t> worker_type;
@@ -52,6 +54,7 @@ class bnb_worker_t {
   omp_atomic_t<f_t> lower_bound;
 
   lp_problem_t<i_t, f_t> leaf_problem;
+  lp_solution_t<i_t, f_t> leaf_solution;
 
   basis_update_mpf_t<i_t, f_t> basis_factors;
   std::vector<i_t> basic_list;
@@ -67,11 +70,24 @@ class bnb_worker_t {
   bool recompute_basis  = true;
   bool recompute_bounds = true;
 
-  bnb_worker_t(i_t worker_id,
-               const lp_problem_t<i_t, f_t>& original_lp,
-               const csr_matrix_t<i_t, f_t>& Arow,
-               const std::vector<variable_type_t>& var_type,
-               const simplex_solver_settings_t<i_t, f_t>& settings);
+  bnb_worker_data_t(i_t worker_id,
+                    const lp_problem_t<i_t, f_t>& original_lp,
+                    const csr_matrix_t<i_t, f_t>& Arow,
+                    const std::vector<variable_type_t>& var_type,
+                    const simplex_solver_settings_t<i_t, f_t>& settings)
+    : worker_id(worker_id),
+      worker_type(EXPLORATION),
+      is_active(false),
+      lower_bound(-std::numeric_limits<f_t>::infinity()),
+      leaf_problem(original_lp),
+      leaf_solution(original_lp.num_rows, original_lp.num_cols),
+      basis_factors(original_lp.num_rows, settings.refactor_frequency),
+      basic_list(original_lp.num_rows),
+      nonbasic_list(),
+      node_presolver(leaf_problem, Arow, {}, var_type),
+      bounds_changed(original_lp.num_cols, false)
+  {
+  }
 
   // Set the `start_node` for best-first search.
   void init_best_first(mip_node_t<i_t, f_t>* node, const lp_problem_t<i_t, f_t>& original_lp)
@@ -90,11 +106,44 @@ class bnb_worker_t {
   bool init_diving(mip_node_t<i_t, f_t>* node,
                    bnb_worker_type_t type,
                    const lp_problem_t<i_t, f_t>& original_lp,
-                   const simplex_solver_settings_t<i_t, f_t>& settings);
+                   const simplex_solver_settings_t<i_t, f_t>& settings)
+  {
+    internal_node = node->detach_copy();
+    start_node    = &internal_node;
+
+    start_lower = original_lp.lower;
+    start_upper = original_lp.upper;
+    worker_type = type;
+    lower_bound = node->lower_bound;
+    is_active   = true;
+
+    std::fill(bounds_changed.begin(), bounds_changed.end(), false);
+    node->get_variable_bounds(start_lower, start_upper, bounds_changed);
+
+    return node_presolver.bounds_strengthening(start_lower, start_upper, bounds_changed, settings);
+  }
 
   // Set the variables bounds for the LP relaxation of the current node.
   bool set_lp_variable_bounds_for(mip_node_t<i_t, f_t>* node_ptr,
-                                  const simplex_solver_settings_t<i_t, f_t>& settings);
+                                  const simplex_solver_settings_t<i_t, f_t>& settings)
+  {
+    // Reset the bound_changed markers
+    std::fill(bounds_changed.begin(), bounds_changed.end(), false);
+
+    // Set the correct bounds for the leaf problem
+    if (recompute_bounds) {
+      leaf_problem.lower = start_lower;
+      leaf_problem.upper = start_upper;
+      node_ptr->get_variable_bounds(leaf_problem.lower, leaf_problem.upper, bounds_changed);
+
+    } else {
+      node_ptr->update_branched_variable_bounds(
+        leaf_problem.lower, leaf_problem.upper, bounds_changed);
+    }
+
+    return node_presolver.bounds_strengthening(
+      leaf_problem.lower, leaf_problem.upper, bounds_changed, settings);
+  }
 
  private:
   // For diving, we need to store the full node instead of
@@ -119,12 +168,12 @@ class bnb_worker_pool_t {
     num_idle_workers_ = num_workers;
     for (i_t i = 0; i < num_workers; ++i) {
       workers_[i] =
-        std::make_unique<bnb_worker_t<i_t, f_t>>(i, original_lp, Arow, var_type, settings);
+        std::make_unique<bnb_worker_data_t<i_t, f_t>>(i, original_lp, Arow, var_type, settings);
       idle_workers_.push_front(i);
     }
   }
 
-  bnb_worker_t<i_t, f_t>* get_idle_worker()
+  bnb_worker_data_t<i_t, f_t>* get_idle_worker()
   {
     std::lock_guard<omp_mutex_t> lock(mutex_);
 
@@ -145,7 +194,7 @@ class bnb_worker_pool_t {
     }
   }
 
-  bnb_worker_t<i_t, f_t>* get_and_pop_idle_worker()
+  bnb_worker_data_t<i_t, f_t>* get_and_pop_idle_worker()
   {
     std::lock_guard<omp_mutex_t> lock(mutex_);
 
@@ -159,7 +208,7 @@ class bnb_worker_pool_t {
     }
   }
 
-  void return_worker_to_pool(bnb_worker_t<i_t, f_t>* worker)
+  void return_worker_to_pool(bnb_worker_data_t<i_t, f_t>* worker)
   {
     worker->is_active = false;
     std::lock_guard<omp_mutex_t> lock(mutex_);
@@ -184,7 +233,7 @@ class bnb_worker_pool_t {
 
  private:
   // Worker pool
-  std::vector<std::unique_ptr<bnb_worker_t<i_t, f_t>>> workers_;
+  std::vector<std::unique_ptr<bnb_worker_data_t<i_t, f_t>>> workers_;
 
   omp_mutex_t mutex_;
   std::deque<i_t> idle_workers_;

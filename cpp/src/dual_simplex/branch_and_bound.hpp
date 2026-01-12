@@ -36,24 +36,6 @@ enum class mip_status_t {
   UNSET      = 6,  // The status is not set
 };
 
-enum class mip_exploration_status_t {
-  UNSET      = 0,  // The status is not set
-  TIME_LIMIT = 1,  // The solver reached a time limit
-  NODE_LIMIT = 2,  // The maximum number of nodes was reached (not implemented)
-  NUMERICAL  = 3,  // The solver encountered a numerical error
-  RUNNING    = 4,  // The solver is currently exploring the tree
-  COMPLETED  = 5,  // The solver finished exploring the tree
-};
-
-enum class node_solve_info_t {
-  NO_CHILDREN      = 0,  // The node does not produced children
-  UP_CHILD_FIRST   = 1,  // The up child should be explored first
-  DOWN_CHILD_FIRST = 2,  // The down child should be explored first
-  TIME_LIMIT       = 3,  // The solver reached a time limit
-  ITERATION_LIMIT  = 4,  // The solver reached a iteration limit
-  NUMERICAL        = 5   // The solver encounter a numerical error when solving the node
-};
-
 template <typename i_t, typename f_t>
 void upper_bound_callback(f_t upper_bound);
 
@@ -148,7 +130,7 @@ class branch_and_bound_t {
   pseudo_costs_t<i_t, f_t> pc_;
 
   // Heap storing the nodes waiting to be explored.
-  node_queue_t<i_t, f_t> node_queue;
+  node_queue_t<i_t, f_t> node_queue_;
 
   // Search tree
   search_tree_t<i_t, f_t> search_tree_;
@@ -161,10 +143,8 @@ class branch_and_bound_t {
   bnb_worker_pool_t<i_t, f_t> worker_pool_;
 
   // Global status of the solver.
-  omp_atomic_t<mip_exploration_status_t> solver_status_;
-
-  // Count the number of nodes since the last report.
-  omp_atomic_t<i_t> nodes_since_last_log_;
+  omp_atomic_t<mip_status_t> solver_status_;
+  omp_atomic_t<bool> is_running{false};
 
   // Minimum number of node in the queue. When the queue size is less than
   // this variable, the nodes are added directly to the queue instead of
@@ -179,7 +159,7 @@ class branch_and_bound_t {
   void report(std::string symbol, f_t obj, f_t lower_bound, i_t node_depth);
 
   // Set the final solution.
-  mip_status_t set_final_solution(mip_solution_t<i_t, f_t>& solution, f_t lower_bound);
+  void set_final_solution(mip_solution_t<i_t, f_t>& solution, f_t lower_bound);
 
   // Update the incumbent solution with the new feasible solution
   // found during branch and bound.
@@ -192,18 +172,26 @@ class branch_and_bound_t {
   void repair_heuristic_solutions();
 
   // Perform a plunge over a subtree using a given worker.
-  void plunge_with(bnb_worker_t<i_t, f_t>* worker);
+  void plunge_with(bnb_worker_data_t<i_t, f_t>* worker_data);
 
   // Perform a deep dive over a subtree using a given worker.
-  void dive_with(bnb_worker_t<i_t, f_t>* worker);
+  void dive_with(bnb_worker_data_t<i_t, f_t>* worker_data);
 
-  // Solve the LP relaxation of a leaf node and update the tree.
-  node_solve_info_t solve_node(mip_node_t<i_t, f_t>* node_ptr,
-                               search_tree_t<i_t, f_t>& search_tree,
-                               bnb_worker_type_t thread_type,
-                               bnb_worker_t<i_t, f_t>* worker,
+  // Solve the LP relaxation of a leaf node
+  dual::status_t solve_node_lp(mip_node_t<i_t, f_t>* node_ptr,
+                               bnb_worker_data_t<i_t, f_t>* worker_data,
                                bnb_stats_t<i_t, f_t>& stats,
                                logger_t& log);
+
+  // Update the tree based on the LP relaxation. Returns the status
+  // of the node and, if appropriated, the preferred rounding direction
+  // when visiting the children.
+  std::pair<node_status_t, rounding_direction_t> update_tree(
+    mip_node_t<i_t, f_t>* node_ptr,
+    search_tree_t<i_t, f_t>& search_tree,
+    bnb_worker_data_t<i_t, f_t>* worker_data,
+    dual::status_t lp_status,
+    logger_t& log);
 
   // Selects the variable to branch on.
   branch_variable_t<i_t> variable_selection(mip_node_t<i_t, f_t>* node_ptr,
