@@ -553,32 +553,31 @@ rounding_direction_t martin_criteria(f_t val, f_t root_val)
 template <typename i_t, typename f_t>
 branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
   mip_node_t<i_t, f_t>* node_ptr,
-  const lp_problem_t<i_t, f_t>& lp,
-  const simplex_solver_settings_t<i_t, f_t>& lp_settings,
-  const std::vector<variable_type_t>& var_types,
-  const std::vector<variable_status_t>& vstatus,
-  const std::vector<f_t>& edge_norms,
   const std::vector<i_t>& fractional,
-  const std::vector<f_t>& solution,
-  bnb_worker_type_t type)
+  bnb_worker_data_t<i_t, f_t>* worker_data)
 {
   logger_t log;
   log.log                        = false;
   i_t branch_var                 = -1;
   rounding_direction_t round_dir = rounding_direction_t::NONE;
   std::vector<f_t> current_incumbent;
+  std::vector<f_t>& solution     = worker_data->leaf_solution.x;
 
-  switch (type) {
+  switch (worker_data->worker_type) {
     case bnb_worker_type_t::EXPLORATION:
       // branch_var = pc_.variable_selection(fractional, solution, log);
-      branch_var = pc_.reliable_variable_selection(lp,
-                                                   lp_settings,
+      branch_var = pc_.reliable_variable_selection(worker_data->leaf_problem,
+                                                   settings_,
                                                    var_types_,
-                                                   vstatus,
-                                                   edge_norms,
+                                                   node_ptr->vstatus,
+                                                   worker_data->leaf_edge_norms,
                                                    fractional,
                                                    solution,
+                                                   worker_data->basis_factors,
+                                                   worker_data->basic_list,
+                                                   worker_data->nonbasic_list,
                                                    node_ptr->lower_bound,
+                                                   upper_bound_,
                                                    log);
 
       round_dir = martin_criteria(solution[branch_var], root_relax_soln_.x[branch_var]);
@@ -606,7 +605,7 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
       return guided_diving(pc_, fractional, solution, current_incumbent, log);
 
     default:
-      log.debug("Unknown variable selection method: %d\n", type);
+      log.debug("Unknown variable selection method: %d\n", worker_data->worker_type);
       return {-1, rounding_direction_t::NONE};
   }
 }
@@ -617,9 +616,8 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(mip_node_t<i_t, f_t>*
                                                            bnb_stats_t<i_t, f_t>& stats,
                                                            logger_t& log)
 {
-  lp_problem_t<i_t, f_t>& leaf_problem         = worker_data->leaf_problem;
   std::vector<variable_status_t>& leaf_vstatus = node_ptr->vstatus;
-  assert(leaf_vstatus.size() == leaf_problem.num_cols);
+  assert(leaf_vstatus.size() == worker_data->leaf_problem.num_cols);
 
   simplex_solver_settings_t lp_settings = settings_;
   lp_settings.set_log(false);
@@ -658,9 +656,9 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(mip_node_t<i_t, f_t>*
     node_ptr->vstatus[node_ptr->branch_var]);
 #endif
 
-  bool is_feasible                 = worker_data->set_lp_variable_bounds_for(node_ptr, settings_);
-  dual::status_t lp_status         = dual::status_t::DUAL_UNBOUNDED;
-  std::vector<f_t> leaf_edge_norms = edge_norms_;  // = node.steepest_edge_norms;
+  bool is_feasible             = worker_data->set_lp_variable_bounds_for(node_ptr, settings_);
+  dual::status_t lp_status     = dual::status_t::DUAL_UNBOUNDED;
+  worker_data->leaf_edge_norms = edge_norms_;  // = node.steepest_edge_norms;
 
   if (is_feasible) {
     i_t node_iter     = 0;
@@ -670,7 +668,7 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(mip_node_t<i_t, f_t>*
                                                 0,
                                                 worker_data->recompute_basis,
                                                 lp_start_time,
-                                                leaf_problem,
+                                                worker_data->leaf_problem,
                                                 lp_settings,
                                                 leaf_vstatus,
                                                 worker_data->basis_factors,
@@ -678,12 +676,12 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(mip_node_t<i_t, f_t>*
                                                 worker_data->nonbasic_list,
                                                 worker_data->leaf_solution,
                                                 node_iter,
-                                                leaf_edge_norms);
+                                                worker_data->leaf_edge_norms);
 
     if (lp_status == dual::status_t::NUMERICAL) {
       log.printf("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
       lp_status_t second_status =
-        solve_linear_program_with_advanced_basis(leaf_problem,
+        solve_linear_program_with_advanced_basis(worker_data->leaf_problem,
                                                  lp_start_time,
                                                  lp_settings,
                                                  worker_data->leaf_solution,
@@ -691,7 +689,7 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(mip_node_t<i_t, f_t>*
                                                  worker_data->basic_list,
                                                  worker_data->nonbasic_list,
                                                  leaf_vstatus,
-                                                 leaf_edge_norms);
+                                                 worker_data->leaf_edge_norms);
 
       lp_status = convert_lp_status_to_dual_status(second_status);
     }
@@ -763,16 +761,7 @@ std::pair<node_status_t, rounding_direction_t> branch_and_bound_t<i_t, f_t>::upd
 
     } else if (leaf_objective <= upper_bound_ + abs_fathom_tol) {
       // Choose fractional variable to branch on
-      auto [branch_var, round_dir] = variable_selection(node_ptr,
-                                                        leaf_problem,
-                                                        lp_settings,
-                                                        var_types_,
-                                                        leaf_vstatus,
-                                                        leaf_edge_norms,
-                                                        leaf_fractional,
-                                                        leaf_solution.x,
-                                                        thread_type,
-                                                        lp_settings.log);
+      auto [branch_var, round_dir] = variable_selection(node_ptr, leaf_fractional, worker_data);
 
       assert(leaf_vstatus.size() == leaf_problem.num_cols);
       assert(branch_var >= 0);

@@ -55,6 +55,7 @@ class bnb_worker_data_t {
 
   lp_problem_t<i_t, f_t> leaf_problem;
   lp_solution_t<i_t, f_t> leaf_solution;
+  std::vector<f_t> leaf_edge_norms;
 
   basis_update_mpf_t<i_t, f_t> basis_factors;
   std::vector<i_t> basic_list;

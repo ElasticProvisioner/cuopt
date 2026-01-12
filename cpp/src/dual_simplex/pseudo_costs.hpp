@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <dual_simplex/basis_updates.hpp>
 #include <dual_simplex/logger.hpp>
 #include <dual_simplex/mip_node.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
@@ -54,7 +55,11 @@ class pseudo_costs_t {
                                   const std::vector<f_t>& edge_norms,
                                   const std::vector<i_t>& fractional,
                                   const std::vector<f_t>& solution,
+                                  const basis_update_mpf_t<i_t, f_t>& basis_factors,
+                                  const std::vector<i_t>& basic_list,
+                                  const std::vector<i_t>& nonbasic_list,
                                   f_t current_obj,
+                                  f_t upper_bound,
                                   logger_t& log);
 
   f_t obj_estimate(const std::vector<i_t>& fractional,
