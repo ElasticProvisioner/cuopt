@@ -34,10 +34,10 @@ class pseudo_costs_t {
 
   void resize(i_t num_variables)
   {
-    pseudo_cost_sum_down.resize(num_variables);
-    pseudo_cost_sum_up.resize(num_variables);
-    pseudo_cost_num_down.resize(num_variables);
-    pseudo_cost_num_up.resize(num_variables);
+    pseudo_cost_sum_down.assign(num_variables, 0);
+    pseudo_cost_sum_up.assign(num_variables, 0);
+    pseudo_cost_num_down.assign(num_variables, 0);
+    pseudo_cost_num_up.assign(num_variables, 0);
     pseudo_cost_mutex.resize(num_variables);
   }
 
@@ -62,6 +62,8 @@ class pseudo_costs_t {
                                   const std::vector<i_t>& nonbasic_list,
                                   f_t current_obj,
                                   f_t upper_bound,
+                                  i_t bnb_lp_iter,
+                                  i_t bnb_explored_nodes,
                                   logger_t& log);
 
   f_t obj_estimate(const std::vector<i_t>& fractional,
@@ -79,6 +81,7 @@ class pseudo_costs_t {
   std::vector<f_t> strong_branch_up;
   std::vector<omp_mutex_t> pseudo_cost_mutex;
   omp_atomic_t<i_t> num_strong_branches_completed = 0;
+  omp_atomic_t<i_t> total_lp_iter                 = 0;
 };
 
 template <typename i_t, typename f_t>

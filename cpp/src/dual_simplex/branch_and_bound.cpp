@@ -561,7 +561,7 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
   i_t branch_var                 = -1;
   rounding_direction_t round_dir = rounding_direction_t::NONE;
   std::vector<f_t> current_incumbent;
-  std::vector<f_t>& solution     = worker_data->leaf_solution.x;
+  std::vector<f_t>& solution = worker_data->leaf_solution.x;
 
   switch (worker_data->worker_type) {
     case bnb_worker_type_t::EXPLORATION:
@@ -582,6 +582,8 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
                                                      worker_data->nonbasic_list,
                                                      node_ptr->lower_bound,
                                                      upper_bound_,
+                                                     exploration_stats_.total_lp_iters,
+                                                     exploration_stats_.nodes_explored,
                                                      log);
       }
 

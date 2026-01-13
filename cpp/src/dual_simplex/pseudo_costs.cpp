@@ -145,7 +145,9 @@ f_t trial_branching(const lp_problem_t<i_t, f_t>& original_lp,
                     i_t branch_var,
                     f_t branch_var_lower,
                     f_t branch_var_upper,
-                    f_t upper_bound)
+                    f_t upper_bound,
+                    i_t bnb_lp_iter_per_node,
+                    omp_atomic_t<i_t>& total_lp_iter)
 {
   lp_problem_t child_problem      = original_lp;
   child_problem.lower[branch_var] = branch_var_lower;
@@ -154,7 +156,7 @@ f_t trial_branching(const lp_problem_t<i_t, f_t>& original_lp,
   simplex_solver_settings_t<i_t, f_t> child_settings = settings;
   child_settings.set_log(false);
   f_t lp_start_time              = tic();
-  child_settings.iteration_limit = 200;
+  child_settings.iteration_limit = std::clamp(bnb_lp_iter_per_node, 10, 100);
   child_settings.cut_off         = upper_bound + settings.dual_tol;
   child_settings.inside_mip      = 2;
   child_settings.scale_columns   = false;
@@ -180,16 +182,20 @@ f_t trial_branching(const lp_problem_t<i_t, f_t>& original_lp,
                                                           solution,
                                                           iter,
                                                           child_edge_norms);
-  settings.log.debug("Trial branching on variable %d. Lo: %e Up: %e. Iter %d. Status %d. Obj %e\n",
+  total_lp_iter += iter;
+  settings.log.debug("Trial branching on variable %d. Lo: %e Up: %e. Iter %d. Status %s. Obj %e\n",
                      branch_var,
                      child_problem.lower[branch_var],
                      child_problem.upper[branch_var],
                      iter,
-                     status,
+                     dual::status_to_string(status).c_str(),
                      compute_objective(child_problem, solution.x));
 
-  if (status == dual::status_t::OPTIMAL || status == dual::status_t::ITERATION_LIMIT ||
-      status == dual::status_t::CUTOFF) {
+  if (status == dual::status_t::DUAL_UNBOUNDED) {
+    // LP was infeasible
+    return std::numeric_limits<f_t>::infinity();
+  } else if (status == dual::status_t::OPTIMAL || status == dual::status_t::ITERATION_LIMIT ||
+             status == dual::status_t::CUTOFF) {
     return compute_objective(child_problem, solution.x);
   } else {
     return std::numeric_limits<f_t>::quiet_NaN();
@@ -211,8 +217,8 @@ void strong_branching(const lp_problem_t<i_t, f_t>& original_lp,
                       pseudo_costs_t<i_t, f_t>& pc)
 {
   pc.resize(original_lp.num_cols);
-  pc.strong_branch_down.resize(fractional.size());
-  pc.strong_branch_up.resize(fractional.size());
+  pc.strong_branch_down.assign(fractional.size(), 0);
+  pc.strong_branch_up.assign(fractional.size(), 0);
   pc.num_strong_branches_completed = 0;
 
   settings.log.printf("Strong branching using %d threads and %ld fractional variables\n",
@@ -397,6 +403,8 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   const std::vector<i_t>& nonbasic_list,
   f_t current_obj,
   f_t upper_bound,
+  i_t bnb_lp_iter,
+  i_t bnb_explored_nodes,
   logger_t& log)
 {
   i_t branch_var = fractional[0];
@@ -414,86 +422,99 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
              pseudo_cost_down_avg,
              pseudo_cost_up_avg);
 
-  const i_t reliable_threshold = 1;
+  const i_t max_iter     = 0.5 * bnb_lp_iter;
+  const i_t gamma        = (max_iter - total_lp_iter) / (total_lp_iter + 1);
+  const i_t max_v        = 5;
+  const i_t min_v        = 1;
+  i_t reliable_threshold = 0;  // std::clamp((1 - gamma) * min_v + gamma * max_v, min_v, max_v);
+  // reliable_threshold     = total_lp_iter < max_iter ? reliable_threshold : 0;
 
-  for (auto j : fractional) {
-    pseudo_cost_mutex[j].lock();
-    bool down_reliable = pseudo_cost_num_down[j] >= reliable_threshold;
-    pseudo_cost_mutex[j].unlock();
+  settings.log.debug("RB LP iterations = %d, B&B LP iterations = %d reliable_threshold = %d\n",
+                     total_lp_iter.load(),
+                     bnb_lp_iter,
+                     reliable_threshold);
 
-    f_t pseudo_cost_down = 0;
-    f_t pseudo_cost_up   = 0;
+  std::vector<i_t> pending = fractional;
+  std::vector<i_t> conflict;
+  conflict.reserve(fractional.size());
 
-    if (down_reliable) {
-      pseudo_cost_mutex[j].lock();
-      pseudo_cost_down = pseudo_cost_sum_down[j] / pseudo_cost_num_down[j];
+  while (!pending.empty()) {
+    for (auto j : pending) {
+      bool is_locked = pseudo_cost_mutex[j].try_lock();
+
+      if (!is_locked) {
+        conflict.push_back(j);
+        continue;
+      }
+
+      if (pseudo_cost_num_down[j] < reliable_threshold) {
+        // Do trial branching on the down branch
+        f_t obj = trial_branching(lp,
+                                  settings,
+                                  var_types,
+                                  vstatus,
+                                  edge_norms,
+                                  basis_factors,
+                                  basic_list,
+                                  nonbasic_list,
+                                  j,
+                                  lp.lower[j],
+                                  std::floor(solution[j]),
+                                  upper_bound,
+                                  bnb_lp_iter / bnb_explored_nodes,
+                                  total_lp_iter);
+        if (!std::isnan(obj)) {
+          f_t change_in_obj = obj - current_obj;
+          f_t change_in_x   = solution[j] - std::floor(solution[j]);
+          pseudo_cost_sum_down[j] += change_in_obj / change_in_x;
+          pseudo_cost_num_down[j]++;
+        }
+      }
+
+      if (pseudo_cost_num_up[j] < reliable_threshold) {
+        f_t obj = trial_branching(lp,
+                                  settings,
+                                  var_types,
+                                  vstatus,
+                                  edge_norms,
+                                  basis_factors,
+                                  basic_list,
+                                  nonbasic_list,
+                                  j,
+                                  std::ceil(solution[j]),
+                                  lp.upper[j],
+                                  upper_bound,
+                                  bnb_lp_iter / bnb_explored_nodes,
+                                  total_lp_iter);
+
+        if (!std::isnan(obj)) {
+          f_t change_in_obj = obj - current_obj;
+          f_t change_in_x   = std::ceil(solution[j]) - solution[j];
+          pseudo_cost_sum_up[j] += change_in_obj / change_in_x;
+          pseudo_cost_num_up[j]++;
+        }
+      }
+
+      f_t pc_up   = pseudo_cost_num_up[j] > 0 ? pseudo_cost_sum_up[j] / pseudo_cost_num_up[j]
+                                              : pseudo_cost_up_avg;
+      f_t pc_down = pseudo_cost_sum_down[j] > 0 ? pseudo_cost_sum_down[j] / pseudo_cost_num_down[j]
+                                                : pseudo_cost_down_avg;
+
       pseudo_cost_mutex[j].unlock();
-    } else {
-      // Do trial branching on the down branch
-      f_t obj = trial_branching(lp,
-                                settings,
-                                var_types,
-                                vstatus,
-                                edge_norms,
-                                basis_factors,
-                                basic_list,
-                                nonbasic_list,
-                                j,
-                                lp.lower[j],
-                                std::floor(solution[j]),
-                                upper_bound);
-      if (!std::isnan(obj)) {
-        f_t change_in_obj = obj - current_obj;
-        f_t change_in_x   = solution[j] - std::floor(solution[j]);
-        pseudo_cost_mutex[j].lock();
-        pseudo_cost_sum_down[j] += change_in_obj / change_in_x;
-        pseudo_cost_num_down[j]++;
-        pseudo_cost_mutex[j].unlock();
-        pseudo_cost_down = pseudo_cost_sum_down[j] / pseudo_cost_num_down[j];
+
+      constexpr f_t eps = 1e-6;
+      const f_t f_down  = solution[j] - std::floor(solution[j]);
+      const f_t f_up    = std::ceil(solution[j]) - solution[j];
+      f_t score         = std::max(f_down * pc_down, eps) * std::max(f_up * pc_up, eps);
+
+      if (score > max_score) {
+        max_score  = score;
+        branch_var = j;
       }
     }
 
-    pseudo_cost_mutex[j].lock();
-    bool up_reliable = pseudo_cost_num_up[j] >= reliable_threshold;
-    pseudo_cost_mutex[j].unlock();
-    if (up_reliable) {
-      pseudo_cost_mutex[j].lock();
-      pseudo_cost_up = pseudo_cost_sum_up[j] / pseudo_cost_num_up[j];
-      pseudo_cost_mutex[j].unlock();
-    } else {
-      // Do trial branching on the up branch
-      f_t obj = trial_branching(lp,
-                                settings,
-                                var_types,
-                                vstatus,
-                                edge_norms,
-                                basis_factors,
-                                basic_list,
-                                nonbasic_list,
-                                j,
-                                std::ceil(solution[j]),
-                                lp.upper[j],
-                                upper_bound);
-
-      if (!std::isnan(obj)) {
-        f_t change_in_obj = obj - current_obj;
-        f_t change_in_x   = std::ceil(solution[j]) - solution[j];
-        pseudo_cost_mutex[j].lock();
-        pseudo_cost_sum_up[j] += change_in_obj / change_in_x;
-        pseudo_cost_num_up[j]++;
-        pseudo_cost_up = pseudo_cost_sum_up[j] / pseudo_cost_num_up[j];
-        pseudo_cost_mutex[j].unlock();
-      }
-    }
-    constexpr f_t eps = 1e-6;
-    const f_t f_down  = solution[j] - std::floor(solution[j]);
-    const f_t f_up    = std::ceil(solution[j]) - solution[j];
-    f_t score = std::max(f_down * pseudo_cost_down, eps) * std::max(f_up * pseudo_cost_up, eps);
-
-    if (score > max_score) {
-      max_score  = score;
-      branch_var = j;
-    }
+    std::swap(pending, conflict);
+    conflict.clear();
   }
 
   log.printf(
