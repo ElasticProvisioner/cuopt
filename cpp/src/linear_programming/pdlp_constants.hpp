@@ -34,8 +34,6 @@ inline constexpr int dual_stride   = 1;
 
 // #define BATCH_VERBOSE_MODE
 
-static bool use_row_row = true;
-
 static bool deterministic_batch_pdlp = true;
 
 // Value used to determine what we see as too small (the value) or too large (1/value) values when

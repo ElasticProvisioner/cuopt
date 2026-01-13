@@ -31,14 +31,14 @@ struct SpMM_benchmarks_context_t
   
   int rows_primal = primal_size;
   int col_primal = current_batch_size;
-  int ld_primal = (use_row_row) ? current_batch_size : rows_primal;
+  int ld_primal = current_batch_size;
 
   int rows_dual = dual_size;
   int col_dual = current_batch_size;
-  int ld_dual = (use_row_row) ? current_batch_size : rows_dual;
+  int ld_dual = current_batch_size;
 
-  x_descr.create(rows_primal, col_primal, ld_primal, x.data());
-  y_descr.create(rows_dual, col_dual, ld_dual, y.data());
+  x_descr.create(rows_primal, col_primal, ld_primal, x.data(), CUSPARSE_ORDER_ROW);
+  y_descr.create(rows_dual, col_dual, ld_dual, y.data(), CUSPARSE_ORDER_ROW);
 
   // Init buffers for SpMMs
   const rmm::device_scalar<f_t> alpha{1, stream_view};
@@ -157,6 +157,10 @@ static double evaluate_node(cusparse_sp_mat_descr_wrapper_t<i_t, f_t>& A, cuspar
     total_time += elapsed_time;
   }
   double average_time = total_time / benchmark_runs;
+  #ifdef BATCH_VERBOSE_MODE
+  std::cout << "Average time for batch size " << current_batch_size << " is " << average_time << " ms" << std::endl;
+  std::cout << "Ratio is " << average_time / current_batch_size << " ms/batch" << std::endl;
+  #endif
   return average_time / current_batch_size;
 }
 

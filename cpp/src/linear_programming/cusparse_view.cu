@@ -130,9 +130,9 @@ cusparse_dn_mat_descr_wrapper_t<f_t>& cusparse_dn_mat_descr_wrapper_t<f_t>::oper
 }
 
 template <typename f_t>
-void cusparse_dn_mat_descr_wrapper_t<f_t>::create(int64_t row, int64_t col, int64_t ld, f_t* values)
+void cusparse_dn_mat_descr_wrapper_t<f_t>::create(int64_t row, int64_t col, int64_t ld, f_t* values, cusparseOrder_t order)
 {
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(&descr_, row, col, ld, values, (use_row_row) ? CUSPARSE_ORDER_ROW : CUSPARSE_ORDER_COL));
+  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(&descr_, row, col, ld, values, order));
   need_destruction_ = true;
 }
 
@@ -299,10 +299,6 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     buffer_transpose_batch_row_row_{0, handle_ptr->get_stream()},
     buffer_non_transpose_batch_row_row_{0, handle_ptr->get_stream()},
-    batch_reflected_primal_solutions_data_transposed_{(use_row_row) ? _reflected_primal_solution.size() : 0, handle_ptr->get_stream()},
-    batch_dual_gradients_data_transposed_{(use_row_row) ? current_saddle_point_state.get_dual_gradient().size() : 0, handle_ptr->get_stream()},
-    batch_dual_solutions_data_transposed_{(use_row_row) ? current_saddle_point_state.get_dual_solution().size() : 0, handle_ptr->get_stream()},
-    batch_current_AtYs_data_transposed_{(use_row_row) ? current_saddle_point_state.get_current_AtY().size() : 0, handle_ptr->get_stream()},
     A_{op_problem_scaled.coefficients},
     A_offsets_{op_problem_scaled.offsets},
     A_indices_{op_problem_scaled.variables},
@@ -342,80 +338,70 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
   if (batch_mode_) {
     [[maybe_unused]] const bool is_cupdlpx = is_cupdlpx_restart<i_t, f_t>(hyper_params);
     cuopt_assert(is_cupdlpx, "Batch mode only supported with cuPDLPx restart");
-    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-      &batch_dual_solutions,
+    batch_dual_solutions.create(
       op_problem_scaled.n_constraints,
       climber_strategies.size(),
-      (use_row_row) ? climber_strategies.size() : op_problem_scaled.n_constraints,
+      climber_strategies.size(),
       current_saddle_point_state.get_dual_solution().data(),
-      (use_row_row) ? CUSPARSE_ORDER_ROW : CUSPARSE_ORDER_COL));
-    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-      &batch_current_AtYs,
+      CUSPARSE_ORDER_ROW);
+    batch_current_AtYs.create(
       op_problem_scaled.n_variables,
       climber_strategies.size(),
-      (use_row_row) ? climber_strategies.size() : op_problem_scaled.n_variables,
-     current_saddle_point_state.get_current_AtY().data(),
-      (use_row_row) ? CUSPARSE_ORDER_ROW : CUSPARSE_ORDER_COL));
-    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-      &batch_potential_next_dual_solution,
+      climber_strategies.size(),
+      current_saddle_point_state.get_current_AtY().data(),
+      CUSPARSE_ORDER_ROW);
+    batch_potential_next_dual_solution.create(
       op_problem_scaled.n_constraints,
       climber_strategies.size(),
       op_problem_scaled.n_constraints,
       _potential_next_dual_solution.data(),
-      CUSPARSE_ORDER_COL));
-    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-      &batch_next_AtYs,
+      CUSPARSE_ORDER_COL);
+    batch_next_AtYs.create(
       op_problem_scaled.n_variables,
       climber_strategies.size(),
       op_problem_scaled.n_variables,
       current_saddle_point_state.get_next_AtY().data(),
-      CUSPARSE_ORDER_COL));
+      CUSPARSE_ORDER_COL);
       cuopt_assert(_reflected_primal_solution.size() > 0, "Reflected primal solution empty");
-     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-      &batch_reflected_primal_solutions,
+     batch_reflected_primal_solutions.create(
       op_problem_scaled.n_variables,
       climber_strategies.size(),
-      (use_row_row) ? climber_strategies.size() : op_problem_scaled.n_variables,
+      climber_strategies.size(),
       _reflected_primal_solution.data(),
-      (use_row_row) ? CUSPARSE_ORDER_ROW : CUSPARSE_ORDER_COL));
-      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-        &batch_dual_gradients,
+      CUSPARSE_ORDER_ROW);
+      batch_dual_gradients.create(
         op_problem_scaled.n_constraints,
         climber_strategies.size(),
-        (use_row_row) ? climber_strategies.size() : op_problem_scaled.n_constraints,
+        climber_strategies.size(),
         current_saddle_point_state.get_dual_gradient().data(),
-        (use_row_row) ? CUSPARSE_ORDER_ROW : CUSPARSE_ORDER_COL));
+        CUSPARSE_ORDER_ROW);
   }
 
   // Necessary even in non batch mode (because of infeasiblity detection)
-    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-  &batch_delta_primal_solutions,
-  op_problem_scaled.n_variables,
-  climber_strategies.size(),
-  op_problem_scaled.n_variables,
-  current_saddle_point_state.get_delta_primal().data(),
-  CUSPARSE_ORDER_COL));
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-  &batch_delta_dual_solutions,
-  op_problem_scaled.n_constraints,
-  climber_strategies.size(),
-  op_problem_scaled.n_constraints,
-  current_saddle_point_state.get_delta_dual().data(),
-  CUSPARSE_ORDER_COL));
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-  &batch_tmp_duals,
-  op_problem_scaled.n_constraints,
-  climber_strategies.size(),
-  op_problem_scaled.n_constraints,
-  _tmp_dual.data(),
-  CUSPARSE_ORDER_COL));
-  RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-    &batch_tmp_primals,
+  batch_delta_primal_solutions.create(
     op_problem_scaled.n_variables,
     climber_strategies.size(),
     op_problem_scaled.n_variables,
-    _tmp_primal.data(),
-    CUSPARSE_ORDER_COL));
+    current_saddle_point_state.get_delta_primal().data(),
+    CUSPARSE_ORDER_COL);
+    batch_delta_dual_solutions.create(
+    op_problem_scaled.n_constraints,
+    climber_strategies.size(),
+    op_problem_scaled.n_constraints,
+    current_saddle_point_state.get_delta_dual().data(),
+    CUSPARSE_ORDER_COL);
+    batch_tmp_duals.create(
+    op_problem_scaled.n_constraints,
+    climber_strategies.size(),
+    op_problem_scaled.n_constraints,
+    _tmp_dual.data(),
+    CUSPARSE_ORDER_COL);
+    batch_tmp_primals.create(
+      op_problem_scaled.n_variables,
+      climber_strategies.size(),
+      op_problem_scaled.n_variables,
+      _tmp_primal.data(),
+      CUSPARSE_ORDER_COL);
 
   primal_gradient.create(op_problem_scaled.n_variables,
                         current_saddle_point_state.get_primal_gradient().data());
@@ -612,10 +598,6 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
     buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     buffer_transpose_batch_row_row_{0, handle_ptr->get_stream()},
     buffer_non_transpose_batch_row_row_{0, handle_ptr->get_stream()},
-    batch_reflected_primal_solutions_data_transposed_{0, handle_ptr->get_stream()},
-    batch_dual_gradients_data_transposed_{0, handle_ptr->get_stream()},
-    batch_dual_solutions_data_transposed_{0, handle_ptr->get_stream()},
-    batch_current_AtYs_data_transposed_{0, handle_ptr->get_stream()},
     A_{op_problem.coefficients},
     A_offsets_{op_problem.offsets},
     A_indices_{op_problem.variables},
@@ -661,34 +643,30 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(raft::handle_t const* handle_ptr,
     [[maybe_unused]] const bool is_cupdlpx = is_cupdlpx_restart<i_t, f_t>(hyper_params);
     cuopt_assert(is_cupdlpx, "Batch mode only supported with cuPDLPx restart");
     // TODO batch mode: also use container
-    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-      &batch_primal_solutions,
+    batch_primal_solutions.create(
       op_problem.n_variables,
       climber_strategies.size(),
       op_problem.n_variables,
       _potential_next_primal.data(),
-      CUSPARSE_ORDER_COL));
-    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-        &batch_dual_solutions,
+      CUSPARSE_ORDER_COL);
+    batch_dual_solutions.create(
         op_problem.n_constraints,
         climber_strategies.size(),
         op_problem.n_constraints,
         _potential_next_dual.data(),
-        CUSPARSE_ORDER_COL));
-    RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-      &batch_tmp_duals,
+        CUSPARSE_ORDER_COL);
+    batch_tmp_duals.create(
       op_problem.n_constraints,
       climber_strategies.size(),
       op_problem.n_constraints,
       _tmp_dual.data(),
-      CUSPARSE_ORDER_COL));
-      RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsecreatednmat(
-        &batch_tmp_primals,
+      CUSPARSE_ORDER_COL);
+      batch_tmp_primals.create(
         op_problem.n_variables,
         climber_strategies.size(),
         op_problem.n_variables,
         _tmp_primal.data(),
-        CUSPARSE_ORDER_COL));
+        CUSPARSE_ORDER_COL);
   }
 
   const rmm::device_scalar<f_t> alpha{1, handle_ptr->get_stream()};
@@ -825,10 +803,6 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     buffer_transpose_batch_row_row_{0, handle_ptr->get_stream()},
     buffer_non_transpose_batch_row_row_{0, handle_ptr->get_stream()},
-    batch_reflected_primal_solutions_data_transposed_{0, handle_ptr->get_stream()},
-    batch_dual_gradients_data_transposed_{0, handle_ptr->get_stream()},
-    batch_dual_solutions_data_transposed_{0, handle_ptr->get_stream()},
-    batch_current_AtYs_data_transposed_{0, handle_ptr->get_stream()},
     A_T_{existing_cusparse_view.A_T_},                  // Need to be init but not used
     A_T_offsets_{existing_cusparse_view.A_T_offsets_},  // Need to be init but not used
     A_T_indices_{existing_cusparse_view.A_T_indices_},  // Need to be init but not used
@@ -939,10 +913,6 @@ cusparse_view_t<i_t, f_t>::cusparse_view_t(
     buffer_non_transpose_batch{0, handle_ptr->get_stream()},
     buffer_transpose_batch_row_row_{0, handle_ptr->get_stream()},
     buffer_non_transpose_batch_row_row_{0, handle_ptr->get_stream()},
-    batch_reflected_primal_solutions_data_transposed_{0, handle_ptr->get_stream()},
-    batch_dual_gradients_data_transposed_{0, handle_ptr->get_stream()},
-    batch_dual_solutions_data_transposed_{0, handle_ptr->get_stream()},
-    batch_current_AtYs_data_transposed_{0, handle_ptr->get_stream()},
     A_T_(dummy_float),
     A_T_offsets_(dummy_int),
     A_T_indices_(dummy_int),

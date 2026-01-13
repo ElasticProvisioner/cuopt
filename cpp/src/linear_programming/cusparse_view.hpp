@@ -70,7 +70,7 @@ class cusparse_dn_mat_descr_wrapper_t {
   cusparse_dn_mat_descr_wrapper_t& operator=(cusparse_dn_mat_descr_wrapper_t&& other);
   cusparse_dn_mat_descr_wrapper_t& operator=(const cusparse_dn_mat_descr_wrapper_t& other) = delete;
 
-  void create(int64_t row, int64_t col, int64_t ld, f_t* values);
+  void create(int64_t row, int64_t col, int64_t ld, f_t* values, cusparseOrder_t order);
 
   operator cusparseDnMatDescr_t() const;
 
@@ -137,23 +137,23 @@ class cusparse_view_t {
   cusparse_dn_vec_descr_wrapper_t<f_t> dual_gradient;
 
   // cusparse view of batch gradients
-  cusparseDnMatDescr_t batch_dual_gradients;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_dual_gradients;
 
   // cusparse view of batch solutions
-  cusparseDnMatDescr_t batch_primal_solutions;
-  cusparseDnMatDescr_t batch_dual_solutions;
-  cusparseDnMatDescr_t batch_potential_next_dual_solution;
-  cusparseDnMatDescr_t batch_next_AtYs;
-  cusparseDnMatDescr_t batch_tmp_duals;
-  cusparseDnMatDescr_t batch_reflected_primal_solutions;
-  cusparseDnMatDescr_t batch_delta_primal_solutions;
-  cusparseDnMatDescr_t batch_delta_dual_solutions;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_primal_solutions;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_dual_solutions;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_potential_next_dual_solution;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_next_AtYs;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_tmp_duals;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_reflected_primal_solutions;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_delta_primal_solutions;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_delta_dual_solutions;
 
   // cusparse view of At * Y batch computation
-  cusparseDnMatDescr_t batch_current_AtYs;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_current_AtYs;
 
   // cusparse view of auxillirary space needed for some spmm computations
-  cusparseDnMatDescr_t batch_tmp_primals;
+  cusparse_dn_mat_descr_wrapper_t<f_t> batch_tmp_primals;
 
   // cusparse view of At * Y computation
   cusparse_dn_vec_descr_wrapper_t<f_t>
@@ -176,12 +176,6 @@ class cusparse_view_t {
   rmm::device_uvector<uint8_t> buffer_non_transpose_batch;
   rmm::device_uvector<uint8_t> buffer_transpose_batch_row_row_;
   rmm::device_uvector<uint8_t> buffer_non_transpose_batch_row_row_;
-
-  rmm::device_uvector<f_t> batch_reflected_primal_solutions_data_transposed_;
-  rmm::device_uvector<f_t> batch_dual_gradients_data_transposed_;
-  rmm::device_uvector<f_t> batch_dual_solutions_data_transposed_;
-  rmm::device_uvector<f_t> batch_current_AtYs_data_transposed_;
-
   // Only when using reflection
   cusparse_dn_vec_descr_wrapper_t<f_t> reflected_primal_solution;
 
