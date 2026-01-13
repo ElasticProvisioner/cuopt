@@ -519,8 +519,10 @@ void pdlp_solver_t<i_t, f_t>::record_best_primal_so_far(
 template <typename i_t, typename f_t>
 pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_start_data()
 {
-  // TODO batch mode: handle warm start data
-  return pdlp_warm_start_data_t<i_t, f_t>(
+  if (batch_mode_)
+    return pdlp_warm_start_data_t<i_t, f_t>();
+  else {
+    return pdlp_warm_start_data_t<i_t, f_t>(
     pdhg_solver_.get_primal_solution(),
     pdhg_solver_.get_dual_solution(),
     unscaled_primal_avg_solution_,
@@ -538,6 +540,7 @@ pdlp_warm_start_data_t<i_t, f_t> pdlp_solver_t<i_t, f_t>::get_filled_warmed_star
     restart_strategy_.last_restart_kkt_score,
     restart_strategy_.weighted_average_solution_.sum_primal_solution_weights_.value(stream_view_),
     restart_strategy_.weighted_average_solution_.iterations_since_last_restart_);
+  }
 }
 
 template <typename i_t, typename f_t>
