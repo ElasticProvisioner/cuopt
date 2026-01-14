@@ -11,6 +11,8 @@
 #include <dual_simplex/simplex_solver_settings.hpp>
 #include <utilities/memory_instrumentation.hpp>
 
+#include <raft/common/nvtx.hpp>
+
 #include <cstdio>
 
 namespace cuopt::linear_programming::dual_simplex {
@@ -71,6 +73,8 @@ struct dual_simplex_features_t {
                          bool slack_basis_,
                          bool initialize_basis_)
   {
+    raft::common::nvtx::range scope("DualSimplex::init_from_problem");
+
     num_rows     = lp.num_rows;
     num_cols     = lp.num_cols;
     num_nonzeros = lp.A.col_start[lp.num_cols];
@@ -187,18 +191,18 @@ struct bounds_strengthening_features_t {
 
   void log_single(i_t m_val, i_t n_val, i_t nnz_val) const
   {
-    printf(
-      "BOUNDS_STRENGTH_FEATURES: m=%d n=%d nnz=%d "
-      "iterations=%d bounds_changed=%d "
-      "byte_loads=%zu byte_stores=%zu runtime=%.6f\n",
-      m_val,
-      n_val,
-      nnz_val,
-      num_iterations,
-      num_bounds_changed,
-      byte_loads,
-      byte_stores,
-      runtime);
+    // printf(
+    //   "BOUNDS_STRENGTH_FEATURES: m=%d n=%d nnz=%d "
+    //   "iterations=%d bounds_changed=%d "
+    //   "byte_loads=%zu byte_stores=%zu runtime=%.6f\n",
+    //   m_val,
+    //   n_val,
+    //   nnz_val,
+    //   num_iterations,
+    //   num_bounds_changed,
+    //   byte_loads,
+    //   byte_stores,
+    //   runtime);
   }
 
   void reset()

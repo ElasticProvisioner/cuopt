@@ -2395,7 +2395,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
 
   f_t obj = compute_objective(lp, sol.x);
 
-  raft::common::nvtx::pop_range();
+  raft::common::nvtx::pop_range();  // advanced_basis_init
 
   const i_t start_iter = iter;
 
@@ -2478,6 +2478,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
   // Helper to compute scaled work units for a given number of iterations
   cuopt::work_unit_predictor_t<dualsimplex_predictor, cpu_work_unit_scaler_t> work_predictor{};
   auto predict_work_units = [&](i_t num_iters) -> f_t {
+    raft::common::nvtx::range scope("DualSimplex::predict_work_units");
     std::map<std::string, float> features_map;
     features_map["m"]           = static_cast<float>(features.num_rows);
     features_map["n"]           = static_cast<float>(features.num_cols);
