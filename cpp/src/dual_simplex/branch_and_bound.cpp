@@ -2074,13 +2074,16 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
           state_data.push_back(worker.current_node->get_bsp_identity_hash());
         }
 
-        // Extract queue contents for hashing (preserves priority order)
-        // We need to temporarily extract to iterate, then restore
+        // Extract queue contents for hashing
+        // Include plunge_stack and backlog for complete state
         std::vector<mip_node_t<i_t, f_t>*> queue_nodes;
-        auto queue_copy = worker.local_queue;  // Copy the priority queue
-        while (!queue_copy.empty()) {
-          auto* node = queue_copy.top();
-          queue_copy.pop();
+        for (auto* node : worker.plunge_stack) {
+          queue_nodes.push_back(node);
+        }
+        for (auto* node : worker.backlog) {
+          queue_nodes.push_back(node);
+        }
+        for (auto* node : queue_nodes) {
           if (!node->has_bsp_identity()) {
             ++nodes_without_identity;
             CUOPT_LOG_WARN(
@@ -2695,15 +2698,15 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
 
       exploration_stats_.nodes_unexplored += 2;
 
-      // Add children to local queue - they get BSP identity on enqueue
-      // Note: recompute_bounds_and_basis is set in run_worker_until_horizon based on
-      // whether we branched (has_children), matching opportunistic mode behavior.
-      worker.enqueue_node(node_ptr->get_down_child());
-      worker.enqueue_node(node_ptr->get_up_child());
+      // Add children using plunging strategy:
+      // - If plunge stack has a sibling, it's moved to backlog (plugging)
+      // - Preferred child goes on top of stack for immediate exploration
+      rounding_direction_t preferred = child_selection(node_ptr);
+      worker.enqueue_children_for_plunge(
+        node_ptr->get_down_child(), node_ptr->get_up_child(), preferred);
 
-      return rounding_direction_t::DOWN == child_selection(node_ptr)
-               ? node_solve_info_t::DOWN_CHILD_FIRST
-               : node_solve_info_t::UP_CHILD_FIRST;
+      return preferred == rounding_direction_t::DOWN ? node_solve_info_t::DOWN_CHILD_FIRST
+                                                     : node_solve_info_t::UP_CHILD_FIRST;
 
     } else {
       search_tree.update(node_ptr, node_status_t::FATHOMED);
@@ -2986,22 +2989,32 @@ void branch_and_bound_t<i_t, f_t>::prune_worker_nodes_vs_incumbent()
       }
     }
 
-    // Check nodes in local queue - need to extract, filter, and rebuild
-    // since priority_queue doesn't support iteration
-    std::vector<mip_node_t<i_t, f_t>*> surviving_nodes;
-    while (!worker.local_queue.empty()) {
-      auto* node = worker.local_queue.top();
-      worker.local_queue.pop();
-      if (node->lower_bound >= upper_bound) {
-        search_tree_.update(node, node_status_t::FATHOMED);
-        --exploration_stats_.nodes_unexplored;
-      } else {
-        surviving_nodes.push_back(node);
+    // Check nodes in plunge stack - filter in place
+    {
+      std::deque<mip_node_t<i_t, f_t>*> surviving;
+      for (auto* node : worker.plunge_stack) {
+        if (node->lower_bound >= upper_bound) {
+          search_tree_.update(node, node_status_t::FATHOMED);
+          --exploration_stats_.nodes_unexplored;
+        } else {
+          surviving.push_back(node);
+        }
       }
+      worker.plunge_stack = std::move(surviving);
     }
-    // Rebuild the queue with surviving nodes
-    for (auto* node : surviving_nodes) {
-      worker.local_queue.push(node);
+
+    // Check nodes in backlog - filter in place
+    {
+      std::vector<mip_node_t<i_t, f_t>*> surviving;
+      for (auto* node : worker.backlog) {
+        if (node->lower_bound >= upper_bound) {
+          search_tree_.update(node, node_status_t::FATHOMED);
+          --exploration_stats_.nodes_unexplored;
+        } else {
+          surviving.push_back(node);
+        }
+      }
+      worker.backlog = std::move(surviving);
     }
   }
 }
@@ -3012,7 +3025,7 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
   const size_t num_workers = bsp_workers_->size();
   if (num_workers <= 1) return;
 
-  // Count work for each worker: current_node (if any) + local_queue size
+  // Count work for each worker: current_node (if any) + plunge_stack + backlog
   std::vector<size_t> work_counts(num_workers);
   size_t total_work = 0;
   size_t max_work   = 0;
@@ -3033,14 +3046,24 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
 
   if (!needs_balance) return;
 
-  // Collect all redistributable nodes from worker queues (excluding paused current_node)
+  // Collect all redistributable nodes from worker queues
+  // With plunging strategy, we redistribute:
+  // - All backlog nodes (these were "plugged" siblings)
+  // - Plunge stack nodes (except we keep them with worker for locality if possible)
+  // For simplicity, redistribute everything for now
   std::vector<mip_node_t<i_t, f_t>*> all_nodes;
   for (auto& worker : *bsp_workers_) {
-    // Extract all nodes from this worker's priority queue (not current_node)
-    while (!worker.local_queue.empty()) {
-      all_nodes.push_back(worker.local_queue.top());
-      worker.local_queue.pop();
+    // Extract backlog nodes
+    for (auto* node : worker.backlog) {
+      all_nodes.push_back(node);
     }
+    worker.backlog.clear();
+
+    // Extract plunge stack nodes
+    for (auto* node : worker.plunge_stack) {
+      all_nodes.push_back(node);
+    }
+    worker.plunge_stack.clear();
   }
 
   // Also pull nodes from global heap if workers need work
@@ -3120,9 +3143,14 @@ f_t branch_and_bound_t<i_t, f_t>::compute_bsp_lower_bound()
       lower_bound = std::min(worker.current_node->lower_bound, lower_bound);
     }
 
-    // Check queue top (min lower bound due to priority queue ordering)
-    if (!worker.local_queue.empty()) {
-      lower_bound = std::min(worker.local_queue.top()->lower_bound, lower_bound);
+    // Check plunge stack nodes
+    for (auto* node : worker.plunge_stack) {
+      lower_bound = std::min(node->lower_bound, lower_bound);
+    }
+
+    // Check backlog nodes
+    for (auto* node : worker.backlog) {
+      lower_bound = std::min(node->lower_bound, lower_bound);
     }
   }
 

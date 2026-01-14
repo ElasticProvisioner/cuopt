@@ -39,14 +39,20 @@ template <typename i_t, typename f_t>
 struct bb_worker_state_t {
   int worker_id{0};
 
-  // Type alias for the BSP priority queue
-  using bsp_queue_t = std::priority_queue<mip_node_t<i_t, f_t>*,
-                                          std::vector<mip_node_t<i_t, f_t>*>,
-                                          bsp_node_compare_t<i_t, f_t>>;
+  // ==========================================================================
+  // Plunging data structures (matching explore_subtree strategy)
+  // ==========================================================================
 
-  // Local node queue - priority queue ordered by (lower_bound, origin_worker_id, creation_seq)
-  // Nodes are assigned BSP identity (origin_worker_id, creation_seq) when enqueued
-  bsp_queue_t local_queue;
+  // Plunge stack: depth-first path through the tree
+  // - Front = next node to process (LIFO)
+  // - Max size = 2 (current node's sibling only)
+  // - When branching with sibling on stack, sibling is moved to backlog
+  std::deque<mip_node_t<i_t, f_t>*> plunge_stack;
+
+  // Backlog: nodes "plugged" when branching - candidates for load balancing
+  // When branching with a sibling on the plunge stack, that sibling moves here.
+  // At horizon sync, backlog nodes participate in redistribution.
+  std::vector<mip_node_t<i_t, f_t>*> backlog;
 
   // Current node being processed (may be paused at horizon boundary)
   mip_node_t<i_t, f_t>* current_node{nullptr};
@@ -274,50 +280,146 @@ struct bb_worker_state_t {
     return branch_var;
   }
 
-  // Add a node to the local queue, assigning BSP identity if not already set
-  // The tuple (origin_worker_id, creation_seq) uniquely identifies the node
+  // ==========================================================================
+  // Node enqueueing methods
+  // ==========================================================================
+
+  // Add a node to the plunge stack, assigning BSP identity if not already set
+  // Used for initial node assignment and when starting a new plunge from backlog
   void enqueue_node(mip_node_t<i_t, f_t>* node)
   {
     // Assign BSP identity if not already set
-    // Nodes from load balancing keep their original identity
     if (!node->has_bsp_identity()) {
       node->origin_worker_id = worker_id;
       node->creation_seq     = next_creation_seq++;
     }
-    local_queue.push(node);
+    plunge_stack.push_front(node);
   }
 
   // Add a node that already has BSP identity (from load balancing or initial distribution)
-  // Does NOT modify the node's identity
+  // Goes to plunge stack front for immediate processing
   void enqueue_node_with_identity(mip_node_t<i_t, f_t>* node)
   {
     assert(node->has_bsp_identity() &&
            "Node must have BSP identity for enqueue_node_with_identity");
-    local_queue.push(node);
+    plunge_stack.push_front(node);
   }
 
-  // Get next node to process (highest priority = lowest lower_bound)
+  // Add children after branching with proper plunging behavior:
+  // 1. If plunge stack has a sibling, move it to backlog (plugging)
+  // 2. Push both children to plunge stack with preferred child on top
+  // Returns the child that was placed on top (to be explored first)
+  mip_node_t<i_t, f_t>* enqueue_children_for_plunge(mip_node_t<i_t, f_t>* down_child,
+                                                    mip_node_t<i_t, f_t>* up_child,
+                                                    rounding_direction_t preferred_direction)
+  {
+    // PLUGGING: If plunge stack has a sibling from previous branch, move it to backlog
+    if (!plunge_stack.empty()) {
+      mip_node_t<i_t, f_t>* sibling = plunge_stack.back();
+      plunge_stack.pop_back();
+      backlog.push_back(sibling);
+    }
+
+    // Assign BSP identity to children
+    if (!down_child->has_bsp_identity()) {
+      down_child->origin_worker_id = worker_id;
+      down_child->creation_seq     = next_creation_seq++;
+    }
+    if (!up_child->has_bsp_identity()) {
+      up_child->origin_worker_id = worker_id;
+      up_child->creation_seq     = next_creation_seq++;
+    }
+
+    // Push children - preferred child on top (front) for immediate exploration
+    mip_node_t<i_t, f_t>* first_child;
+    if (preferred_direction == rounding_direction_t::UP) {
+      plunge_stack.push_front(down_child);  // Second to explore
+      plunge_stack.push_front(up_child);    // First to explore (on top)
+      first_child = up_child;
+    } else {
+      plunge_stack.push_front(up_child);    // Second to explore
+      plunge_stack.push_front(down_child);  // First to explore (on top)
+      first_child = down_child;
+    }
+
+    return first_child;
+  }
+
+  // ==========================================================================
+  // Node dequeueing methods
+  // ==========================================================================
+
+  // Get next node to process using plunging strategy:
+  // 1. Resume paused node if any
+  // 2. Pop from plunge stack (depth-first continuation)
+  // 3. Fall back to backlog (best-first from plugged nodes)
   mip_node_t<i_t, f_t>* dequeue_node()
   {
+    // 1. Resume paused node if any
     if (current_node != nullptr) {
-      // Resume paused node
       mip_node_t<i_t, f_t>* node = current_node;
       current_node               = nullptr;
       return node;
     }
-    if (local_queue.empty()) { return nullptr; }
-    mip_node_t<i_t, f_t>* node = local_queue.top();
-    local_queue.pop();
-    return node;
+
+    // 2. Prefer plunge stack (depth-first continuation)
+    if (!plunge_stack.empty()) {
+      mip_node_t<i_t, f_t>* node = plunge_stack.front();
+      plunge_stack.pop_front();
+      return node;
+    }
+
+    // 3. Fall back to backlog - select best node (lowest lower_bound)
+    if (!backlog.empty()) {
+      auto best_it =
+        std::min_element(backlog.begin(),
+                         backlog.end(),
+                         [](const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) {
+                           // Best-first: prefer lower bound
+                           if (a->lower_bound != b->lower_bound) {
+                             return a->lower_bound < b->lower_bound;
+                           }
+                           // Deterministic tie-breaking by BSP identity
+                           if (a->origin_worker_id != b->origin_worker_id) {
+                             return a->origin_worker_id < b->origin_worker_id;
+                           }
+                           return a->creation_seq < b->creation_seq;
+                         });
+      mip_node_t<i_t, f_t>* node = *best_it;
+      backlog.erase(best_it);
+      return node;
+    }
+
+    return nullptr;
   }
 
+  // ==========================================================================
+  // Queue state queries
+  // ==========================================================================
+
   // Check if worker has work available
-  bool has_work() const { return current_node != nullptr || !local_queue.empty(); }
+  bool has_work() const
+  {
+    return current_node != nullptr || !plunge_stack.empty() || !backlog.empty();
+  }
 
-  // Get number of nodes in local queue (including paused node)
-  size_t queue_size() const { return local_queue.size() + (current_node != nullptr ? 1 : 0); }
+  // Get number of nodes in worker's queues (including paused node)
+  size_t queue_size() const
+  {
+    return plunge_stack.size() + backlog.size() + (current_node != nullptr ? 1 : 0);
+  }
 
-  // Extract all nodes from queue (for load balancing)
+  // Get number of nodes in plunge stack only
+  size_t plunge_stack_size() const { return plunge_stack.size(); }
+
+  // Get number of nodes in backlog only
+  size_t backlog_size() const { return backlog.size(); }
+
+  // ==========================================================================
+  // Load balancing support
+  // ==========================================================================
+
+  // Extract all nodes from worker (for load balancing)
   // Returns nodes in arbitrary order - caller should sort if deterministic order needed
   std::vector<mip_node_t<i_t, f_t>*> extract_all_nodes()
   {
@@ -330,22 +432,36 @@ struct bb_worker_state_t {
       current_node = nullptr;
     }
 
-    // Extract all nodes from priority queue
-    while (!local_queue.empty()) {
-      nodes.push_back(local_queue.top());
-      local_queue.pop();
+    // Extract from plunge stack
+    for (auto* node : plunge_stack) {
+      nodes.push_back(node);
     }
+    plunge_stack.clear();
+
+    // Extract from backlog
+    for (auto* node : backlog) {
+      nodes.push_back(node);
+    }
+    backlog.clear();
 
     return nodes;
   }
 
-  // Clear the queue without returning nodes (use with caution)
+  // Extract only backlog nodes (for redistribution at horizon sync)
+  // Plunge stack nodes stay with worker for locality
+  std::vector<mip_node_t<i_t, f_t>*> extract_backlog_nodes()
+  {
+    std::vector<mip_node_t<i_t, f_t>*> nodes = std::move(backlog);
+    backlog.clear();
+    return nodes;
+  }
+
+  // Clear all queues without returning nodes (use with caution)
   void clear_queue()
   {
     current_node = nullptr;
-    while (!local_queue.empty()) {
-      local_queue.pop();
-    }
+    plunge_stack.clear();
+    backlog.clear();
   }
 
   // Record an event

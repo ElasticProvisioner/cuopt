@@ -727,7 +727,8 @@ class bsp_debug_logger_t {
       } else {
         file << "      \"current_node\": null,\n";
       }
-      file << "      \"local_queue_size\": " << w.local_queue.size() << "\n";
+      file << "      \"plunge_stack_size\": " << w.plunge_stack.size() << ",\n";
+      file << "      \"backlog_size\": " << w.backlog.size() << "\n";
       file << "    }" << (i < workers.size() - 1 ? "," : "") << "\n";
     }
     file << "  ],\n";
