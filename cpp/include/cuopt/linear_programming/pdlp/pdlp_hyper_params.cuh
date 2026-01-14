@@ -17,13 +17,13 @@ struct pdlp_hyper_params_t {
   double default_alpha_pock_chambolle_rescaling = 1.0;
   double default_artificial_restart_threshold = 0.36;
   bool compute_initial_step_size_before_scaling = false;
-  bool compute_initial_primal_weight_before_scaling = false;
+  bool compute_initial_primal_weight_before_scaling = true;
   double initial_primal_weight_c_scaling = 1.0;
   double initial_primal_weight_b_scaling = 1.0;
-  int major_iteration = 40;
-  int min_iteration_restart = 10;
-  int restart_strategy = 1;
-  bool never_restart_to_average = false;
+  int major_iteration = 200;
+  int min_iteration_restart = 0;
+  int restart_strategy = 3;
+  bool never_restart_to_average = true;
 
   double reduction_exponent = 0.3;
   double growth_exponent = 0.6;
@@ -41,18 +41,18 @@ struct pdlp_hyper_params_t {
   bool update_step_size_on_initial_solution = false;
   bool handle_some_primal_gradients_on_finite_bounds_as_residuals = false;
   bool project_initial_primal = true;
-  bool use_adaptive_step_size_strategy = true;
-  bool initial_step_size_max_singular_value = false;
-  bool initial_primal_weight_combined_bounds = true;
-  bool bound_objective_rescaling = false;
-  bool use_reflected_primal_dual = false;
-  bool use_fixed_point_error = false;
+  bool use_adaptive_step_size_strategy = false;
+  bool initial_step_size_max_singular_value = true;
+  bool initial_primal_weight_combined_bounds = false;
+  bool bound_objective_rescaling = true;
+  bool use_reflected_primal_dual = true;
+  bool use_fixed_point_error = true;
   double reflection_coefficient = 1.0;
   double restart_k_p = 0.99;
   double restart_k_i = 0.01;
   double restart_k_d = 0.0;
   double restart_i_smooth = 0.3;
-  bool use_conditional_major = false;
+  bool use_conditional_major = true;
 };
 
 // TODO most likely we want to get rid of pdlp_solver_mode and just have prebuilt
