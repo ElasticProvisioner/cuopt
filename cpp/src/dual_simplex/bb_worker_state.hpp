@@ -64,6 +64,10 @@ struct bb_worker_state_t {
   // Worker's virtual time clock (cumulative work units)
   double clock{0.0};
 
+  // Current horizon boundaries (for BSP sync)
+  double horizon_start{0.0};
+  double horizon_end{0.0};
+
   // Creation sequence counter - cumulative across horizons for unique identity
   // Each node created by this worker gets (worker_id, next_creation_seq++)
   int32_t next_creation_seq{0};

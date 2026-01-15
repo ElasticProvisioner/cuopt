@@ -31,6 +31,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -930,10 +931,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
                                         leaf_edge_norms,
                                         settings_.deterministic ? &work_unit_context_ : nullptr);
     }
-    if (settings_.deterministic &&
-        work_unit_context_.global_work_units_elapsed >= settings_.work_limit) {
-      lp_status = dual::status_t::WORK_LIMIT;
-    }
 
     if (lp_status == dual::status_t::NUMERICAL) {
       log.printf("Numerical issue node %d. Resolving from scratch.\n", node_ptr->node_id);
@@ -1762,44 +1759,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                                pc_);
   }
 
-  // Log strong branching results for determinism debugging
-  {
-    uint32_t sb_hash = pc_.compute_strong_branch_hash();
-    uint32_t pc_hash = pc_.compute_state_hash();
-    CUOPT_LOG_DEBUG("Strong branching completed: %zu variables, SB hash=0x%08x, PC hash=0x%08x",
-                    fractional.size(),
-                    sb_hash,
-                    pc_hash);
-
-    // Detailed logging for divergence diagnosis (enabled via environment variable)
-    const char* log_sb_detail = std::getenv("CUOPT_LOG_STRONG_BRANCHING");
-    if (log_sb_detail != nullptr && std::string(log_sb_detail) == "1") {
-      settings_.log.printf("Strong branching detailed results:\n");
-      for (size_t k = 0; k < fractional.size(); ++k) {
-        i_t var = fractional[k];
-        settings_.log.printf("  var[%zu]=%d: down=%+.10e, up=%+.10e\n",
-                             k,
-                             var,
-                             pc_.strong_branch_down[k],
-                             pc_.strong_branch_up[k]);
-      }
-      settings_.log.printf("Pseudo-cost state after strong branching:\n");
-      i_t non_zero_count = 0;
-      for (i_t j = 0; j < original_lp_.num_cols; ++j) {
-        if (pc_.pseudo_cost_num_down[j] > 0 || pc_.pseudo_cost_num_up[j] > 0) {
-          settings_.log.printf("  pc[%d]: sum_down=%+.10e, num_down=%d, sum_up=%+.10e, num_up=%d\n",
-                               j,
-                               pc_.pseudo_cost_sum_down[j],
-                               pc_.pseudo_cost_num_down[j],
-                               pc_.pseudo_cost_sum_up[j],
-                               pc_.pseudo_cost_num_up[j]);
-          ++non_zero_count;
-        }
-      }
-      settings_.log.printf("Total %d variables with pseudo-cost data\n", non_zero_count);
-    }
-  }
-
   if (toc(exploration_stats_.start_time) > settings_.time_limit) {
     solver_status_ = mip_exploration_status_t::TIME_LIMIT;
     return set_final_solution(solution, root_objective_);
@@ -1886,7 +1845,21 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   if (has_pending_features_) { flush_pending_features(); }
   mutex_feature_log_.unlock();
 
-  f_t lower_bound = heap_.size() > 0 ? heap_.top()->lower_bound : search_tree_.root.lower_bound;
+  // Compute final lower bound
+  f_t lower_bound;
+  if (bsp_mode_enabled_) {
+    // In BSP mode, compute lower bound from all sources (heap + worker queues)
+    lower_bound = compute_bsp_lower_bound();
+    // If no unexplored nodes remain and we have an incumbent, lower bound = upper bound
+    if (lower_bound == std::numeric_limits<f_t>::infinity() && incumbent_.has_incumbent) {
+      lower_bound = get_upper_bound();
+    }
+  } else {
+    // Non-BSP mode: use heap or fall back to root
+    lower_bound = heap_.size() > 0 ? heap_.top()->lower_bound : search_tree_.root.lower_bound;
+    // If heap is empty and we have an incumbent, the tree is fully explored
+    if (heap_.size() == 0 && incumbent_.has_incumbent) { lower_bound = get_upper_bound(); }
+  }
   return set_final_solution(solution, lower_bound);
 }
 
@@ -1905,6 +1878,7 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   bsp_mode_enabled_     = true;
   bsp_current_horizon_  = bsp_horizon_step_;
   bsp_horizon_number_   = 0;
+  bsp_terminated_.store(false);
 
   // Initialize worker pool
   bsp_workers_ = std::make_unique<bb_worker_pool_t<i_t, f_t>>();
@@ -1914,6 +1888,15 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
                            var_types_,
                            settings_.refactor_frequency,
                            settings_.deterministic);
+
+  // Initialize scheduler for automatic sync at horizon boundaries
+  // Workers will block in record_work() when they cross sync points
+  bsp_scheduler_ = std::make_unique<work_unit_scheduler_t>(bsp_horizon_step_);
+
+  // Register all worker contexts with the scheduler
+  for (auto& worker : *bsp_workers_) {
+    bsp_scheduler_->register_context(worker.work_context);
+  }
 
   // Initialize debug logger
   bsp_debug_logger_.set_settings(bsp_debug_settings_);
@@ -1933,257 +1916,63 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   heap_.push(search_tree_.root.get_down_child());
   heap_.push(search_tree_.root.get_up_child());
 
-  const f_t inf   = std::numeric_limits<f_t>::infinity();
-  f_t lower_bound = get_lower_bound();
-  f_t upper_bound = get_upper_bound();
-  f_t abs_gap     = upper_bound - lower_bound;
-  f_t rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
-
   constexpr i_t target_queue_size = 5;  // Target nodes per worker
 
   // Initial distribution: fill worker queues once at the start
   refill_worker_queues(target_queue_size);
   BSP_DEBUG_FLUSH_ASSIGN_TRACE(bsp_debug_settings_, bsp_debug_logger_);
 
-  // Main BSP coordinator loop
-  while (solver_status_ == mip_exploration_status_t::RUNNING &&
-         abs_gap > settings_.absolute_mip_gap_tol && rel_gap > settings_.relative_mip_gap_tol &&
-         (heap_.size() > 0 || bsp_workers_->any_has_work())) {
-    ++bsp_horizon_number_;
-    double horizon_start = bsp_current_horizon_ - bsp_horizon_step_;
-    double horizon_end   = bsp_current_horizon_;
+  // Set sync callback - executed when all workers arrive at barrier
+  // Returns true to stop the scheduler (and all workers exit cleanly together)
+  bsp_scheduler_->set_sync_callback([this](double sync_target) -> bool {
+    bsp_sync_callback(0);
+    return bsp_terminated_.load();
+  });
 
-    // Debug: Log horizon start
-    BSP_DEBUG_LOG_HORIZON_START(
-      bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_start, horizon_end);
+  // Set initial upper bound snapshot for all workers
+  for (auto& worker : *bsp_workers_) {
+    worker.local_upper_bound    = get_upper_bound();
+    worker.pc_sum_up_snapshot   = pc_.pseudo_cost_sum_up;
+    worker.pc_sum_down_snapshot = pc_.pseudo_cost_sum_down;
+    worker.pc_num_up_snapshot   = pc_.pseudo_cost_num_up;
+    worker.pc_num_down_snapshot = pc_.pseudo_cost_num_down;
+    worker.horizon_start        = 0.0;
+    worker.horizon_end          = bsp_horizon_step_;
+  }
 
-    // Reset workers for new horizon with current global upper bound
-    // Each worker gets a snapshot of the upper bound for deterministic pruning
-    bsp_workers_->reset_for_horizon(horizon_start, horizon_end, get_upper_bound());
-
-    // Snapshot pseudo-costs for deterministic variable selection
-    for (auto& worker : *bsp_workers_) {
-      worker.pc_sum_up_snapshot   = pc_.pseudo_cost_sum_up;
-      worker.pc_sum_down_snapshot = pc_.pseudo_cost_sum_down;
-      worker.pc_num_up_snapshot   = pc_.pseudo_cost_num_up;
-      worker.pc_num_down_snapshot = pc_.pseudo_cost_num_down;
-    }
-
-    // PHASE 2: PARALLEL EXECUTION - Workers run until horizon
+  // Main BSP execution - workers run in parallel with scheduler-driven sync
 #pragma omp parallel num_threads(num_workers)
-    {
-      int worker_id = omp_get_thread_num();
-      auto& worker  = (*bsp_workers_)[worker_id];
+  {
+    int worker_id = omp_get_thread_num();
+    auto& worker  = (*bsp_workers_)[worker_id];
 
-      f_t worker_start_time = tic();
+    f_t worker_start_time = tic();
 
-      // Run worker until horizon
-      run_worker_until_horizon(worker, search_tree_, bsp_current_horizon_);
+    // Run worker loop - scheduler handles sync at horizon boundaries
+    run_worker_loop(worker, search_tree_);
 
-      // Record when this worker finished (for barrier wait calculation)
-      // Store raw timestamp - barrier wait = barrier_end - finish_time
-      worker.horizon_finish_time = tic();
-      worker.total_runtime += toc(worker_start_time);
-    }
-    // Implicit OMP barrier here - all workers have finished
-    f_t barrier_end_time = tic();
-
-    // Calculate barrier wait time for each worker
-    // barrier_wait = time from worker finish to barrier completion
-    for (auto& worker : *bsp_workers_) {
-      double wait_time = barrier_end_time - worker.horizon_finish_time;
-      if (wait_time > 0) { worker.total_barrier_wait += wait_time; }
-    }
-
-    // Aggregate worker work into global context for work limit tracking
-    // The global work is the horizon boundary (all workers synchronized to this point)
-    work_unit_context_.global_work_units_elapsed = horizon_end;
-
-    raft::common::nvtx::range scope("BB::bsp_coordinator::sync_phase");
-
-    // PHASE 3: SYNCHRONIZATION - The Barrier
-    // Collect and sort all events deterministically
-    bb_event_batch_t<i_t, f_t> all_events;
-    {
-      raft::common::nvtx::range scope("BB::bsp_coordinator::collect_and_sort_events");
-      all_events = bsp_workers_->collect_and_sort_events();
-    }
-
-    // Debug: Log sync phase
-    BSP_DEBUG_LOG_SYNC_PHASE_START(
-      bsp_debug_settings_, bsp_debug_logger_, horizon_end, all_events.size());
-
-    // Process history and sync
-    {
-      raft::common::nvtx::range scope("BB::bsp_coordinator::process_history_and_sync");
-      process_history_and_sync(all_events);
-    }
-
-    // Debug: Log sync end (no final_id assignment needed with BSP identity tuples)
-    BSP_DEBUG_LOG_SYNC_PHASE_END(bsp_debug_settings_, bsp_debug_logger_, horizon_end);
-
-    // Prune paused nodes that are now dominated by new incumbent
-    {
-      raft::common::nvtx::range scope("BB::bsp_coordinator::prune_worker_nodes_vs_incumbent");
-      prune_worker_nodes_vs_incumbent();
-    }
-
-    // Balance worker loads if significant imbalance detected
-    {
-      raft::common::nvtx::range scope("BB::bsp_coordinator::balance_worker_loads");
-      balance_worker_loads();
-    }
-    BSP_DEBUG_FLUSH_ASSIGN_TRACE(bsp_debug_settings_, bsp_debug_logger_);
-
-    // Debug: Log horizon end, emit tree state and JSON state
-    BSP_DEBUG_LOG_HORIZON_END(
-      bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_end);
-
-    // Compute and log determinism fingerprint hash
-    // This hash captures all state that should be identical across deterministic runs
-    if (bsp_debug_settings_.any_enabled() || true) {
-      // Collect all determinism-critical state into a vector for hashing
-      std::vector<uint64_t> state_data;
-
-      // Global state
-      state_data.push_back(static_cast<uint64_t>(exploration_stats_.nodes_explored));
-      state_data.push_back(static_cast<uint64_t>(exploration_stats_.nodes_unexplored));
-
-      // Upper/lower bounds (convert to fixed-point for exact comparison)
-      // Use compute_bsp_lower_bound() for accurate LB from all worker queues
-      f_t ub = get_upper_bound();
-      f_t lb = compute_bsp_lower_bound();
-      state_data.push_back(static_cast<uint64_t>(ub * 1000000));  // 6 decimal places
-      state_data.push_back(static_cast<uint64_t>(lb * 1000000));
-
-      // Worker queue contents using BSP identity tuple (origin_worker_id, creation_seq)
-      // Each worker's queue is a priority queue - we extract nodes in priority order
-      // Note: BSP identity is always set for nodes in BSP mode
-      int nodes_without_identity = 0;
-      for (auto& worker : *bsp_workers_) {
-        // Hash paused node if any
-        if (worker.current_node != nullptr) {
-          if (!worker.current_node->has_bsp_identity()) {
-            ++nodes_without_identity;
-            CUOPT_LOG_WARN(
-              "BSP Hash: Worker %d current_node has no BSP identity (node_id=%d, depth=%d)",
-              worker.worker_id,
-              worker.current_node->node_id,
-              worker.current_node->depth);
-          }
-          state_data.push_back(worker.current_node->get_bsp_identity_hash());
-        }
-
-        // Extract queue contents for hashing
-        // Include plunge_stack and backlog for complete state
-        std::vector<mip_node_t<i_t, f_t>*> queue_nodes;
-        for (auto* node : worker.plunge_stack) {
-          queue_nodes.push_back(node);
-        }
-        for (auto* node : worker.backlog) {
-          queue_nodes.push_back(node);
-        }
-        for (auto* node : queue_nodes) {
-          if (!node->has_bsp_identity()) {
-            ++nodes_without_identity;
-            CUOPT_LOG_WARN(
-              "BSP Hash: Worker %d queue node has no BSP identity (node_id=%d, depth=%d)",
-              worker.worker_id,
-              node->node_id,
-              node->depth);
-          }
-          state_data.push_back(node->get_bsp_identity_hash());
-        }
-      }
-      if (nodes_without_identity > 0) {
-        CUOPT_LOG_WARN(
-          "BSP Hash at horizon %d: %d nodes without BSP identity - HASH MAY BE "
-          "NON-DETERMINISTIC!",
-          bsp_horizon_number_,
-          nodes_without_identity);
-      }
-
-      // Compute hash from state data
-      uint32_t hash = 0x811c9dc5u;  // FNV-1a initial value
-      for (uint64_t val : state_data) {
-        hash ^= static_cast<uint32_t>(val & 0xFFFFFFFF);
-        hash *= 0x01000193u;
-        hash ^= static_cast<uint32_t>(val >> 32);
-        hash *= 0x01000193u;
-      }
-      CUOPT_LOG_DEBUG("BSP Hash at horizon %d: 0x%x", bsp_horizon_number_, hash);
-      BSP_DEBUG_LOG_HORIZON_HASH(
-        bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_end, hash);
-    }
-
-    BSP_DEBUG_EMIT_TREE_STATE(bsp_debug_settings_,
-                              bsp_debug_logger_,
-                              bsp_horizon_number_,
-                              search_tree_.root,
-                              get_upper_bound());
-    // Collect heap nodes for JSON state (Note: We can't easily iterate the heap, so just log the
-    // size)
-    std::vector<mip_node_t<i_t, f_t>*> heap_snapshot;
-    BSP_DEBUG_EMIT_STATE_JSON(bsp_debug_settings_,
-                              bsp_debug_logger_,
-                              bsp_horizon_number_,
-                              horizon_start,
-                              horizon_end,
-                              0,  // No longer tracking next_final_id with BSP identity tuples
-                              get_upper_bound(),
-                              compute_bsp_lower_bound(),
-                              exploration_stats_.nodes_explored,
-                              exploration_stats_.nodes_unexplored,
-                              *bsp_workers_,
-                              heap_snapshot,
-                              all_events);
-
-    // Advance the horizon
-    bsp_current_horizon_ += bsp_horizon_step_;
-
-    // Update gap info using accurate BSP lower bound from all worker queues
-    lower_bound = compute_bsp_lower_bound();
-    upper_bound = get_upper_bound();
-    abs_gap     = upper_bound - lower_bound;
-    rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
-
-    // Check time/work limits
-    if (toc(exploration_stats_.start_time) > settings_.time_limit) {
-      solver_status_ = mip_exploration_status_t::TIME_LIMIT;
-    }
-    if (settings_.deterministic &&
-        work_unit_context_.global_work_units_elapsed >= settings_.work_limit) {
-      solver_status_ = mip_exploration_status_t::WORK_LIMIT;
-    }
-
-    // Progress logging
-    f_t obj              = compute_user_objective(original_lp_, upper_bound);
-    f_t user_lower       = compute_user_objective(original_lp_, lower_bound);
-    std::string gap_user = user_mip_gap<f_t>(obj, user_lower);
-    i_t nodes_explored   = exploration_stats_.nodes_explored;
-    i_t nodes_unexplored = exploration_stats_.nodes_unexplored;
-
-    settings_.log.printf(" %10d   %10lu    %+13.6e    %+10.6e                           %s %9.2f\n",
-                         nodes_explored,
-                         nodes_unexplored,
-                         obj,
-                         user_lower,
-                         gap_user.c_str(),
-                         toc(exploration_stats_.start_time));
+    worker.total_runtime += toc(worker_start_time);
+  }
+  // All workers have terminated - deregister contexts
+  for (auto& worker : *bsp_workers_) {
+    bsp_scheduler_->deregister_context(worker.work_context);
   }
 
   // Print per-worker statistics
   settings_.log.printf("\n");
   settings_.log.printf("BSP Worker Statistics:\n");
   settings_.log.printf(
-    "  Worker | Processed | Branched | Pruned | Infeasible | IntSol | Assigned |  Runtime  |  "
-    "Wait\n");
+    "  Worker | Processed | Branched | Pruned | Infeasible | IntSol | Assigned |  Runtime  | "
+    "Sync%%\n");
   settings_.log.printf(
     "  "
-    "-------+-----------+----------+--------+------------+--------+----------+-----------+-------"
+    "-------+-----------+----------+--------+------------+--------+----------+-----------+------"
     "\n");
   for (const auto& worker : *bsp_workers_) {
-    settings_.log.printf("  %6d | %9d | %8d | %6d | %10d | %6d | %8d | %8.3fs | %5.3fs\n",
+    double sync_time    = worker.work_context.total_sync_time;
+    double total_time   = worker.total_runtime + sync_time;
+    double sync_percent = (total_time > 0) ? (100.0 * sync_time / total_time) : 0.0;
+    settings_.log.printf("  %6d | %9d | %8d | %6d | %10d | %6d | %8d | %8.3fs | %5.1f%%\n",
                          worker.worker_id,
                          worker.total_nodes_processed,
                          worker.total_nodes_branched,
@@ -2191,8 +1980,8 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
                          worker.total_nodes_infeasible,
                          worker.total_integer_solutions,
                          worker.total_nodes_assigned,
-                         worker.total_runtime,
-                         worker.total_barrier_wait);
+                         total_time,
+                         sync_percent);
   }
   settings_.log.printf("\n");
 
@@ -2267,6 +2056,231 @@ void branch_and_bound_t<i_t, f_t>::refill_worker_queues(i_t target_queue_size)
 }
 
 template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::run_worker_loop(bb_worker_state_t<i_t, f_t>& worker,
+                                                   search_tree_t<i_t, f_t>& search_tree)
+{
+  raft::common::nvtx::range scope("BB::worker_loop");
+
+  // Workers run continuously until scheduler signals stop (via sync callback)
+  // The scheduler handles synchronization at horizon boundaries via record_work()
+  while (!bsp_terminated_.load() && !bsp_scheduler_->is_stopped() &&
+         solver_status_ == mip_exploration_status_t::RUNNING) {
+    if (worker.has_work()) {
+      mip_node_t<i_t, f_t>* node = worker.dequeue_node();
+      if (node == nullptr) { continue; }
+
+      // Track that this node is being actively processed
+      worker.current_node = node;
+
+      // Check if node should be pruned (use worker's snapshot for determinism)
+      f_t upper_bound = worker.local_upper_bound;
+      if (node->lower_bound >= upper_bound) {
+        worker.current_node = nullptr;
+        worker.record_fathomed(node, node->lower_bound);
+        worker.track_node_pruned();
+        search_tree.update(node, node_status_t::FATHOMED);
+        --exploration_stats_.nodes_unexplored;
+        continue;
+      }
+
+      // Check if we can warm-start from the previous solve's basis
+      bool is_child                     = (node->parent == worker.last_solved_node);
+      worker.recompute_bounds_and_basis = !is_child;
+
+      // Solve the node - record_work() inside may block at sync points
+      // The scheduler's sync callback will execute during barrier waits
+      node_solve_info_t status = solve_node_bsp(worker, node, search_tree, worker.horizon_end);
+
+      // Track last solved node for warm-start detection
+      worker.last_solved_node = node;
+
+      // Handle result
+      if (status == node_solve_info_t::TIME_LIMIT) {
+        worker.current_node = nullptr;
+        solver_status_      = mip_exploration_status_t::TIME_LIMIT;
+        bsp_terminated_.store(true);
+        break;  // Exit loop - scheduler will stop all workers at next sync
+      } else if (status == node_solve_info_t::WORK_LIMIT) {
+        worker.current_node = nullptr;
+        solver_status_      = mip_exploration_status_t::WORK_LIMIT;
+        bsp_terminated_.store(true);
+        break;  // Exit loop - scheduler will stop all workers at next sync
+      } else {
+        // Node completed successfully
+        worker.current_node = nullptr;
+        continue;
+      }
+    }
+
+    // No work available - advance to next sync point to participate in barrier
+    // This ensures all workers reach the sync point even if some have no work
+    cuopt::sync_result_t result = bsp_scheduler_->wait_for_next_sync(worker.work_context);
+    if (result == cuopt::sync_result_t::STOPPED) { break; }
+    // After sync, bsp_sync_callback may have redistributed nodes to us
+  }
+}
+
+template <typename i_t, typename f_t>
+void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
+{
+  // This callback is executed during the barrier by worker 0
+  // All other workers are blocked in record_work() at this point
+  raft::common::nvtx::range scope("BB::bsp_sync_callback");
+
+  ++bsp_horizon_number_;
+  double horizon_start = bsp_current_horizon_ - bsp_horizon_step_;
+  double horizon_end   = bsp_current_horizon_;
+
+  // Debug: Log horizon start
+  BSP_DEBUG_LOG_HORIZON_START(
+    bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_start, horizon_end);
+
+  // Aggregate worker work into global context
+  work_unit_context_.global_work_units_elapsed = horizon_end;
+
+  // Collect and sort all events deterministically
+  bb_event_batch_t<i_t, f_t> all_events = bsp_workers_->collect_and_sort_events();
+
+  // Debug: Log sync phase
+  BSP_DEBUG_LOG_SYNC_PHASE_START(
+    bsp_debug_settings_, bsp_debug_logger_, horizon_end, all_events.size());
+
+  // Process history and sync (update incumbent, pseudo-costs, etc.)
+  process_history_and_sync(all_events);
+
+  // Debug: Log sync end
+  BSP_DEBUG_LOG_SYNC_PHASE_END(bsp_debug_settings_, bsp_debug_logger_, horizon_end);
+
+  // Prune paused nodes that are now dominated by new incumbent
+  prune_worker_nodes_vs_incumbent();
+
+  // Balance worker loads if significant imbalance detected
+  balance_worker_loads();
+  BSP_DEBUG_FLUSH_ASSIGN_TRACE(bsp_debug_settings_, bsp_debug_logger_);
+
+  // Debug: Log horizon end and emit state
+  BSP_DEBUG_LOG_HORIZON_END(
+    bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_end);
+
+  // Compute and log determinism fingerprint hash (always computed for determinism verification)
+  uint32_t state_hash = 0;
+  {
+    std::vector<uint64_t> state_data;
+    state_data.push_back(static_cast<uint64_t>(exploration_stats_.nodes_explored));
+    state_data.push_back(static_cast<uint64_t>(exploration_stats_.nodes_unexplored));
+    f_t ub = get_upper_bound();
+    f_t lb = compute_bsp_lower_bound();
+    state_data.push_back(static_cast<uint64_t>(ub * 1000000));
+    state_data.push_back(static_cast<uint64_t>(lb * 1000000));
+
+    for (auto& worker : *bsp_workers_) {
+      if (worker.current_node != nullptr) {
+        state_data.push_back(worker.current_node->get_bsp_identity_hash());
+      }
+      for (auto* node : worker.plunge_stack) {
+        state_data.push_back(node->get_bsp_identity_hash());
+      }
+      for (auto* node : worker.backlog) {
+        state_data.push_back(node->get_bsp_identity_hash());
+      }
+    }
+
+    state_hash = 0x811c9dc5u;  // FNV-1a initial value
+    for (uint64_t val : state_data) {
+      state_hash ^= static_cast<uint32_t>(val & 0xFFFFFFFF);
+      state_hash *= 0x01000193u;
+      state_hash ^= static_cast<uint32_t>(val >> 32);
+      state_hash *= 0x01000193u;
+    }
+    BSP_DEBUG_LOG_HORIZON_HASH(
+      bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_end, state_hash);
+  }
+
+  BSP_DEBUG_EMIT_TREE_STATE(bsp_debug_settings_,
+                            bsp_debug_logger_,
+                            bsp_horizon_number_,
+                            search_tree_.root,
+                            get_upper_bound());
+
+  std::vector<mip_node_t<i_t, f_t>*> heap_snapshot;
+  BSP_DEBUG_EMIT_STATE_JSON(bsp_debug_settings_,
+                            bsp_debug_logger_,
+                            bsp_horizon_number_,
+                            horizon_start,
+                            horizon_end,
+                            0,
+                            get_upper_bound(),
+                            compute_bsp_lower_bound(),
+                            exploration_stats_.nodes_explored,
+                            exploration_stats_.nodes_unexplored,
+                            *bsp_workers_,
+                            heap_snapshot,
+                            all_events);
+
+  // Advance the horizon for next sync
+  bsp_current_horizon_ += bsp_horizon_step_;
+
+  // Update worker snapshots for next horizon
+  for (auto& worker : *bsp_workers_) {
+    worker.local_upper_bound    = get_upper_bound();
+    worker.pc_sum_up_snapshot   = pc_.pseudo_cost_sum_up;
+    worker.pc_sum_down_snapshot = pc_.pseudo_cost_sum_down;
+    worker.pc_num_up_snapshot   = pc_.pseudo_cost_num_up;
+    worker.pc_num_down_snapshot = pc_.pseudo_cost_num_down;
+    worker.horizon_start        = horizon_end;
+    worker.horizon_end          = bsp_current_horizon_;
+  }
+
+  // Check termination conditions
+  f_t lower_bound = compute_bsp_lower_bound();
+  f_t upper_bound = get_upper_bound();
+  f_t abs_gap     = upper_bound - lower_bound;
+  f_t rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
+
+  bool should_terminate = false;
+
+  // Gap tolerance reached
+  if (abs_gap <= settings_.absolute_mip_gap_tol || rel_gap <= settings_.relative_mip_gap_tol) {
+    should_terminate = true;
+  }
+
+  // No more work
+  if (heap_.size() == 0 && !bsp_workers_->any_has_work()) { should_terminate = true; }
+
+  // Time limit
+  if (toc(exploration_stats_.start_time) > settings_.time_limit) {
+    solver_status_   = mip_exploration_status_t::TIME_LIMIT;
+    should_terminate = true;
+  }
+
+  // Work limit (use small tolerance for floating-point comparison since horizon is accumulated)
+  constexpr double work_limit_tolerance = 1e-9;
+  if (settings_.deterministic &&
+      work_unit_context_.global_work_units_elapsed + work_limit_tolerance >= settings_.work_limit) {
+    solver_status_   = mip_exploration_status_t::WORK_LIMIT;
+    should_terminate = true;
+  }
+
+  if (should_terminate) { bsp_terminated_.store(true); }
+
+  // Progress logging with horizon number and state hash
+  f_t obj              = compute_user_objective(original_lp_, upper_bound);
+  f_t user_lower       = compute_user_objective(original_lp_, lower_bound);
+  std::string gap_user = user_mip_gap<f_t>(obj, user_lower);
+  settings_.log.printf("S%-4d %8d   %8lu    %+13.6e    %+10.6e    %s %8.2f  [0x%08x]\n",
+                       bsp_horizon_number_,
+                       exploration_stats_.nodes_explored,
+                       exploration_stats_.nodes_unexplored,
+                       obj,
+                       user_lower,
+                       gap_user.c_str(),
+                       toc(exploration_stats_.start_time),
+                       state_hash);
+
+  // Note: No need to re-queue callback - sync callback is called at every sync point automatically
+}
+
+template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::run_worker_until_horizon(bb_worker_state_t<i_t, f_t>& worker,
                                                             search_tree_t<i_t, f_t>& search_tree,
                                                             double current_horizon)
@@ -2291,12 +2305,10 @@ void branch_and_bound_t<i_t, f_t>::run_worker_until_horizon(bb_worker_state_t<i_
 
     // Check if we can warm-start from the previous solve's basis.
     // Two cases where we can reuse the basis:
-    // 1. Resumed node: continuing the same solve (basis already set up)
-    // 2. Child of last solved: child vstatus is a copy of parent's final vstatus
-    bool is_resumed                   = (node->bsp_state == bsp_node_state_t::PAUSED);
+    // Check if we can warm-start from the previous solve's basis
+    // Child nodes inherit their parent's vstatus, so we can reuse the basis
     bool is_child                     = (node->parent == worker.last_solved_node);
-    bool can_warm_start               = is_resumed || is_child;
-    worker.recompute_bounds_and_basis = !can_warm_start;
+    worker.recompute_bounds_and_basis = !is_child;
 
     // Solve the node (this records events)
     node_solve_info_t status = solve_node_bsp(worker, node, search_tree, current_horizon);
@@ -2350,10 +2362,9 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   // Track work units at start (from work_context, which simplex solver updates)
   double work_units_at_start = worker.work_context.global_work_units_elapsed;
   double clock_at_start      = worker.clock;
-  bool is_resumed            = (node_ptr->bsp_state == bsp_node_state_t::PAUSED);
 
   // Debug: Log solve start (pass origin_worker_id as identifier)
-  double work_limit = current_horizon - worker.clock;
+  double work_limit = worker.horizon_end - worker.clock;
   BSP_DEBUG_LOG_SOLVE_START(bsp_debug_settings_,
                             bsp_debug_logger_,
                             worker.clock,
@@ -2361,7 +2372,7 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                             node_ptr->node_id,
                             node_ptr->origin_worker_id,
                             work_limit,
-                            is_resumed);
+                            false);  // resumed flag no longer used
 
   // Setup leaf problem bounds
   std::fill(worker.node_presolver->bounds_changed.begin(),
@@ -2387,8 +2398,10 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   lp_settings.cut_off    = worker.local_upper_bound + settings_.dual_tol;
   lp_settings.inside_mip = 2;
   lp_settings.time_limit = settings_.time_limit - toc(exploration_stats_.start_time);
-  // Work limit is the ABSOLUTE VT at which to pause (LP solver compares against absolute elapsed)
-  lp_settings.work_limit    = current_horizon;
+  // Work limit: use GLOBAL work limit
+  // The check in dual_phase2 compares global_work_units_elapsed against settings.work_limit
+  // so work_limit must be the GLOBAL limit, not remaining budget
+  lp_settings.work_limit    = settings_.work_limit;
   lp_settings.scale_columns = false;
 
   bool feasible = true;
@@ -2527,28 +2540,20 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   worker.work_units_this_horizon += work_performed;
   // Note: don't call advance_clock() as work_context was already updated by simplex solver
 
-  // Check if we hit the horizon mid-solve
-  if (lp_status == dual::status_t::WORK_LIMIT || worker.clock >= current_horizon) {
-    // Pause this node - accumulated_vt is the total work spent on this node
-    double accumulated_vt = (worker.clock - clock_at_start) + node_ptr->accumulated_vt;
-    worker.pause_current_node(node_ptr, accumulated_vt);
-
-    // Debug: Log solve end (paused)
+  // Check if we hit the GLOBAL work limit
+  // In scheduler-based mode, horizon sync happens via record_work() blocking inside the simplex.
+  // The simplex runs continuously through multiple horizons, so when it completes with a status
+  // other than WORK_LIMIT, we should process the result normally.
+  if (lp_status == dual::status_t::WORK_LIMIT) {
+    // Global work limit reached - solver will terminate
     BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
                             bsp_debug_logger_,
                             worker.clock,
                             worker.worker_id,
                             node_ptr->node_id,
                             node_ptr->origin_worker_id,
-                            "PAUSED",
+                            "WORK_LIMIT",
                             node_ptr->lower_bound);
-    BSP_DEBUG_LOG_PAUSED(bsp_debug_settings_,
-                         bsp_debug_logger_,
-                         worker.clock,
-                         worker.worker_id,
-                         node_ptr->node_id,
-                         node_ptr->origin_worker_id,
-                         static_cast<f_t>(accumulated_vt));
     return node_solve_info_t::WORK_LIMIT;
   }
 
@@ -2560,13 +2565,13 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   // Process LP result
   if (lp_status == dual::status_t::DUAL_UNBOUNDED) {
     node_ptr->lower_bound = std::numeric_limits<f_t>::infinity();
-    search_tree.update(node_ptr, node_status_t::INFEASIBLE);
+
+    // Record event and debug logs BEFORE search_tree.update() which may delete the node
     worker.record_infeasible(node_ptr);
     worker.track_node_infeasible();
     worker.track_node_processed();
     worker.recompute_bounds_and_basis = true;
 
-    // Debug: Log solve end (infeasible)
     BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
                             bsp_debug_logger_,
                             worker.clock,
@@ -2577,18 +2582,20 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                             node_ptr->lower_bound);
     BSP_DEBUG_LOG_INFEASIBLE(
       bsp_debug_settings_, bsp_debug_logger_, worker.clock, worker.worker_id, node_ptr->node_id);
+
+    search_tree.update(node_ptr, node_status_t::INFEASIBLE);
     return node_solve_info_t::NO_CHILDREN;
 
   } else if (lp_status == dual::status_t::CUTOFF) {
     // Use worker-local upper bound for determinism
     node_ptr->lower_bound = worker.local_upper_bound;
-    search_tree.update(node_ptr, node_status_t::FATHOMED);
+
+    // Record event and debug logs BEFORE search_tree.update() which may delete the node
     worker.record_fathomed(node_ptr, node_ptr->lower_bound);
     worker.track_node_pruned();
     worker.track_node_processed();
     worker.recompute_bounds_and_basis = true;
 
-    // Debug: Log solve end (fathomed - cutoff)
     BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
                             bsp_debug_logger_,
                             worker.clock,
@@ -2603,6 +2610,8 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                            worker.worker_id,
                            node_ptr->node_id,
                            node_ptr->lower_bound);
+
+    search_tree.update(node_ptr, node_status_t::FATHOMED);
     return node_solve_info_t::NO_CHILDREN;
 
   } else if (lp_status == dual::status_t::OPTIMAL) {
@@ -2635,13 +2644,13 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
         worker.integer_solutions.push_back({leaf_objective, leaf_solution.x, node_ptr->depth});
         // Note: Logging deferred to sync phase for deterministic output
       }
-      search_tree.update(node_ptr, node_status_t::INTEGER_FEASIBLE);
+
+      // Record event and debug logs BEFORE search_tree.update() which may delete the node
       worker.record_integer_solution(node_ptr, leaf_objective);
       worker.track_integer_solution();
       worker.track_node_processed();
       worker.recompute_bounds_and_basis = true;
 
-      // Debug: Log solve end (integer)
       BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
                               bsp_debug_logger_,
                               worker.clock,
@@ -2656,6 +2665,8 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                             worker.worker_id,
                             node_ptr->node_id,
                             leaf_objective);
+
+      search_tree.update(node_ptr, node_status_t::INTEGER_FEASIBLE);
       return node_solve_info_t::NO_CHILDREN;
 
     } else if (leaf_objective <= worker.local_upper_bound + settings_.absolute_mip_gap_tol / 10) {
@@ -2709,13 +2720,12 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                                                      : node_solve_info_t::UP_CHILD_FIRST;
 
     } else {
-      search_tree.update(node_ptr, node_status_t::FATHOMED);
+      // Record event and debug logs BEFORE search_tree.update() which may delete the node
       worker.record_fathomed(node_ptr, leaf_objective);
       worker.track_node_pruned();
       worker.track_node_processed();
       worker.recompute_bounds_and_basis = true;
 
-      // Debug: Log solve end (fathomed by bound)
       BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
                               bsp_debug_logger_,
                               worker.clock,
@@ -2730,6 +2740,8 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                              worker.worker_id,
                              node_ptr->node_id,
                              leaf_objective);
+
+      search_tree.update(node_ptr, node_status_t::FATHOMED);
       return node_solve_info_t::NO_CHILDREN;
     }
 
@@ -2737,10 +2749,10 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
     return node_solve_info_t::TIME_LIMIT;
 
   } else {
-    // Numerical issue
-    search_tree.update(node_ptr, node_status_t::NUMERICAL);
+    // Numerical issue - record BEFORE search_tree.update() which may delete the node
     worker.record_numerical(node_ptr);
     worker.recompute_bounds_and_basis = true;
+    search_tree.update(node_ptr, node_status_t::NUMERICAL);
     return node_solve_info_t::NUMERICAL;
   }
 }
@@ -2839,7 +2851,6 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
         case bb_event_type_t::NODE_FATHOMED:
         case bb_event_type_t::NODE_INFEASIBLE:
         case bb_event_type_t::NODE_NUMERICAL:
-        case bb_event_type_t::NODE_PAUSED:
         case bb_event_type_t::HEURISTIC_SOLUTION:
           // These events don't need additional processing during replay
           // (BSP identity is already assigned at node creation time)
@@ -2979,15 +2990,9 @@ void branch_and_bound_t<i_t, f_t>::prune_worker_nodes_vs_incumbent()
   f_t upper_bound = get_upper_bound();
 
   for (auto& worker : *bsp_workers_) {
-    // Check paused node
-    if (worker.current_node != nullptr) {
-      if (worker.current_node->lower_bound >= upper_bound) {
-        // Prune the paused node
-        search_tree_.update(worker.current_node, node_status_t::FATHOMED);
-        --exploration_stats_.nodes_unexplored;
-        worker.current_node = nullptr;
-      }
-    }
+    // NOTE: Do NOT prune worker.current_node here!
+    // The worker thread has local references (node_ptr, leaf_vstatus) to it.
+    // The worker will handle cutoff checking when it resumes after sync.
 
     // Check nodes in plunge stack - filter in place
     {
@@ -3025,6 +3030,9 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
   const size_t num_workers = bsp_workers_->size();
   if (num_workers <= 1) return;
 
+  // Flag to force rebalancing every sync (reduces idle time at barriers when work is uniform)
+  constexpr bool force_rebalance_every_sync = true;
+
   // Count work for each worker: current_node (if any) + plunge_stack + backlog
   std::vector<size_t> work_counts(num_workers);
   size_t total_work = 0;
@@ -3039,10 +3047,17 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
     min_work = std::min(min_work, work_counts[w]);
   }
 
-  // Check if we need to balance: significant imbalance = some worker has 0 work while others have
-  // 2+ Or max/min ratio is very high
-  bool needs_balance =
-    (min_work == 0 && max_work >= 2) || (min_work > 0 && max_work > 4 * min_work);
+  // Early exit if no work to redistribute
+  if (total_work == 0) return;
+
+  bool needs_balance;
+  if (force_rebalance_every_sync) {
+    // Always rebalance if there's more than one node to distribute
+    needs_balance = (total_work > 1);
+  } else {
+    // Original logic: only rebalance on significant imbalance
+    needs_balance = (min_work == 0 && max_work >= 2) || (min_work > 0 && max_work > 4 * min_work);
+  }
 
   if (!needs_balance) return;
 

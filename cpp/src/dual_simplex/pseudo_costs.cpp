@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -159,7 +159,7 @@ void strong_branching(const lp_problem_t<i_t, f_t>& original_lp,
                       settings.num_threads,
                       fractional.size());
 
-#pragma omp parallel num_threads(settings.num_threads)
+#pragma omp parallel num_threads(64)
   {
     i_t n = std::min<i_t>(4 * settings.num_threads, fractional.size());
 

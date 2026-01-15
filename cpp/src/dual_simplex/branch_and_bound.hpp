@@ -24,8 +24,10 @@
 #include <utilities/omp_helpers.hpp>
 #include <utilities/work_limit_timer.hpp>
 #include <utilities/work_unit_predictor.hpp>
+#include <utilities/work_unit_scheduler.hpp>
 
 #include <omp.h>
+#include <atomic>
 #include <queue>
 #include <vector>
 
@@ -372,9 +374,17 @@ class branch_and_bound_t {
   // Compute accurate lower bound from all BSP sources (called during sync phase)
   f_t compute_bsp_lower_bound();
 
+  // BSP worker loop - runs continuously until scheduler signals stop
+  void run_worker_loop(bb_worker_state_t<i_t, f_t>& worker, search_tree_t<i_t, f_t>& search_tree);
+
+  // BSP sync callback - executed when all workers reach barrier
+  void bsp_sync_callback(int worker_id);
+
  private:
   // BSP state
   std::unique_ptr<bb_worker_pool_t<i_t, f_t>> bsp_workers_;
+  std::unique_ptr<cuopt::work_unit_scheduler_t> bsp_scheduler_;
+  std::atomic<bool> bsp_terminated_{false};
   double bsp_horizon_step_{5.0};     // Virtual time step per horizon (tunable)
   double bsp_current_horizon_{0.0};  // Current horizon target
   bool bsp_mode_enabled_{false};     // Whether BSP mode is active

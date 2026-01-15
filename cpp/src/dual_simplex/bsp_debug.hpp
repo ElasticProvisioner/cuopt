@@ -333,13 +333,12 @@ class bsp_debug_logger_t {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (settings_.enable_event_log && settings_.log_level >= 2) {
-      log_event_unlocked(
-        vt,
-        worker_id,
-        is_resumed ? bsp_log_event_t::NODE_RESUMED : bsp_log_event_t::NODE_SOLVE_START,
-        node_id,
-        final_id,
-        "work_limit=" + std::to_string(work_limit));
+      log_event_unlocked(vt,
+                         worker_id,
+                         bsp_log_event_t::NODE_SOLVE_START,
+                         node_id,
+                         final_id,
+                         "work_limit=" + std::to_string(work_limit));
     }
 
     // Start timeline event

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
  * reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <functional>
 #include <mutex>
@@ -26,6 +27,11 @@
 namespace cuopt {
 
 struct work_limit_context_t;
+
+enum class sync_result_t {
+  CONTINUE,  // Continue processing
+  STOPPED    // Scheduler has been stopped
+};
 
 class work_unit_scheduler_t {
  public:
@@ -42,6 +48,15 @@ class work_unit_scheduler_t {
   void queue_callback(work_limit_context_t& source,
                       work_limit_context_t& destination,
                       callback_t callback);
+
+  // Sync callback support - callback is executed when all contexts reach sync point
+  // If callback returns true, scheduler stops and all workers exit cleanly
+  using sync_callback_t = std::function<bool(double sync_target)>;
+  void set_sync_callback(sync_callback_t callback);
+  bool is_stopped() const;
+
+  // Wait for next sync point (for idle workers with no work)
+  sync_result_t wait_for_next_sync(work_limit_context_t& ctx);
 
  public:
   bool verbose{false};
@@ -75,6 +90,10 @@ class work_unit_scheduler_t {
   double current_sync_target_{0};
   size_t barrier_generation_{0};
   size_t exit_generation_{0};
+
+  // Sync callback - executed when all contexts reach sync point
+  sync_callback_t sync_callback_;
+  std::atomic<bool> stopped_{false};
 };
 
 }  // namespace cuopt

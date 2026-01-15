@@ -3133,6 +3133,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
         //        prediction,
         //        features.interval_runtime,
         //        prediction - features.interval_runtime);
+        // printf("Current iter %d\n", iter);
         work_unit_context->record_work(prediction);
       }
 
@@ -3168,6 +3169,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
       return dual::status_t::CONCURRENT_LIMIT;
     }
   }
+  // printf("NODE SOLVE FINISHED\n");
   if (iter >= iter_limit) { status = dual::status_t::ITERATION_LIMIT; }
 
   if (phase == 2) {

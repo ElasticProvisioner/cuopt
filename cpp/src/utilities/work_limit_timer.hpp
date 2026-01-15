@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
  * reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +28,7 @@ namespace cuopt {
 
 struct work_limit_context_t {
   double global_work_units_elapsed{0.0};
+  double total_sync_time{0.0};  // Total time spent waiting at sync barriers (seconds)
   bool deterministic{false};
   work_unit_scheduler_t* scheduler{nullptr};
   std::string name;

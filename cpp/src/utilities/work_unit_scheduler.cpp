@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
  * reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,6 +58,9 @@ void work_unit_scheduler_t::deregister_context(work_limit_context_t& ctx)
 
 void work_unit_scheduler_t::on_work_recorded(work_limit_context_t& ctx, double total_work)
 {
+  // Early exit if scheduler is stopped
+  if (stopped_.load()) { return; }
+
   if (verbose) {
     double sync_target = current_sync_target();
     CUOPT_LOG_DEBUG("[%s] Work recorded: %f, sync_target: %f (gen %zu)",
@@ -68,9 +71,29 @@ void work_unit_scheduler_t::on_work_recorded(work_limit_context_t& ctx, double t
   }
 
   // Loop to handle large work increments that cross multiple sync points
-  while (total_work >= current_sync_target()) {
+  while (!stopped_.load() && total_work >= current_sync_target()) {
     wait_at_sync_point(ctx, current_sync_target());
   }
+}
+
+void work_unit_scheduler_t::set_sync_callback(sync_callback_t callback)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  sync_callback_ = std::move(callback);
+}
+
+bool work_unit_scheduler_t::is_stopped() const { return stopped_.load(); }
+
+sync_result_t work_unit_scheduler_t::wait_for_next_sync(work_limit_context_t& ctx)
+{
+  if (stopped_.load()) { return sync_result_t::STOPPED; }
+
+  // Advance work to next sync point
+  double next_sync              = current_sync_target();
+  ctx.global_work_units_elapsed = next_sync;
+  wait_at_sync_point(ctx, next_sync);
+
+  return stopped_.load() ? sync_result_t::STOPPED : sync_result_t::CONTINUE;
 }
 
 void work_unit_scheduler_t::queue_callback(work_limit_context_t& source,
@@ -116,6 +139,13 @@ void work_unit_scheduler_t::wait_at_sync_point(work_limit_context_t& ctx, double
                       ctx.name.c_str(),
                       barrier_generation_);
     }
+    // Execute sync callback if registered (last arrival executes it)
+    if (sync_callback_) {
+      lock.unlock();
+      bool should_stop = sync_callback_(sync_target);
+      lock.lock();
+      if (should_stop) { stopped_.store(true); }
+    }
     cv_.notify_all();
   } else {
     cv_.wait(lock, [&] { return barrier_generation_ != my_generation; });
@@ -150,11 +180,16 @@ void work_unit_scheduler_t::wait_at_sync_point(work_limit_context_t& ctx, double
     if (verbose) { CUOPT_LOG_DEBUG("[%s] Woke up from second wait", ctx.name.c_str()); }
   }
 
+  // Track sync time
+  auto wait_end    = std::chrono::high_resolution_clock::now();
+  double wait_secs = std::chrono::duration<double>(wait_end - wait_start).count();
+  ctx.total_sync_time += wait_secs;
+
   if (verbose) {
-    auto wait_end  = std::chrono::high_resolution_clock::now();
-    double wait_ms = std::chrono::duration<double, std::milli>(wait_end - wait_start).count();
-    CUOPT_LOG_DEBUG(
-      "[%s] Sync complete at %.2f, waited %.2f ms", ctx.name.c_str(), sync_target, wait_ms);
+    CUOPT_LOG_DEBUG("[%s] Sync complete at %.2f, waited %.2f ms",
+                    ctx.name.c_str(),
+                    sync_target,
+                    wait_secs * 1000.0);
   }
 }
 
