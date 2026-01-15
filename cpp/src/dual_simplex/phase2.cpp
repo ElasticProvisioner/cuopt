@@ -2257,6 +2257,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
 
   phase2::bound_info(lp, settings);
   if (initialize_basis) {
+    raft::common::nvtx::push_range("DualSimplex::init_basis");
     std::vector<i_t> superbasic_list;
     nonbasic_list.clear();
     nonbasic_list.reserve(n - m);

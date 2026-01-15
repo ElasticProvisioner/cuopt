@@ -113,6 +113,7 @@ struct bb_worker_state_t {
   // Timing statistics (in seconds)
   double total_runtime{0.0};       // Total time spent doing actual work
   double total_barrier_wait{0.0};  // Total time spent waiting at horizon sync barriers
+  double total_nowork_time{0.0};   // Total time spent with no nodes to work on
   double horizon_finish_time{
     0.0};  // Timestamp when worker finished current horizon (for barrier wait calc)
 

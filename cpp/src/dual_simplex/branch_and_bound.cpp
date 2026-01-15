@@ -1962,17 +1962,17 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   settings_.log.printf("\n");
   settings_.log.printf("BSP Worker Statistics:\n");
   settings_.log.printf(
-    "  Worker | Processed | Branched | Pruned | Infeasible | IntSol | Assigned |  Runtime  | "
-    "Sync%%\n");
+    "  Worker |  Nodes  | Branched | Pruned | Infeas. | IntSol | Assigned |  Clock   | "
+    "Sync%% | NoWork\n");
   settings_.log.printf(
     "  "
-    "-------+-----------+----------+--------+------------+--------+----------+-----------+------"
+    "-------+---------+----------+--------+---------+--------+----------+----------+-------+-------"
     "\n");
   for (const auto& worker : *bsp_workers_) {
     double sync_time    = worker.work_context.total_sync_time;
     double total_time   = worker.total_runtime + sync_time;
     double sync_percent = (total_time > 0) ? (100.0 * sync_time / total_time) : 0.0;
-    settings_.log.printf("  %6d | %9d | %8d | %6d | %10d | %6d | %8d | %8.3fs | %5.1f%%\n",
+    settings_.log.printf("  %6d | %7d | %8d | %6d | %7d | %6d | %8d | %7.3fs | %4.1f%% | %5.2fs\n",
                          worker.worker_id,
                          worker.total_nodes_processed,
                          worker.total_nodes_branched,
@@ -1981,7 +1981,8 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
                          worker.total_integer_solutions,
                          worker.total_nodes_assigned,
                          total_time,
-                         sync_percent);
+                         std::min(99.9, sync_percent),
+                         worker.total_nowork_time);
   }
   settings_.log.printf("\n");
 
@@ -2114,7 +2115,9 @@ void branch_and_bound_t<i_t, f_t>::run_worker_loop(bb_worker_state_t<i_t, f_t>& 
 
     // No work available - advance to next sync point to participate in barrier
     // This ensures all workers reach the sync point even if some have no work
+    f_t nowork_start            = tic();
     cuopt::sync_result_t result = bsp_scheduler_->wait_for_next_sync(worker.work_context);
+    worker.total_nowork_time += toc(nowork_start);
     if (result == cuopt::sync_result_t::STOPPED) { break; }
     // After sync, bsp_sync_callback may have redistributed nodes to us
   }
@@ -2267,7 +2270,17 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
   f_t obj              = compute_user_objective(original_lp_, upper_bound);
   f_t user_lower       = compute_user_objective(original_lp_, lower_bound);
   std::string gap_user = user_mip_gap<f_t>(obj, user_lower);
-  settings_.log.printf("S%-4d %8d   %8lu    %+13.6e    %+10.6e    %s %8.2f  [0x%08x]\n",
+
+  // Build list of workers that reached sync with no work
+  std::string idle_workers;
+  for (const auto& w : *bsp_workers_) {
+    if (!w.has_work() && w.current_node == nullptr) {
+      if (!idle_workers.empty()) idle_workers += ",";
+      idle_workers += "W" + std::to_string(w.worker_id);
+    }
+  }
+
+  settings_.log.printf("S%-4d %8d   %8lu    %+13.6e    %+10.6e    %s %8.2f  [%08x]%s%s\n",
                        bsp_horizon_number_,
                        exploration_stats_.nodes_explored,
                        exploration_stats_.nodes_unexplored,
@@ -2275,7 +2288,9 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
                        user_lower,
                        gap_user.c_str(),
                        toc(exploration_stats_.start_time),
-                       state_hash);
+                       state_hash,
+                       idle_workers.empty() ? "" : " ",
+                       idle_workers.c_str());
 
   // Note: No need to re-queue callback - sync callback is called at every sync point automatically
 }

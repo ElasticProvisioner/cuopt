@@ -197,6 +197,8 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
       num_bfs_threads    = std::max(1, num_threads);
       num_diving_threads = 0;  // No diving in deterministic mode
     }
+    // num_diving_threads = 0;
+    // num_bfs_threads = std::max(1, num_threads);
     branch_and_bound_settings.num_bfs_threads    = num_bfs_threads;
     branch_and_bound_settings.num_diving_threads = num_diving_threads;
 
