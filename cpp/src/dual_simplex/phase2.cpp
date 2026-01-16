@@ -2183,20 +2183,20 @@ class phase2_timers_t {
                            delta_z_time + lu_update_time + se_norms_time + se_entering_time +
                            perturb_time + vector_time + objective_time + update_infeasibility_time;
     // clang-format off
-    printf("BFRT time       %.2fs %4.1f%\n", bfrt_time, 100.0 * bfrt_time / total_time);
-    printf("Pricing time    %.2fs %4.1f%\n", pricing_time, 100.0 * pricing_time / total_time);
-    printf("BTran time      %.2fs %4.1f%\n", btran_time, 100.0 * btran_time / total_time);
-    printf("FTran time      %.2fs %4.1f%\n", ftran_time, 100.0 * ftran_time / total_time);
-    printf("Flip time       %.2fs %4.1f%\n", flip_time, 100.0 * flip_time / total_time);
-    printf("Delta_z time    %.2fs %4.1f%\n", delta_z_time, 100.0 * delta_z_time / total_time);
-    printf("LU update time  %.2fs %4.1f%\n", lu_update_time, 100.0 * lu_update_time / total_time);
-    printf("SE norms time   %.2fs %4.1f%\n", se_norms_time, 100.0 * se_norms_time / total_time);
-    printf("SE enter time   %.2fs %4.1f%\n", se_entering_time, 100.0 * se_entering_time / total_time);
-    printf("Perturb time    %.2fs %4.1f%\n", perturb_time, 100.0 * perturb_time / total_time);
-    printf("Vector time     %.2fs %4.1f%\n", vector_time, 100.0 * vector_time / total_time);
-    printf("Objective time  %.2fs %4.1f%\n", objective_time, 100.0 * objective_time / total_time);
-    printf("Inf update time %.2fs %4.1f%\n", update_infeasibility_time, 100.0 * update_infeasibility_time / total_time);
-    printf("Sum             %.2fs\n", total_time);
+    settings.log.printf("BFRT time       %.2fs %4.1f%\n", bfrt_time, 100.0 * bfrt_time / total_time);
+    settings.log.printf("Pricing time    %.2fs %4.1f%\n", pricing_time, 100.0 * pricing_time / total_time);
+    settings.log.printf("BTran time      %.2fs %4.1f%\n", btran_time, 100.0 * btran_time / total_time);
+    settings.log.printf("FTran time      %.2fs %4.1f%\n", ftran_time, 100.0 * ftran_time / total_time);
+    settings.log.printf("Flip time       %.2fs %4.1f%\n", flip_time, 100.0 * flip_time / total_time);
+    settings.log.printf("Delta_z time    %.2fs %4.1f%\n", delta_z_time, 100.0 * delta_z_time / total_time);
+    settings.log.printf("LU update time  %.2fs %4.1f%\n", lu_update_time, 100.0 * lu_update_time / total_time);
+    settings.log.printf("SE norms time   %.2fs %4.1f%\n", se_norms_time, 100.0 * se_norms_time / total_time);
+    settings.log.printf("SE enter time   %.2fs %4.1f%\n", se_entering_time, 100.0 * se_entering_time / total_time);
+    settings.log.printf("Perturb time    %.2fs %4.1f%\n", perturb_time, 100.0 * perturb_time / total_time);
+    settings.log.printf("Vector time     %.2fs %4.1f%\n", vector_time, 100.0 * vector_time / total_time);
+    settings.log.printf("Objective time  %.2fs %4.1f%\n", objective_time, 100.0 * objective_time / total_time);
+    settings.log.printf("Inf update time %.2fs %4.1f%\n", update_infeasibility_time, 100.0 * update_infeasibility_time / total_time);
+    settings.log.printf("Sum             %.2fs\n", total_time);
     // clang-format on
   }
   f_t bfrt_time;
@@ -2673,7 +2673,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     delta_y_nz_percentage    = delta_y_nz0 / static_cast<f_t>(m) * 100.0;
     const bool use_transpose = delta_y_nz_percentage <= 30.0;
     {
-      raft::common::nvtx::range scope_compute_delta_z("DualSimplex::delta_z");
+      // raft::common::nvtx::range scope_compute_delta_z("DualSimplex::delta_z");
       if (use_transpose) {
         sparse_delta_z++;
         phase2::compute_delta_z(A_transpose,
@@ -3183,7 +3183,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     f_t now = toc(start_time);
 
     // Feature logging for regression training (every FEATURE_LOG_INTERVAL iterations)
-    if ((iter % FEATURE_LOG_INTERVAL) == 0) {
+    if ((iter % FEATURE_LOG_INTERVAL) == 0 && work_unit_context) {
       i_t iters_elapsed = iter - last_feature_log_iter;
 
       auto [total_loads, total_stores] = manifold.collect_and_flush();
