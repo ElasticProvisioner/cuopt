@@ -45,12 +45,12 @@
 
 namespace cuopt {
 
-// Define CUOPT_ENABLE_MEMORY_INSTRUMENTATION to enable memory tracking
-// If undefined, instrumentation becomes a zero-overhead passthrough
+// Define CUOPT_ENABLE_MEMORY_INSTRUMENTATION to 1 to enable memory tracking
+// When 0, instrumentation becomes a zero-overhead passthrough
 
 // Base class for memory operation instrumentation
 struct memory_instrumentation_base_t {
-#ifdef CUOPT_ENABLE_MEMORY_INSTRUMENTATION
+#if CUOPT_ENABLE_MEMORY_INSTRUMENTATION
   HDI void reset_counters() const { byte_loads = byte_stores = 0; }
 
   template <typename T>
@@ -92,7 +92,7 @@ struct memory_instrumentation_base_t {
 #endif  // CUOPT_ENABLE_MEMORY_INSTRUMENTATION
 };
 
-#ifdef CUOPT_ENABLE_MEMORY_INSTRUMENTATION
+#if CUOPT_ENABLE_MEMORY_INSTRUMENTATION
 
 // Manifold class to collect statistics from multiple instrumented objects
 class instrumentation_manifold_t {
@@ -266,6 +266,8 @@ struct has_back<T, std::void_t<decltype(std::declval<T>().back())>> : std::true_
 
 }  // namespace type_traits_utils
 
+#if CUOPT_ENABLE_MEMORY_INSTRUMENTATION
+
 // Memory operation instrumentation wrapper for container-like types
 template <typename T>
 struct memop_instrumentation_wrapper_t : public memory_instrumentation_base_t {
@@ -404,7 +406,9 @@ struct memop_instrumentation_wrapper_t : public memory_instrumentation_base_t {
     auto operator*() const
     {
       if constexpr (IsConst) {
+#ifdef CUOPT_ENABLE_MEMORY_INSTRUMENTATION
         wrapper_->byte_loads += sizeof(value_type);
+#endif
         return *iter_;
       } else {
         return element_proxy_t(*iter_, *wrapper_);
@@ -791,6 +795,156 @@ struct memop_instrumentation_wrapper_t : public memory_instrumentation_base_t {
   T* wrapped_ptr{nullptr};
   value_type* data_ptr{nullptr};
 };
+
+#else  // !CUOPT_ENABLE_MEMORY_INSTRUMENTATION
+
+// Zero-overhead passthrough wrapper when instrumentation is disabled
+// Provides the same interface as the instrumented version but just forwards to the underlying
+// container
+template <typename T>
+struct memop_instrumentation_wrapper_t : public memory_instrumentation_base_t {
+  using value_type             = typename T::value_type;
+  using size_type              = typename T::size_type;
+  using difference_type        = typename T::difference_type;
+  using reference              = typename T::reference;
+  using const_reference        = typename T::const_reference;
+  using pointer                = typename T::pointer;
+  using const_pointer          = typename T::const_pointer;
+  using iterator               = typename T::iterator;
+  using const_iterator         = typename T::const_iterator;
+  using reverse_iterator       = typename T::reverse_iterator;
+  using const_reverse_iterator = typename T::const_reverse_iterator;
+
+  // Constructors - forward everything to the underlying container
+  memop_instrumentation_wrapper_t() = default;
+  memop_instrumentation_wrapper_t(const T& arr) : array_(arr), wrapped_ptr_(nullptr) {}
+  memop_instrumentation_wrapper_t(T&& arr) : array_(std::move(arr)), wrapped_ptr_(nullptr) {}
+
+  template <typename Arg,
+            typename... Args,
+            typename = std::enable_if_t<
+              !std::is_same_v<std::decay_t<Arg>, memop_instrumentation_wrapper_t> &&
+              !std::is_same_v<std::decay_t<Arg>, T> &&
+              (sizeof...(Args) > 0 || !std::is_convertible_v<Arg, T>)>>
+  explicit memop_instrumentation_wrapper_t(Arg&& arg, Args&&... args)
+    : array_(std::forward<Arg>(arg), std::forward<Args>(args)...), wrapped_ptr_(nullptr)
+  {
+  }
+
+  // Copy constructor - always copy the data, never share wrapped pointer
+  memop_instrumentation_wrapper_t(const memop_instrumentation_wrapper_t& other)
+    : array_(other.wrapped_ptr_ ? *other.wrapped_ptr_ : other.array_), wrapped_ptr_(nullptr)
+  {
+  }
+
+  // Move constructor - take ownership of array, never share wrapped pointer
+  memop_instrumentation_wrapper_t(memop_instrumentation_wrapper_t&& other) noexcept
+    : array_(other.wrapped_ptr_ ? *other.wrapped_ptr_ : std::move(other.array_)),
+      wrapped_ptr_(nullptr)
+  {
+  }
+
+  // Copy assignment - always copy the data
+  memop_instrumentation_wrapper_t& operator=(const memop_instrumentation_wrapper_t& other)
+  {
+    if (this != &other) {
+      if (wrapped_ptr_) {
+        *wrapped_ptr_ = other.wrapped_ptr_ ? *other.wrapped_ptr_ : other.array_;
+      } else {
+        array_ = other.wrapped_ptr_ ? *other.wrapped_ptr_ : other.array_;
+      }
+    }
+    return *this;
+  }
+
+  // Move assignment - take the data
+  memop_instrumentation_wrapper_t& operator=(memop_instrumentation_wrapper_t&& other) noexcept
+  {
+    if (this != &other) {
+      if (wrapped_ptr_) {
+        *wrapped_ptr_ = other.wrapped_ptr_ ? *other.wrapped_ptr_ : std::move(other.array_);
+      } else {
+        array_ = other.wrapped_ptr_ ? *other.wrapped_ptr_ : std::move(other.array_);
+      }
+    }
+    return *this;
+  }
+
+  // Element access - direct passthrough
+  reference operator[](size_type index) { return underlying()[index]; }
+  const_reference operator[](size_type index) const { return underlying()[index]; }
+
+  reference front() { return underlying().front(); }
+  const_reference front() const { return underlying().front(); }
+
+  reference back() { return underlying().back(); }
+  const_reference back() const { return underlying().back(); }
+
+  pointer data() noexcept { return underlying().data(); }
+  const_pointer data() const noexcept { return underlying().data(); }
+
+  // Iterators - use underlying container's iterators directly
+  iterator begin() noexcept { return underlying().begin(); }
+  const_iterator begin() const noexcept { return underlying().begin(); }
+  const_iterator cbegin() const noexcept { return underlying().cbegin(); }
+
+  iterator end() noexcept { return underlying().end(); }
+  const_iterator end() const noexcept { return underlying().end(); }
+  const_iterator cend() const noexcept { return underlying().cend(); }
+
+  reverse_iterator rbegin() noexcept { return underlying().rbegin(); }
+  const_reverse_iterator rbegin() const noexcept { return underlying().rbegin(); }
+  const_reverse_iterator crbegin() const noexcept { return underlying().crbegin(); }
+
+  reverse_iterator rend() noexcept { return underlying().rend(); }
+  const_reverse_iterator rend() const noexcept { return underlying().rend(); }
+  const_reverse_iterator crend() const noexcept { return underlying().crend(); }
+
+  // Capacity
+  bool empty() const noexcept { return underlying().empty(); }
+  size_type size() const noexcept { return underlying().size(); }
+  size_type max_size() const noexcept { return underlying().max_size(); }
+  size_type capacity() const noexcept { return underlying().capacity(); }
+
+  void reserve(size_type new_cap) { underlying().reserve(new_cap); }
+  void shrink_to_fit() { underlying().shrink_to_fit(); }
+
+  // Modifiers
+  void clear() noexcept { underlying().clear(); }
+  void push_back(const value_type& value) { underlying().push_back(value); }
+  void push_back(value_type&& value) { underlying().push_back(std::move(value)); }
+
+  template <typename... Args>
+  void emplace_back(Args&&... args)
+  {
+    underlying().emplace_back(std::forward<Args>(args)...);
+  }
+
+  void pop_back() { underlying().pop_back(); }
+  void resize(size_type count) { underlying().resize(count); }
+  void resize(size_type count, const value_type& value) { underlying().resize(count, value); }
+
+  // Conversion operators
+  operator T&() { return underlying(); }
+  operator const T&() const { return underlying(); }
+
+  T&& release_array() { return std::move(array_); }
+
+  // Wrap/unwrap interface (for compatibility, but wrap is essentially a no-op for perf)
+  void wrap(T& external_array) { wrapped_ptr_ = &external_array; }
+  void unwrap() { wrapped_ptr_ = nullptr; }
+  bool is_wrapping() const { return wrapped_ptr_ != nullptr; }
+
+  // Get the underlying container
+  T& underlying() { return wrapped_ptr_ ? *wrapped_ptr_ : array_; }
+  const T& underlying() const { return wrapped_ptr_ ? *wrapped_ptr_ : array_; }
+
+ private:
+  T array_;
+  T* wrapped_ptr_{nullptr};
+};
+
+#endif  // CUOPT_ENABLE_MEMORY_INSTRUMENTATION
 
 // Convenience alias for instrumented std::vector
 template <typename T>
