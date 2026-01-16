@@ -62,9 +62,6 @@ message(VERBOSE "cuOpt: fatbin: ${WRITE_FATBIN}")
 
 # CUDA runtime
 rapids_cuda_init_runtime(USE_STATIC ON)
-message(STATUS "HEY")
-find_package(CUDAToolkit)
-message(STATUS "HEY")
 
 rapids_find_package(CUDAToolkit REQUIRED
   BUILD_EXPORT_SET cuopt-exports
@@ -349,17 +346,6 @@ target_link_libraries(cuopt
   PRIVATE
   ${CUOPT_PRIVATE_CUDA_LIBS}
   )
-
-# find_path(PAPI_INCLUDE_DIR papi.h)
-# find_library(PAPI_LIBRARY papi)
-
-# if (PAPI_INCLUDE_DIR AND PAPI_LIBRARY)
-#     message(STATUS "Found PAPI in ${PAPI_INCLUDE_DIR}")
-#     target_include_directories(cuopt PRIVATE ${PAPI_INCLUDE_DIR})
-#     target_link_libraries(cuopt PRIVATE ${PAPI_LIBRARY})
-# else()
-#     message(FATAL_ERROR "Could not find PAPI")
-# endif()
 
 
 # ##################################################################################################

@@ -10,7 +10,7 @@
 // Enable BSP debug macros. The actual logging is controlled at runtime via
 // environment variables (CUOPT_BSP_DEBUG_*). This define enables the macro
 // infrastructure; without it, all BSP_DEBUG_* macros become complete no-ops.
-#define BSP_DEBUG_ENABLED
+// #define BSP_DEBUG_ENABLED
 
 #include <dual_simplex/bb_event.hpp>
 #include <dual_simplex/mip_node.hpp>
