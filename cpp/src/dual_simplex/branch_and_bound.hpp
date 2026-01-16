@@ -79,51 +79,6 @@ class bounds_strengthening_t;
 template <typename i_t, typename f_t>
 void upper_bound_callback(f_t upper_bound);
 
-// Feature tracking for solve_node regression model
-template <typename i_t, typename f_t>
-struct node_solve_features_t {
-  // Static problem features (compute once)
-  i_t n_rows{0};
-  i_t n_cols{0};
-  i_t n_nonzeros{0};
-  f_t density{0.0};
-  i_t n_binary{0};
-  i_t n_integer{0};
-  i_t n_continuous{0};
-  f_t integrality_ratio{0.0};
-  f_t avg_row_nnz{0.0};
-  i_t max_row_nnz{0};
-  f_t avg_col_nnz{0.0};
-  i_t max_col_nnz{0};
-  f_t row_nnz_cv{0.0};
-  f_t col_nnz_cv{0.0};
-
-  // Dynamic node state
-  i_t node_id{0};
-  i_t node_depth{0};
-  i_t n_bounds_changed{0};
-  f_t cutoff_gap_ratio{0.0};
-  bool basis_from_parent{false};
-
-  // LP solve metrics
-  i_t simplex_iterations{0};
-  i_t n_refactorizations{0};
-  f_t lp_solve_time{0.0};
-  f_t bound_str_time{0.0};
-  f_t variable_sel_time{0.0};
-
-  // Outcome metrics
-  i_t n_fractional{0};
-  bool strong_branch_performed{false};
-  i_t n_strong_branch_candidates{0};
-  f_t strong_branch_time{0.0};
-  i_t lp_status{0};    // Convert dual::status_t to int
-  i_t node_status{0};  // Convert node_status_t to int
-
-  // Computed at node end
-  f_t total_node_time{0.0};
-};
-
 template <typename i_t, typename f_t>
 class branch_and_bound_t {
  public:
@@ -264,22 +219,6 @@ class branch_and_bound_t {
   // In case, a best-first thread encounters a numerical issue when solving a node,
   // its blocks the progression of the lower bound.
   omp_atomic_t<f_t> lower_bound_ceiling_;
-
-  // Feature tracking for solve_node regression model
-  node_solve_features_t<i_t, f_t> static_features_;  // Static problem features, computed once
-  omp_mutex_t mutex_feature_log_;                    // Protect feature logging
-  node_solve_features_t<i_t, f_t> last_features_;    // Last captured features
-  f_t last_feature_log_time_{0.0};                   // Time of last feature log
-  bool has_pending_features_{false};                 // Whether we have features to log
-
-  // Helper to compute static features once
-  void compute_static_features();
-
-  // Helper to log node solve features with time-based throttling
-  void log_node_features(const node_solve_features_t<i_t, f_t>& features);
-
-  // Helper to flush any pending features at end of solve
-  void flush_pending_features();
 
   void report_heuristic(f_t obj);
   void report(std::string symbol, f_t obj, f_t lower_bound, i_t node_depth);

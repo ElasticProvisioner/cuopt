@@ -245,165 +245,6 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
   mutex_upper_.lock();
   upper_bound_ = inf;
   mutex_upper_.unlock();
-
-  // Compute static problem features for regression model
-  compute_static_features();
-}
-
-template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::compute_static_features()
-{
-  const auto& A               = original_lp_.A;
-  static_features_.n_rows     = A.m;
-  static_features_.n_cols     = A.n;
-  static_features_.n_nonzeros = A.col_start[A.n];
-  static_features_.density    = (f_t)static_features_.n_nonzeros / ((f_t)A.m * A.n);
-
-  // Count variable types
-  static_features_.n_binary     = 0;
-  static_features_.n_integer    = 0;
-  static_features_.n_continuous = 0;
-  for (const auto& vt : var_types_) {
-    if (vt == variable_type_t::BINARY) {
-      static_features_.n_binary++;
-    } else if (vt == variable_type_t::INTEGER) {
-      static_features_.n_integer++;
-    } else {
-      static_features_.n_continuous++;
-    }
-  }
-  static_features_.integrality_ratio =
-    (f_t)(static_features_.n_binary + static_features_.n_integer) / A.n;
-
-  // Compute row statistics (constraint sizes)
-  std::vector<i_t> row_nnz(A.m, 0);
-  for (i_t j = 0; j < A.n; j++) {
-    for (i_t k = A.col_start[j]; k < A.col_start[j + 1]; k++) {
-      row_nnz[A.i[k]]++;
-    }
-  }
-
-  static_features_.max_row_nnz = 0;
-  f_t sum_row_nnz              = 0;
-  for (i_t i = 0; i < A.m; i++) {
-    static_features_.max_row_nnz = std::max(static_features_.max_row_nnz, row_nnz[i]);
-    sum_row_nnz += row_nnz[i];
-  }
-  static_features_.avg_row_nnz = sum_row_nnz / A.m;
-
-  // Compute row coefficient of variation
-  f_t row_variance = 0;
-  for (i_t i = 0; i < A.m; i++) {
-    f_t diff = row_nnz[i] - static_features_.avg_row_nnz;
-    row_variance += diff * diff;
-  }
-  row_variance /= A.m;
-  f_t row_std = std::sqrt(row_variance);
-  static_features_.row_nnz_cv =
-    static_features_.avg_row_nnz > 0 ? row_std / static_features_.avg_row_nnz : 0.0;
-
-  // Compute column statistics (variable degrees)
-  static_features_.max_col_nnz = 0;
-  f_t sum_col_nnz              = 0;
-  for (i_t j = 0; j < A.n; j++) {
-    i_t col_nnz                  = A.col_start[j + 1] - A.col_start[j];
-    static_features_.max_col_nnz = std::max(static_features_.max_col_nnz, col_nnz);
-    sum_col_nnz += col_nnz;
-  }
-  static_features_.avg_col_nnz = sum_col_nnz / A.n;
-
-  // Compute column coefficient of variation
-  f_t col_variance = 0;
-  for (i_t j = 0; j < A.n; j++) {
-    i_t col_nnz = A.col_start[j + 1] - A.col_start[j];
-    f_t diff    = col_nnz - static_features_.avg_col_nnz;
-    col_variance += diff * diff;
-  }
-  col_variance /= A.n;
-  f_t col_std = std::sqrt(col_variance);
-  static_features_.col_nnz_cv =
-    static_features_.avg_col_nnz > 0 ? col_std / static_features_.avg_col_nnz : 0.0;
-}
-
-template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::flush_pending_features()
-{
-  // Must be called with mutex_feature_log_ already locked
-  if (!has_pending_features_) return;
-
-  constexpr int LINE_BUFFER_SIZE = 512;
-  char line_buffer[LINE_BUFFER_SIZE];
-
-  snprintf(line_buffer,
-           LINE_BUFFER_SIZE,
-           "BB_NODE_FEATURES "
-           "node_id=%d depth=%d time=%.6f "
-           "n_rows=%d n_cols=%d n_nnz=%d density=%.6f "
-           "n_bin=%d n_int=%d n_cont=%d int_ratio=%.4f "
-           "avg_row_nnz=%.2f max_row_nnz=%d row_nnz_cv=%.4f "
-           "avg_col_nnz=%.2f max_col_nnz=%d col_nnz_cv=%.4f "
-           "n_bounds_chg=%d cutoff_gap=%.4f basis_from_parent=%d "
-           "simplex_iters=%d n_refact=%d lp_time=%.6f bound_str_time=%.6f var_sel_time=%.6f "
-           "n_frac=%d strong_branch=%d n_sb_cand=%d sb_time=%.6f "
-           "lp_status=%d node_status=%d\n",
-           last_features_.node_id,
-           last_features_.node_depth,
-           last_features_.total_node_time,
-           last_features_.n_rows,
-           last_features_.n_cols,
-           last_features_.n_nonzeros,
-           last_features_.density,
-           last_features_.n_binary,
-           last_features_.n_integer,
-           last_features_.n_continuous,
-           last_features_.integrality_ratio,
-           last_features_.avg_row_nnz,
-           last_features_.max_row_nnz,
-           last_features_.row_nnz_cv,
-           last_features_.avg_col_nnz,
-           last_features_.max_col_nnz,
-           last_features_.col_nnz_cv,
-           last_features_.n_bounds_changed,
-           last_features_.cutoff_gap_ratio,
-           last_features_.basis_from_parent ? 1 : 0,
-           last_features_.simplex_iterations,
-           last_features_.n_refactorizations,
-           last_features_.lp_solve_time,
-           last_features_.bound_str_time,
-           last_features_.variable_sel_time,
-           last_features_.n_fractional,
-           last_features_.strong_branch_performed ? 1 : 0,
-           last_features_.n_strong_branch_candidates,
-           last_features_.strong_branch_time,
-           last_features_.lp_status,
-           last_features_.node_status);
-
-  // Single printf call
-  // settings_.log.printf("%s", line_buffer);
-
-  has_pending_features_ = false;
-}
-
-template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::log_node_features(
-  const node_solve_features_t<i_t, f_t>& features)
-{
-  mutex_feature_log_.lock();
-
-  f_t current_time        = toc(exploration_stats_.start_time);
-  f_t time_since_last_log = current_time - last_feature_log_time_;
-
-  // Always store the latest features
-  last_features_        = features;
-  has_pending_features_ = true;
-
-  // Log if enough time has passed (500ms)
-  if (time_since_last_log >= FEATURE_LOG_INTERVAL) {
-    flush_pending_features();
-    last_feature_log_time_ = current_time;
-  }
-
-  mutex_feature_log_.unlock();
 }
 
 template <typename i_t, typename f_t>
@@ -786,13 +627,6 @@ void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
     settings_.solution_callback(original_x, upper_bound_);
   }
   mutex_upper_.unlock();
-
-  // Debug: Log incumbent update (after releasing mutex to avoid potential issues)
-  if (improved_incumbent && bsp_mode_enabled_) {
-    std::string source = (thread_type == thread_type_t::EXPLORATION) ? "bb_integer" : "diving";
-    BSP_DEBUG_LOG_INCUMBENT_UPDATE(
-      bsp_debug_settings_, bsp_debug_logger_, bsp_current_horizon_, leaf_objective, source);
-  }
 }
 
 template <typename i_t, typename f_t>
@@ -831,33 +665,18 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
 {
   raft::common::nvtx::range scope("BB::solve_node");
 
-  // Initialize feature tracking for this node
-  node_solve_features_t<i_t, f_t> features = static_features_;
-  f_t node_start_time                      = tic();
-  features.node_id                         = node_ptr->node_id;
-  features.node_depth                      = node_ptr->depth;
-  const f_t abs_fathom_tol                 = settings_.absolute_mip_gap_tol / 10;
-  const f_t upper_bound                    = get_upper_bound();
+  const f_t abs_fathom_tol = settings_.absolute_mip_gap_tol / 10;
+  const f_t upper_bound    = get_upper_bound();
 
   lp_solution_t<i_t, f_t> leaf_solution(leaf_problem.num_rows, leaf_problem.num_cols);
   std::vector<variable_status_t>& leaf_vstatus = node_ptr->vstatus;
   assert(leaf_vstatus.size() == leaf_problem.num_cols);
-
-  // Track cutoff gap ratio
-  if (upper_bound < inf) {
-    features.cutoff_gap_ratio =
-      (upper_bound - node_ptr->lower_bound) / std::max(std::abs(upper_bound), f_t(1.0));
-  }
-
-  // Track if we have parent's basis
-  features.basis_from_parent = !leaf_vstatus.empty();
 
   simplex_solver_settings_t lp_settings = settings_;
   lp_settings.set_log(false);
   lp_settings.cut_off       = upper_bound + settings_.dual_tol;
   lp_settings.inside_mip    = 2;
   lp_settings.time_limit    = settings_.time_limit - toc(exploration_stats_.start_time);
-  lp_settings.work_limit    = settings_.work_limit;
   lp_settings.scale_columns = false;
 
 #ifdef LOG_NODE_SIMPLEX
@@ -900,10 +719,8 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
   bool feasible;
   {
     raft::common::nvtx::range scope_bs("BB::bound_strengthening");
-    f_t bs_start_time = tic();
     feasible =
       node_presolver.bounds_strengthening(leaf_problem.lower, leaf_problem.upper, lp_settings);
-    features.bound_str_time = toc(bs_start_time);
   }
 
   dual::status_t lp_status = dual::status_t::DUAL_UNBOUNDED;
@@ -915,21 +732,20 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
 
     {
       raft::common::nvtx::range scope_lp("BB::node_lp_solve");
-      lp_status =
-        dual_phase2_with_advanced_basis(2,
-                                        0,
-                                        recompute_bounds_and_basis,
-                                        lp_start_time,
-                                        leaf_problem,
-                                        lp_settings,
-                                        leaf_vstatus,
-                                        basis_factors,
-                                        basic_list,
-                                        nonbasic_list,
-                                        leaf_solution,
-                                        node_iter,
-                                        leaf_edge_norms,
-                                        settings_.deterministic ? &work_unit_context_ : nullptr);
+      lp_status = dual_phase2_with_advanced_basis(2,
+                                                  0,
+                                                  recompute_bounds_and_basis,
+                                                  lp_start_time,
+                                                  leaf_problem,
+                                                  lp_settings,
+                                                  leaf_vstatus,
+                                                  basis_factors,
+                                                  basic_list,
+                                                  nonbasic_list,
+                                                  leaf_solution,
+                                                  node_iter,
+                                                  leaf_edge_norms,
+                                                  nullptr);
     }
 
     if (lp_status == dual::status_t::NUMERICAL) {
@@ -947,16 +763,9 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
       lp_status = convert_lp_status_to_dual_status(second_status);
     }
 
-    f_t lp_time = toc(lp_start_time);
     if (thread_type == thread_type_t::EXPLORATION) {
-      exploration_stats_.total_lp_solve_time += lp_time;
+      exploration_stats_.total_lp_solve_time += toc(lp_start_time);
       exploration_stats_.total_lp_iters += node_iter;
-
-      // Track LP solve metrics
-      features.lp_solve_time      = lp_time;
-      features.simplex_iterations = node_iter;
-      // Note: We don't directly track refactorizations here, would need instrumentation in
-      // dual_phase2
     }
   }
 
@@ -969,13 +778,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
     node_ptr->lower_bound = inf;
     search_tree.graphviz_node(log, node_ptr, "infeasible", 0.0);
     search_tree.update(node_ptr, node_status_t::INFEASIBLE);
-
-    // Log features before return
-    features.lp_status       = static_cast<i_t>(lp_status);
-    features.node_status     = static_cast<i_t>(node_status_t::INFEASIBLE);
-    features.total_node_time = toc(node_start_time);
-    log_node_features(features);
-
     return node_solve_info_t::NO_CHILDREN;
 
   } else if (lp_status == dual::status_t::CUTOFF) {
@@ -984,13 +786,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
     f_t leaf_objective    = compute_objective(leaf_problem, leaf_solution.x);
     search_tree.graphviz_node(log, node_ptr, "cut off", leaf_objective);
     search_tree.update(node_ptr, node_status_t::FATHOMED);
-
-    // Log features before return
-    features.lp_status       = static_cast<i_t>(lp_status);
-    features.node_status     = static_cast<i_t>(node_status_t::FATHOMED);
-    features.total_node_time = toc(node_start_time);
-    log_node_features(features);
-
     return node_solve_info_t::NO_CHILDREN;
 
   } else if (lp_status == dual::status_t::OPTIMAL) {
@@ -998,8 +793,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
     std::vector<i_t> leaf_fractional;
     i_t leaf_num_fractional =
       fractional_variables(settings_, leaf_solution.x, var_types_, leaf_fractional);
-
-    features.n_fractional = leaf_num_fractional;
 
     f_t leaf_objective    = compute_objective(leaf_problem, leaf_solution.x);
     node_ptr->lower_bound = leaf_objective;
@@ -1017,32 +810,17 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
       add_feasible_solution(leaf_objective, leaf_solution.x, node_ptr->depth, thread_type);
       search_tree.graphviz_node(log, node_ptr, "integer feasible", leaf_objective);
       search_tree.update(node_ptr, node_status_t::INTEGER_FEASIBLE);
-
-      // Log features before return
-      features.lp_status       = static_cast<i_t>(lp_status);
-      features.node_status     = static_cast<i_t>(node_status_t::INTEGER_FEASIBLE);
-      features.total_node_time = toc(node_start_time);
-      log_node_features(features);
-
       return node_solve_info_t::NO_CHILDREN;
 
     } else if (leaf_objective <= upper_bound + abs_fathom_tol) {
       // Choose fractional variable to branch on
-      f_t var_sel_start = tic();
       const i_t branch_var =
         pc_.variable_selection(leaf_fractional, leaf_solution.x, lp_settings.log);
-      features.variable_sel_time = toc(var_sel_start);
 
       assert(leaf_vstatus.size() == leaf_problem.num_cols);
       search_tree.branch(
         node_ptr, branch_var, leaf_solution.x[branch_var], leaf_vstatus, leaf_problem, log);
       search_tree.update(node_ptr, node_status_t::HAS_CHILDREN);
-
-      // Log features before return
-      features.lp_status       = static_cast<i_t>(lp_status);
-      features.node_status     = static_cast<i_t>(node_status_t::HAS_CHILDREN);
-      features.total_node_time = toc(node_start_time);
-      log_node_features(features);
 
       rounding_direction_t round_dir = child_selection(node_ptr);
 
@@ -1055,13 +833,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
     } else {
       search_tree.graphviz_node(log, node_ptr, "fathomed", leaf_objective);
       search_tree.update(node_ptr, node_status_t::FATHOMED);
-
-      // Log features before return
-      features.lp_status       = static_cast<i_t>(lp_status);
-      features.node_status     = static_cast<i_t>(node_status_t::FATHOMED);
-      features.total_node_time = toc(node_start_time);
-      log_node_features(features);
-
       return node_solve_info_t::NO_CHILDREN;
     }
   } else if (lp_status == dual::status_t::TIME_LIMIT) {
@@ -1085,13 +856,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node(
 
     search_tree.graphviz_node(log, node_ptr, "numerical", 0.0);
     search_tree.update(node_ptr, node_status_t::NUMERICAL);
-
-    // Log features before return
-    features.lp_status       = static_cast<i_t>(lp_status);
-    features.node_status     = static_cast<i_t>(node_status_t::NUMERICAL);
-    features.total_node_time = toc(node_start_time);
-    log_node_features(features);
-
     return node_solve_info_t::NUMERICAL;
   }
 }
@@ -1679,21 +1443,14 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   assert(root_vstatus_.size() == original_lp_.num_cols);
 
-  // Validate root_vstatus_ has correct BASIC count
-  // This catches bugs where the root LP solve produces an invalid vstatus
   {
     const i_t expected_basic_count = original_lp_.num_rows;
     i_t actual_basic_count         = 0;
     for (const auto& status : root_vstatus_) {
       if (status == variable_status_t::BASIC) { actual_basic_count++; }
     }
-    if (actual_basic_count != expected_basic_count) {
-      settings_.log.printf("ERROR: root_vstatus_ has %d BASIC entries, expected %d (num_rows)\n",
-                           actual_basic_count,
-                           expected_basic_count);
-      assert(actual_basic_count == expected_basic_count &&
-             "root_vstatus_ BASIC count mismatch - LP solver returned invalid basis");
-    }
+    assert(actual_basic_count == expected_basic_count &&
+           "root_vstatus_ BASIC count mismatch - LP solver returned invalid basis");
   }
 
   set_uninitialized_steepest_edge_norms<i_t, f_t>(edge_norms_);
@@ -1839,11 +1596,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
       }
     }
   }
-
-  // Flush any pending features
-  mutex_feature_log_.lock();
-  if (has_pending_features_) { flush_pending_features(); }
-  mutex_feature_log_.unlock();
 
   // Compute final lower bound
   f_t lower_bound;

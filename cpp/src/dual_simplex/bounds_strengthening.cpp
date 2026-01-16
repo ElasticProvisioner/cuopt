@@ -275,6 +275,7 @@ bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
   // settings.log.printf("Total strengthened variables %d\n", total_strengthened_variables);
 
   // Log bounds strengthening features
+#if 0
   {
     auto [loads, stores] = manifold.collect_and_flush();
     bounds_strengthening_features_t<i_t, f_t> bs_features;
@@ -288,6 +289,7 @@ bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
     bs_features.runtime            = toc(start_time);
     bs_features.log_single(m, n, nnz);
   }
+#endif
 
 #if DEBUG_BOUND_STRENGTHENING
   f_t lb_change      = 0.0;
