@@ -34,16 +34,21 @@ class pseudo_costs_t {
 
   void resize(i_t num_variables)
   {
-    pseudo_cost_sum_down.resize(num_variables);
-    pseudo_cost_sum_up.resize(num_variables);
-    pseudo_cost_num_down.resize(num_variables);
-    pseudo_cost_num_up.resize(num_variables);
+    pseudo_cost_sum_down.assign(num_variables, 0);
+    pseudo_cost_sum_up.assign(num_variables, 0);
+    pseudo_cost_num_down.assign(num_variables, 0);
+    pseudo_cost_num_up.assign(num_variables, 0);
   }
 
   void initialized(i_t& num_initialized_down,
                    i_t& num_initialized_up,
                    f_t& pseudo_cost_down_avg,
                    f_t& pseudo_cost_up_avg) const;
+
+  f_t obj_estimate(const std::vector<i_t>& fractional,
+                   const std::vector<f_t>& solution,
+                   f_t lower_bound,
+                   logger_t& log);
 
   i_t variable_selection(const std::vector<i_t>& fractional,
                          const std::vector<f_t>& solution,

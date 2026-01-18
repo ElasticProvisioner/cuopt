@@ -366,6 +366,33 @@ static void check_cusparse_status(cusparseStatus_t status)
 }
 
 template <typename i_t, typename f_t>
+__global__ void kernel_convert_greater_to_less(raft::device_span<f_t> coefficients,
+                                               raft::device_span<const i_t> offsets,
+                                               raft::device_span<f_t> constraint_lower_bounds,
+                                               raft::device_span<f_t> constraint_upper_bounds)
+{
+  const i_t constraint_id = blockIdx.x;
+
+  const f_t lb = constraint_lower_bounds[constraint_id];
+  const f_t ub = constraint_upper_bounds[constraint_id];
+
+  if (!isfinite(lb) || isfinite(ub)) return;
+
+  auto row_start = offsets[constraint_id];
+  auto row_end   = offsets[constraint_id + 1];
+  auto row_size  = row_end - row_start;
+
+  for (i_t tid = threadIdx.x; tid < row_size; tid += blockDim.x) {
+    coefficients[row_start + tid] = -coefficients[row_start + tid];
+  }
+
+  if (threadIdx.x == 0) {
+    constraint_lower_bounds[constraint_id] = -ub;
+    constraint_upper_bounds[constraint_id] = -lb;
+  }
+}
+
+template <typename i_t, typename f_t>
 static void csrsort_cusparse(rmm::device_uvector<f_t>& values,
                              rmm::device_uvector<i_t>& indices,
                              rmm::device_uvector<i_t>& offsets,
@@ -373,9 +400,6 @@ static void csrsort_cusparse(rmm::device_uvector<f_t>& values,
                              i_t cols,
                              const raft::handle_t* handle_ptr)
 {
-  // skip if the matrix is empty
-  if (values.size() == 0) { return; }
-
   auto stream = offsets.stream();
   cusparseHandle_t handle;
   cusparseCreate(&handle);
@@ -413,33 +437,6 @@ static void csrsort_cusparse(rmm::device_uvector<f_t>& values,
   cusparseDestroy(handle);
 
   check_csr_representation(values, offsets, indices, handle_ptr, cols, rows);
-}
-
-template <typename i_t, typename f_t>
-__global__ void kernel_convert_greater_to_less(raft::device_span<f_t> coefficients,
-                                               raft::device_span<const i_t> offsets,
-                                               raft::device_span<f_t> constraint_lower_bounds,
-                                               raft::device_span<f_t> constraint_upper_bounds)
-{
-  const i_t constraint_id = blockIdx.x;
-
-  const f_t lb = constraint_lower_bounds[constraint_id];
-  const f_t ub = constraint_upper_bounds[constraint_id];
-
-  if (!isfinite(lb) || isfinite(ub)) return;
-
-  auto row_start = offsets[constraint_id];
-  auto row_end   = offsets[constraint_id + 1];
-  auto row_size  = row_end - row_start;
-
-  for (i_t tid = threadIdx.x; tid < row_size; tid += blockDim.x) {
-    coefficients[row_start + tid] = -coefficients[row_start + tid];
-  }
-
-  if (threadIdx.x == 0) {
-    constraint_lower_bounds[constraint_id] = -ub;
-    constraint_upper_bounds[constraint_id] = -lb;
-  }
 }
 
 template <typename i_t, typename f_t>
