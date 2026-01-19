@@ -1739,9 +1739,9 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
 
   bsp_horizon_step_ = 0.05;
 
-  // Split workers 50/50 between BFS and diving (with at least 1 BFS worker)
+  // Split workers 1:3 between BFS and diving (matching non-deterministic ratio)
   const int total_workers      = settings_.num_bfs_workers;
-  const int num_bfs_workers    = std::max(1, total_workers / 2);
+  const int num_bfs_workers    = std::max(1, total_workers / 4);
   const int num_diving_workers = total_workers - num_bfs_workers;
 
   bsp_mode_enabled_    = true;
