@@ -1657,7 +1657,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   active_subtrees_                        = 0;
   is_running                              = true;
   lower_bound_ceiling_                    = inf;
-  work_unit_context_.deterministic        = settings_.deterministic;
   should_report_                          = true;
 
   settings_.log.printf(
@@ -1666,8 +1665,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   // Choose between BSP coordinator (deterministic) and opportunistic exploration
   if (settings_.deterministic && settings_.num_bfs_workers > 0) {
-    // Use deterministic BSP coordinator for parallel execution
-    settings_.log.printf("Using BSP coordinator for deterministic parallel B&B\n");
     run_bsp_coordinator(Arow_);
   } else {
     // Use traditional opportunistic parallel exploration
@@ -1712,7 +1709,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   if (bsp_mode_enabled_) {
     // In BSP mode, compute lower bound from worker queues only (no global heap)
     lower_bound = compute_bsp_lower_bound();
-    // If no unexplored nodes remain and we have an incumbent, lower bound = upper bound
     if (lower_bound == std::numeric_limits<f_t>::infinity() && incumbent_.has_incumbent) {
       lower_bound = upper_bound_.load();
     }
@@ -1729,7 +1725,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 }
 
 // ============================================================================
-// BSP (Bulk Synchronous Parallel) Implementation
+// BSP (Bulk Synchronous Parallel) Deterministic implementation
 // ============================================================================
 
 template <typename i_t, typename f_t>
@@ -1739,10 +1735,8 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
 
   bsp_horizon_step_ = 0.05;
 
-  // Split workers 1:3 between BFS and diving (matching non-deterministic ratio)
-  const int total_workers      = settings_.num_bfs_workers;
-  const int num_bfs_workers    = std::max(1, total_workers / 4);
-  const int num_diving_workers = total_workers - num_bfs_workers;
+  const int num_bfs_workers    = settings_.num_bfs_workers;
+  const int num_diving_workers = settings_.diving_settings.num_diving_workers;
 
   bsp_mode_enabled_    = true;
   bsp_current_horizon_ = bsp_horizon_step_;
@@ -1773,7 +1767,6 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
                                     settings_.refactor_frequency,
                                     settings_.deterministic);
 
-    // Calculate variable locks for coefficient diving
     calculate_variable_locks(original_lp_, var_up_locks_, var_down_locks_);
   }
 
@@ -1781,19 +1774,16 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   // Workers will block in record_work() when they cross sync points
   bsp_scheduler_ = std::make_unique<work_unit_scheduler_t>(bsp_horizon_step_);
 
-  // Register all BFS worker contexts with the scheduler
+  scoped_context_registrations_t context_registrations(*bsp_scheduler_);
   for (auto& worker : *bsp_workers_) {
-    bsp_scheduler_->register_context(worker.work_context);
+    context_registrations.add(worker.work_context);
   }
-
-  // Register all diving worker contexts with the scheduler
   if (bsp_diving_workers_) {
     for (auto& worker : *bsp_diving_workers_) {
-      bsp_scheduler_->register_context(worker.work_context);
+      context_registrations.add(worker.work_context);
     }
   }
 
-  // Initialize debug logger
   bsp_debug_logger_.set_settings(bsp_debug_settings_);
   bsp_debug_logger_.set_num_workers(num_bfs_workers);
   bsp_debug_logger_.set_horizon_step(bsp_horizon_step_);
@@ -1805,15 +1795,12 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
     num_diving_workers,
     bsp_horizon_step_);
 
-  // Push initial children to the global heap
-  // Set deterministic BSP identity for root children (pre-BSP origin with seq 0 and 1)
-  // Assign BSP identity to root children
+  // Assign the initial children of the root to worker 0 and worker 1
   search_tree_.root.get_down_child()->origin_worker_id = -1;  // Pre-BSP marker
   search_tree_.root.get_down_child()->creation_seq     = 0;
   search_tree_.root.get_up_child()->origin_worker_id   = -1;
   search_tree_.root.get_up_child()->creation_seq       = 1;
 
-  // Distribute root children directly to BFS workers (no global heap in BSP mode)
   (*bsp_workers_)[0].enqueue_node_with_identity(search_tree_.root.get_down_child());
   (*bsp_workers_)[0].track_node_assigned();
   (*bsp_workers_)[1 % num_bfs_workers].enqueue_node_with_identity(search_tree_.root.get_up_child());
@@ -1827,32 +1814,31 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
     return bsp_terminated_.load();
   });
 
-  // Set initial upper bound snapshot for all BFS workers
+  // initialize global state snapshots
   for (auto& worker : *bsp_workers_) {
-    worker.local_upper_bound    = upper_bound_.load();
-    worker.pc_sum_up_snapshot   = pc_.pseudo_cost_sum_up;
-    worker.pc_sum_down_snapshot = pc_.pseudo_cost_sum_down;
-    worker.pc_num_up_snapshot   = pc_.pseudo_cost_num_up;
-    worker.pc_num_down_snapshot = pc_.pseudo_cost_num_down;
-    worker.horizon_start        = 0.0;
-    worker.horizon_end          = bsp_horizon_step_;
+    worker.set_snapshots(upper_bound_.load(),
+                         pc_.pseudo_cost_sum_up,
+                         pc_.pseudo_cost_sum_down,
+                         pc_.pseudo_cost_num_up,
+                         pc_.pseudo_cost_num_down,
+                         0.0,
+                         bsp_horizon_step_);
   }
 
-  // Set initial snapshots for diving workers
   if (bsp_diving_workers_) {
     std::vector<f_t> incumbent_snapshot;
     if (incumbent_.has_incumbent) { incumbent_snapshot = incumbent_.x; }
 
     for (auto& worker : *bsp_diving_workers_) {
-      worker.set_snapshots(pc_.pseudo_cost_sum_up,
+      worker.set_snapshots(upper_bound_.load(),
+                           pc_.pseudo_cost_sum_up,
                            pc_.pseudo_cost_sum_down,
                            pc_.pseudo_cost_num_up,
                            pc_.pseudo_cost_num_down,
                            incumbent_snapshot,
-                           &root_relax_soln_.x);
-      worker.local_upper_bound = upper_bound_.load();
-      worker.horizon_start     = 0.0;
-      worker.horizon_end       = bsp_horizon_step_;
+                           &root_relax_soln_.x,
+                           0.0,
+                           bsp_horizon_step_);
     }
   }
 
@@ -1876,16 +1862,6 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
       f_t worker_start_time = tic();
       run_diving_worker_loop(worker);
       worker.total_runtime += toc(worker_start_time);
-    }
-  }
-
-  // All workers have terminated - deregister contexts
-  for (auto& worker : *bsp_workers_) {
-    bsp_scheduler_->deregister_context(worker.work_context);
-  }
-  if (bsp_diving_workers_) {
-    for (auto& worker : *bsp_diving_workers_) {
-      bsp_scheduler_->deregister_context(worker.work_context);
     }
   }
 
@@ -2077,57 +2053,40 @@ void branch_and_bound_t<i_t, f_t>::run_worker_loop(bb_worker_state_t<i_t, f_t>& 
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 {
-  // This callback is executed during the barrier by worker 0
-  // All other workers are blocked in record_work() at this point
   raft::common::nvtx::range scope("BB::bsp_sync_callback");
 
   ++bsp_horizon_number_;
   double horizon_start = bsp_current_horizon_ - bsp_horizon_step_;
   double horizon_end   = bsp_current_horizon_;
 
-  // Debug: Log horizon start
+  work_unit_context_.global_work_units_elapsed = horizon_end;
+
   BSP_DEBUG_LOG_HORIZON_START(
     bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_start, horizon_end);
 
-  // Aggregate worker work into global context
-  work_unit_context_.global_work_units_elapsed = horizon_end;
-
-  // Collect and sort all events deterministically
   bb_event_batch_t<i_t, f_t> all_events = bsp_workers_->collect_and_sort_events();
 
-  // Debug: Log sync phase
   BSP_DEBUG_LOG_SYNC_PHASE_START(
     bsp_debug_settings_, bsp_debug_logger_, horizon_end, all_events.size());
 
-  // Process history and sync (update incumbent, pseudo-costs, etc.)
   process_history_and_sync(all_events);
 
-  // Debug: Log sync end
   BSP_DEBUG_LOG_SYNC_PHASE_END(bsp_debug_settings_, bsp_debug_logger_, horizon_end);
 
-  // Prune paused nodes that are now dominated by new incumbent
   prune_worker_nodes_vs_incumbent();
 
-  // === Diving worker sync operations ===
-  // 1. Merge diving solutions found this horizon
   merge_diving_solutions();
 
-  // 2. Populate diving heap from BFS backlogs BEFORE load balancing clears them
   populate_diving_heap_at_sync();
 
-  // 3. Assign new starting nodes to diving workers
   assign_diving_nodes();
 
-  // Balance worker loads if significant imbalance detected
-  // Note: This must happen AFTER diving heap population since it clears backlogs
   balance_worker_loads();
   BSP_DEBUG_FLUSH_ASSIGN_TRACE(bsp_debug_settings_, bsp_debug_logger_);
 
-  // Debug: Log horizon end and emit state
   BSP_DEBUG_LOG_HORIZON_END(
     bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_end);
 
-  // Compute and log determinism fingerprint hash (always computed for determinism verification)
   uint32_t state_hash = 0;
   {
     std::vector<uint64_t> state_data;
@@ -2139,14 +2098,12 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
     state_data.push_back(static_cast<uint64_t>(lb * 1000000));
 
     for (auto& worker : *bsp_workers_) {
-      if (worker.current_node != nullptr) {
-        state_data.push_back(worker.current_node->get_bsp_identity_hash());
-      }
+      if (worker.current_node != nullptr) { state_data.push_back(worker.current_node->get_hash()); }
       for (auto* node : worker.plunge_stack) {
-        state_data.push_back(node->get_bsp_identity_hash());
+        state_data.push_back(node->get_hash());
       }
       for (auto* node : worker.backlog) {
-        state_data.push_back(node->get_bsp_identity_hash());
+        state_data.push_back(node->get_hash());
       }
     }
 
@@ -2187,13 +2144,13 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 
   // Update worker snapshots for next horizon
   for (auto& worker : *bsp_workers_) {
-    worker.local_upper_bound    = upper_bound_.load();
-    worker.pc_sum_up_snapshot   = pc_.pseudo_cost_sum_up;
-    worker.pc_sum_down_snapshot = pc_.pseudo_cost_sum_down;
-    worker.pc_num_up_snapshot   = pc_.pseudo_cost_num_up;
-    worker.pc_num_down_snapshot = pc_.pseudo_cost_num_down;
-    worker.horizon_start        = horizon_end;
-    worker.horizon_end          = bsp_current_horizon_;
+    worker.set_snapshots(upper_bound_.load(),
+                         pc_.pseudo_cost_sum_up,
+                         pc_.pseudo_cost_sum_down,
+                         pc_.pseudo_cost_num_up,
+                         pc_.pseudo_cost_num_down,
+                         horizon_end,
+                         bsp_current_horizon_);
   }
 
   // Update diving worker snapshots for next horizon
@@ -2202,15 +2159,15 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
     if (incumbent_.has_incumbent) { incumbent_snapshot = incumbent_.x; }
 
     for (auto& worker : *bsp_diving_workers_) {
-      worker.set_snapshots(pc_.pseudo_cost_sum_up,
+      worker.set_snapshots(upper_bound_.load(),
+                           pc_.pseudo_cost_sum_up,
                            pc_.pseudo_cost_sum_down,
                            pc_.pseudo_cost_num_up,
                            pc_.pseudo_cost_num_down,
                            incumbent_snapshot,
-                           &root_relax_soln_.x);
-      worker.local_upper_bound = upper_bound_.load();
-      worker.horizon_start     = horizon_end;
-      worker.horizon_end       = bsp_current_horizon_;
+                           &root_relax_soln_.x,
+                           horizon_end,
+                           bsp_current_horizon_);
     }
   }
 
@@ -2227,20 +2184,15 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
     should_terminate = true;
   }
 
-  // No more work (for both BFS and diving) - all nodes live in worker local structures
   bool diving_has_work = bsp_diving_workers_ && bsp_diving_workers_->any_has_work();
   if (!bsp_workers_->any_has_work() && !diving_has_work) { should_terminate = true; }
 
-  // Time limit
   if (toc(exploration_stats_.start_time) > settings_.time_limit) {
     solver_status_   = mip_status_t::TIME_LIMIT;
     should_terminate = true;
   }
 
-  // Work limit (use small tolerance for floating-point comparison since horizon is accumulated)
-  constexpr double work_limit_tolerance = 1e-9;
-  if (settings_.deterministic &&
-      work_unit_context_.global_work_units_elapsed + work_limit_tolerance >= settings_.work_limit) {
+  if (work_unit_context_.global_work_units_elapsed >= settings_.work_limit) {
     solver_status_   = mip_status_t::WORK_LIMIT;
     should_terminate = true;
   }
@@ -2272,8 +2224,6 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
                        state_hash,
                        idle_workers.empty() ? "" : " ",
                        idle_workers.c_str());
-
-  // Note: No need to re-queue callback - sync callback is called at every sync point automatically
 }
 
 template <typename i_t, typename f_t>
@@ -2295,29 +2245,21 @@ void branch_and_bound_t<i_t, f_t>::run_worker_until_horizon(bb_worker_state_t<i_
       worker.track_node_pruned();
       search_tree.update(node, node_status_t::FATHOMED);
       --exploration_stats_.nodes_unexplored;
-      // Don't update last_solved_node - pruning doesn't change the basis
       continue;
     }
 
-    // Check if we can warm-start from the previous solve's basis.
-    // Two cases where we can reuse the basis:
-    // Check if we can warm-start from the previous solve's basis
-    // Child nodes inherit their parent's vstatus, so we can reuse the basis
+    // basis warm-start detection
     bool is_child                     = (node->parent == worker.last_solved_node);
     worker.recompute_bounds_and_basis = !is_child;
 
-    // Solve the node (this records events)
     node_solve_info_t status = solve_node_bsp(worker, node, search_tree, current_horizon);
+    worker.last_solved_node  = node;
 
-    // Track last solved node for warm-start detection
-    worker.last_solved_node = node;
-
-    // Handle result
     if (status == node_solve_info_t::TIME_LIMIT) {
       solver_status_ = mip_status_t::TIME_LIMIT;
       break;
     } else if (status == node_solve_info_t::WORK_LIMIT) {
-      // Node paused at horizon - already handled in solve_node_bsp
+      solver_status_ = mip_status_t::WORK_LIMIT;
       break;
     }
   }
@@ -2331,8 +2273,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
 {
   raft::common::nvtx::range scope("BB::solve_node_bsp");
 
-  // Validate vstatus has correct BASIC count before processing
-  // This helps diagnose heap overflow bugs where vstatus has too many BASIC entries
   {
     const i_t expected_basic_count = original_lp_.num_rows;
     i_t actual_basic_count         = 0;
@@ -2355,11 +2295,9 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
     }
   }
 
-  // Track work units at start (from work_context, which simplex solver updates)
   double work_units_at_start = worker.work_context.global_work_units_elapsed;
   double clock_at_start      = worker.clock;
 
-  // Debug: Log solve start (pass origin_worker_id as identifier)
   double work_limit = worker.horizon_end - worker.clock;
   BSP_DEBUG_LOG_SOLVE_START(bsp_debug_settings_,
                             bsp_debug_logger_,
@@ -2368,9 +2306,8 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                             node_ptr->node_id,
                             node_ptr->origin_worker_id,
                             work_limit,
-                            false);  // resumed flag no longer used
+                            false);
 
-  // Setup leaf problem bounds
   std::fill(worker.node_presolver->bounds_changed.begin(),
             worker.node_presolver->bounds_changed.end(),
             false);
@@ -2387,21 +2324,16 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                                               worker.node_presolver->bounds_changed);
   }
 
-  // Check if time limit already exceeded - return immediately if so
   double remaining_time = settings_.time_limit - toc(exploration_stats_.start_time);
   if (remaining_time <= 0) { return node_solve_info_t::TIME_LIMIT; }
 
   // Bounds strengthening
   simplex_solver_settings_t<i_t, f_t> lp_settings = settings_;
   lp_settings.set_log(false);
-  // Use worker-local upper bound for LP cutoff (deterministic)
-  lp_settings.cut_off    = worker.local_upper_bound + settings_.dual_tol;
-  lp_settings.inside_mip = 2;
-  lp_settings.time_limit = remaining_time;
-  // Work limit: use GLOBAL work limit
-  // The check in dual_phase2 compares global_work_units_elapsed against settings.work_limit
-  // so work_limit must be the GLOBAL limit, not remaining budget
-  lp_settings.work_limit    = settings_.work_limit;
+
+  lp_settings.cut_off       = worker.local_upper_bound + settings_.dual_tol;
+  lp_settings.inside_mip    = 2;
+  lp_settings.time_limit    = remaining_time;
   lp_settings.scale_columns = false;
 
   bool feasible = true;
@@ -2431,8 +2363,7 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   f_t lp_start_time                            = tic();
   std::vector<f_t> leaf_edge_norms             = edge_norms_;
 
-  // Debug: Log LP input for determinism analysis (enabled via CUOPT_BSP_DEBUG_TRACE=1,
-  // log_level>=2)
+  // Debug: Log LP input for determinism analysis
   if (bsp_debug_settings_.any_enabled()) {
     uint64_t path_hash = node_ptr->compute_path_hash();
     // Compute vstatus hash
@@ -2478,8 +2409,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                                                              leaf_edge_norms,
                                                              &worker.work_context);
 
-  // Debug: Log LP output for determinism analysis (enabled via CUOPT_BSP_DEBUG_TRACE=1,
-  // log_level>=2)
   if (bsp_debug_settings_.any_enabled()) {
     uint64_t path_hash = node_ptr->compute_path_hash();
     // Compute solution hash
@@ -2534,30 +2463,9 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
     }
   }
 
-  // Update worker clock with work performed
-  // The simplex solver recorded work to work_context.global_work_units_elapsed
-  // Compute the delta and advance the worker clock (but don't double-record to work_context)
   double work_performed = worker.work_context.global_work_units_elapsed - work_units_at_start;
   worker.clock += work_performed;
   worker.work_units_this_horizon += work_performed;
-  // Note: don't call advance_clock() as work_context was already updated by simplex solver
-
-  // Check if we hit the GLOBAL work limit
-  // In scheduler-based mode, horizon sync happens via record_work() blocking inside the simplex.
-  // The simplex runs continuously through multiple horizons, so when it completes with a status
-  // other than WORK_LIMIT, we should process the result normally.
-  if (lp_status == dual::status_t::WORK_LIMIT) {
-    // Global work limit reached - solver will terminate
-    BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
-                            bsp_debug_logger_,
-                            worker.clock,
-                            worker.worker_id,
-                            node_ptr->node_id,
-                            node_ptr->origin_worker_id,
-                            "WORK_LIMIT",
-                            node_ptr->lower_bound);
-    return node_solve_info_t::WORK_LIMIT;
-  }
 
   exploration_stats_.total_lp_solve_time += toc(lp_start_time);
   exploration_stats_.total_lp_iters += node_iter;
@@ -2568,7 +2476,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   if (lp_status == dual::status_t::DUAL_UNBOUNDED) {
     node_ptr->lower_bound = std::numeric_limits<f_t>::infinity();
 
-    // Record event and debug logs BEFORE search_tree.update() which may delete the node
     worker.record_infeasible(node_ptr);
     worker.track_node_infeasible();
     worker.track_node_processed();
@@ -2589,10 +2496,8 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
     return node_solve_info_t::NO_CHILDREN;
 
   } else if (lp_status == dual::status_t::CUTOFF) {
-    // Use worker-local upper bound for determinism
     node_ptr->lower_bound = worker.local_upper_bound;
 
-    // Record event and debug logs BEFORE search_tree.update() which may delete the node
     worker.record_fathomed(node_ptr, node_ptr->lower_bound);
     worker.track_node_pruned();
     worker.track_node_processed();
@@ -2625,9 +2530,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
     node_ptr->lower_bound = leaf_objective;
 
     // Queue pseudo-cost update for deterministic application at sync
-    // (Replicates pc_.update_pseudo_costs logic but defers application to sync phase)
-    // Note: Original code also sets lower_bound before this, so change_in_obj = 0.
-    // This matches the original behavior exactly.
     if (node_ptr->branch_var >= 0) {
       const f_t change_in_obj = leaf_objective - node_ptr->lower_bound;
       const f_t frac          = node_ptr->branch_dir == rounding_direction_t::DOWN
@@ -2644,10 +2546,8 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
       if (leaf_objective < worker.local_upper_bound) {
         worker.local_upper_bound = leaf_objective;
         worker.integer_solutions.push_back({leaf_objective, leaf_solution.x, node_ptr->depth});
-        // Note: Logging deferred to sync phase for deterministic output
       }
 
-      // Record event and debug logs BEFORE search_tree.update() which may delete the node
       worker.record_integer_solution(node_ptr, leaf_objective);
       worker.track_integer_solution();
       worker.track_node_processed();
@@ -2673,7 +2573,7 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
 
     } else if (leaf_objective <= worker.local_upper_bound + settings_.absolute_mip_gap_tol / 10) {
       // Branch - use worker-local upper bound for deterministic pruning decision
-      // Use pseudo-cost snapshot for deterministic variable selection
+      // Use pseudo-cost snapshot for variable selection
       const i_t branch_var =
         worker.variable_selection_from_snapshot(leaf_fractional, leaf_solution.x);
 
@@ -2691,7 +2591,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
       worker.track_node_branched();
       worker.track_node_processed();
 
-      // Debug: Log solve end (branched) and branched event
       BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
                               bsp_debug_logger_,
                               worker.clock,
@@ -2711,9 +2610,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
 
       exploration_stats_.nodes_unexplored += 2;
 
-      // Add children using plunging strategy:
-      // - If plunge stack has a sibling, it's moved to backlog (plugging)
-      // - Preferred child goes on top of stack for immediate exploration
       rounding_direction_t preferred =
         martin_criteria(leaf_solution.x[branch_var], root_relax_soln_.x[branch_var]);
       worker.enqueue_children_for_plunge(
@@ -2752,7 +2648,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
     return node_solve_info_t::TIME_LIMIT;
 
   } else {
-    // Numerical issue - record BEFORE search_tree.update() which may delete the node
     worker.record_numerical(node_ptr);
     worker.recompute_bounds_and_basis = true;
     search_tree.update(node_ptr, node_status_t::NUMERICAL);
@@ -2764,11 +2659,6 @@ template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
   const bb_event_batch_t<i_t, f_t>& events)
 {
-  // With BSP identity tuples (origin_worker_id, creation_seq), we no longer need to assign
-  // final_ids during sync. Each node gets its identity when created, and it never changes.
-  // This function now only processes heuristic solutions to update the incumbent.
-
-  // Process repair queue first (for BSP mode)
   // Infeasible solutions from GPU heuristics are queued for repair; process them now
   {
     std::vector<std::vector<f_t>> to_repair;
@@ -2788,7 +2678,7 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
         bool success =
           repair_solution(edge_norms_, potential_solution, repaired_obj, repaired_solution);
         if (success) {
-          // Queue repaired solution with VT = current horizon for deterministic processing
+          // Queue repaired solution with work unit timestamp (...workstamp?)
           mutex_heuristic_queue_.lock();
           heuristic_solution_queue_.push_back(
             {std::move(repaired_solution), repaired_obj, bsp_current_horizon_});
@@ -2798,22 +2688,22 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
     }
   }
 
-  // Collect queued heuristic solutions (including any newly repaired ones)
   std::vector<queued_heuristic_solution_t> heuristic_solutions;
   mutex_heuristic_queue_.lock();
   heuristic_solutions = std::move(heuristic_solution_queue_);
   heuristic_solution_queue_.clear();
   mutex_heuristic_queue_.unlock();
 
-  // Sort heuristic solutions by VT for deterministic processing order
+  // sort by work unit timestamp, with objective and solution values as tie-breakers
   std::sort(heuristic_solutions.begin(),
             heuristic_solutions.end(),
             [](const queued_heuristic_solution_t& a, const queued_heuristic_solution_t& b) {
-              return a.vt_timestamp < b.vt_timestamp;
+              if (a.vt_timestamp != b.vt_timestamp) { return a.vt_timestamp < b.vt_timestamp; }
+              if (a.objective != b.objective) { return a.objective < b.objective; }
+              return a.solution < b.solution;  // edge-case - lexicographical comparison
             });
 
   // Merge B&B events and heuristic solutions for unified timeline replay
-  // Both are sorted by VT, so we can do a merge-style iteration
   size_t event_idx     = 0;
   size_t heuristic_idx = 0;
 
@@ -2826,7 +2716,7 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
     } else if (heuristic_idx >= heuristic_solutions.size()) {
       process_event = true;
     } else {
-      // Both have items - pick the one with smaller VT
+      // Both have items - pick the one with smaller WT
       if (events.events[event_idx].vt_timestamp <=
           heuristic_solutions[heuristic_idx].vt_timestamp) {
         process_event = true;
@@ -2838,26 +2728,12 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
     if (process_event) {
       const auto& event = events.events[event_idx++];
       switch (event.type) {
-        case bb_event_type_t::NODE_INTEGER: {
-          // Check if this solution beats the incumbent KNOWN AT THAT VIRTUAL TIME
-          f_t obj = event.payload.integer_solution.objective_value;
-          mutex_upper_.lock();
-          if (obj < upper_bound_) {
-            // Note: The actual solution was already stored during solve_node_bsp
-            // Here we just acknowledge the event order
-          }
-          mutex_upper_.unlock();
-          break;
-        }
-
+        case bb_event_type_t::NODE_INTEGER:
         case bb_event_type_t::NODE_BRANCHED:
         case bb_event_type_t::NODE_FATHOMED:
         case bb_event_type_t::NODE_INFEASIBLE:
         case bb_event_type_t::NODE_NUMERICAL:
-        case bb_event_type_t::HEURISTIC_SOLUTION:
-          // These events don't need additional processing during replay
-          // (BSP identity is already assigned at node creation time)
-          break;
+        case bb_event_type_t::HEURISTIC_SOLUTION: break;
       }
     }
 
@@ -2868,7 +2744,7 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
       BSP_DEBUG_LOG_HEURISTIC_RECEIVED(
         bsp_debug_settings_, bsp_debug_logger_, hsol.vt_timestamp, hsol.objective);
 
-      // Process heuristic solution at its correct VT position
+      // Process heuristic solution at its correct work unit timestamp position
       f_t new_upper = std::numeric_limits<f_t>::infinity();
 
       mutex_upper_.lock();
@@ -2883,7 +2759,6 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
       }
       mutex_upper_.unlock();
 
-      // Log after releasing mutex to avoid holding mutex while calling get_lower_bound()
       if (new_upper < std::numeric_limits<f_t>::infinity()) {
         f_t user_obj    = compute_user_objective(original_lp_, new_upper);
         f_t user_lower  = compute_user_objective(original_lp_, get_lower_bound());
@@ -2901,6 +2776,7 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
 
   // Merge integer solutions from all workers and update global incumbent
   // Sort by (objective, worker_id) for deterministic winner selection
+  // lexicographical sort as a fallback
   struct worker_solution_t {
     f_t objective;
     const std::vector<f_t>* solution;
@@ -2914,22 +2790,12 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
     }
   }
 
-  // Sort by objective, then worker_id for deterministic tie-breaking
-  std::sort(all_integer_solutions.begin(),
-            all_integer_solutions.end(),
-            [](const worker_solution_t& a, const worker_solution_t& b) {
-              if (a.objective != b.objective) return a.objective < b.objective;
-              return a.worker_id < b.worker_id;
-            });
-
-  // Apply the best solution to global incumbent and log all improving solutions
-  // Use compute_bsp_lower_bound() for accurate lower bound in logs
   f_t bsp_lower     = compute_bsp_lower_bound();
   f_t current_upper = upper_bound_.load();
 
   for (const auto& sol : all_integer_solutions) {
+    // improving solution found, log it
     if (sol.objective < current_upper) {
-      // Log this improving solution (deterministic: sorted order)
       f_t user_obj         = compute_user_objective(original_lp_, sol.objective);
       f_t user_lower       = compute_user_objective(original_lp_, bsp_lower);
       i_t nodes_explored   = exploration_stats_.nodes_explored.load();
@@ -2965,15 +2831,6 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
     }
   }
 
-  // Sort by (vt, worker_id) for deterministic order
-  std::sort(all_pc_updates.begin(),
-            all_pc_updates.end(),
-            [](const pseudo_cost_update_t<i_t, f_t>& a, const pseudo_cost_update_t<i_t, f_t>& b) {
-              if (a.vt != b.vt) return a.vt < b.vt;
-              return a.worker_id < b.worker_id;
-            });
-
-  // Apply updates in deterministic order
   for (const auto& upd : all_pc_updates) {
     if (upd.direction == rounding_direction_t::DOWN) {
       pc_.pseudo_cost_sum_down[upd.variable] += upd.delta;
@@ -2983,8 +2840,6 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
       pc_.pseudo_cost_num_up[upd.variable]++;
     }
   }
-
-  // No final_id application needed - BSP identity is assigned at node creation time
 }
 
 template <typename i_t, typename f_t>
@@ -2993,10 +2848,6 @@ void branch_and_bound_t<i_t, f_t>::prune_worker_nodes_vs_incumbent()
   f_t upper_bound = upper_bound_.load();
 
   for (auto& worker : *bsp_workers_) {
-    // NOTE: Do NOT prune worker.current_node here!
-    // The worker thread has local references (node_ptr, leaf_vstatus) to it.
-    // The worker will handle cutoff checking when it resumes after sync.
-
     // Check nodes in plunge stack - filter in place
     {
       std::deque<mip_node_t<i_t, f_t>*> surviving;
@@ -3033,7 +2884,6 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
   const size_t num_workers = bsp_workers_->size();
   if (num_workers <= 1) return;
 
-  // Flag to force rebalancing every sync (reduces idle time at barriers when work is uniform)
   constexpr bool force_rebalance_every_sync = true;
 
   // Count work for each worker: current_node (if any) + plunge_stack + backlog
@@ -3049,8 +2899,6 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
     max_work = std::max(max_work, work_counts[w]);
     min_work = std::min(min_work, work_counts[w]);
   }
-
-  // Early exit if no work to redistribute
   if (total_work == 0) return;
 
   bool needs_balance;
@@ -3058,17 +2906,12 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
     // Always rebalance if there's more than one node to distribute
     needs_balance = (total_work > 1);
   } else {
-    // Original logic: only rebalance on significant imbalance
     needs_balance = (min_work == 0 && max_work >= 2) || (min_work > 0 && max_work > 4 * min_work);
   }
 
   if (!needs_balance) return;
 
   // Collect all redistributable nodes from worker queues
-  // With plunging strategy, we redistribute:
-  // - All backlog nodes (these were "plugged" siblings)
-  // - Plunge stack nodes (except we keep them with worker for locality if possible)
-  // For simplicity, redistribute everything for now
   std::vector<mip_node_t<i_t, f_t>*> all_nodes;
   for (auto& worker : *bsp_workers_) {
     // Extract backlog nodes
@@ -3084,13 +2927,11 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
     worker.plunge_stack.clear();
   }
 
-  // In BSP mode, all nodes live in worker local structures - no global heap
   if (all_nodes.empty()) return;
 
   // Sort by BSP identity for deterministic distribution
   // Uses lexicographic order of (origin_worker_id, creation_seq)
   auto deterministic_less = [](const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) {
-    // Lexicographic comparison of BSP identity tuple
     if (a->origin_worker_id != b->origin_worker_id) {
       return a->origin_worker_id < b->origin_worker_id;
     }
@@ -3098,15 +2939,10 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
   };
   std::sort(all_nodes.begin(), all_nodes.end(), deterministic_less);
 
-  // Redistribute round-robin, but skip workers that have a paused current_node
-  // (they already have work and will resume that node first)
+  // Redistribute round-robin
   std::vector<size_t> worker_order;
   for (size_t w = 0; w < num_workers; ++w) {
-    // Prioritize workers without a paused node
-    if ((*bsp_workers_)[w].current_node == nullptr) { worker_order.push_back(w); }
-  }
-  for (size_t w = 0; w < num_workers; ++w) {
-    if ((*bsp_workers_)[w].current_node != nullptr) { worker_order.push_back(w); }
+    worker_order.push_back(w);
   }
 
   // Distribute nodes - use enqueue_node_with_identity to preserve existing identity
@@ -3115,7 +2951,6 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
     (*bsp_workers_)[worker_idx].enqueue_node_with_identity(all_nodes[i]);
     (*bsp_workers_)[worker_idx].track_node_assigned();
 
-    // Debug: Log redistribution (happens at horizon END, at the sync point)
     double vt = bsp_current_horizon_;
     BSP_DEBUG_LOG_NODE_ASSIGNED(bsp_debug_settings_,
                                 bsp_debug_logger_,
@@ -3131,8 +2966,6 @@ template <typename i_t, typename f_t>
 f_t branch_and_bound_t<i_t, f_t>::compute_bsp_lower_bound()
 {
   // Compute lower bound from BFS worker local structures only
-  // In BSP mode, all nodes live in worker queues - no global heap
-  // Called during sync phase (single-threaded), so no locking needed
   const f_t inf   = std::numeric_limits<f_t>::infinity();
   f_t lower_bound = inf;
 
@@ -3154,14 +2987,11 @@ f_t branch_and_bound_t<i_t, f_t>::compute_bsp_lower_bound()
     }
   }
 
-  // Note: diving worker queues contain copies of nodes that remain in backlogs
-  // (speculative diving model), so no need to check them separately.
-
   return lower_bound;
 }
 
 // ============================================================================
-// BSP Diving Implementation
+// BSP Diving
 // ============================================================================
 
 template <typename i_t, typename f_t>
@@ -3177,10 +3007,7 @@ void branch_and_bound_t<i_t, f_t>::populate_diving_heap_at_sync()
   const int target_total                = num_diving * target_nodes_per_worker;
   f_t upper_bound                       = upper_bound_.load();
 
-  // Collect candidate nodes from BFS worker backlogs only (no global heap in BSP mode).
-  // Following the speculative diving model: we DON'T remove nodes from backlogs.
-  // Original nodes stay in backlogs for BFS processing and correct lower bound computation.
-  // Diving workers get copies via detach_copy() in enqueue_dive_node().
+  // Collect candidate nodes from BFS worker backlogs
   std::vector<std::pair<mip_node_t<i_t, f_t>*, f_t>> candidates;
 
   for (auto& worker : *bsp_workers_) {
@@ -3200,29 +3027,21 @@ void branch_and_bound_t<i_t, f_t>::populate_diving_heap_at_sync()
     return a.second < b.second;
   });
 
-  // Take enough nodes for diving workers' queues
   int nodes_to_take = std::min(target_total, (int)candidates.size());
 
   for (int i = 0; i < nodes_to_take; ++i) {
     diving_heap_.push({candidates[i].first, candidates[i].second});
   }
-
-  // Original nodes stay in backlogs - no removal needed.
-  // Diving workers will get copies via detach_copy() in assign_diving_nodes().
 }
 
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::assign_diving_nodes()
 {
   if (!bsp_diving_workers_ || bsp_diving_workers_->size() == 0) {
-    // No diving workers - just clear the diving heap.
-    // Original nodes remain in backlogs/heap (speculative diving model).
     diving_heap_.clear();
     return;
   }
 
-  // Assign multiple nodes per diving worker from the diving heap.
-  // Diving workers get copies via detach_copy() in enqueue_dive_node().
   constexpr int target_nodes_per_worker = 10;
 
   // Round-robin assignment to balance load across workers
@@ -3253,8 +3072,6 @@ void branch_and_bound_t<i_t, f_t>::assign_diving_nodes()
     worker_idx = (worker_idx + 1) % num_workers;
   }
 
-  // Any remaining nodes in diving_heap_ can be discarded - originals remain in
-  // backlogs/heap per the speculative diving model.
   diving_heap_.clear();
 }
 
@@ -3272,11 +3089,6 @@ void branch_and_bound_t<i_t, f_t>::merge_diving_solutions()
       all_solutions.push_back(&sol);
     }
   }
-
-  // Sort by objective for deterministic processing
-  std::sort(all_solutions.begin(), all_solutions.end(), [](const auto* a, const auto* b) {
-    return a->objective < b->objective;
-  });
 
   // Apply improving solutions to incumbent
   f_t current_upper = upper_bound_.load();
@@ -3361,6 +3173,9 @@ void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_state_t<i_t, 
   // Initialize bounds from root node
   worker.dive_lower = original_lp_.lower;
   worker.dive_upper = original_lp_.upper;
+  std::fill(worker.node_presolver->bounds_changed.begin(),
+            worker.node_presolver->bounds_changed.end(),
+            false);
   dive_tree.root.get_variable_bounds(
     worker.dive_lower, worker.dive_upper, worker.node_presolver->bounds_changed);
 
@@ -3411,7 +3226,6 @@ void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_state_t<i_t, 
                                                 worker.node_presolver->bounds_changed);
     }
 
-    // Check if time limit already exceeded - just break, outer loop will handle termination
     double remaining_time = settings_.time_limit - toc(exploration_stats_.start_time);
     if (remaining_time <= 0) { break; }
 
@@ -3421,7 +3235,6 @@ void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_state_t<i_t, 
     lp_settings.cut_off       = worker.local_upper_bound + settings_.dual_tol;
     lp_settings.inside_mip    = 2;
     lp_settings.time_limit    = remaining_time;
-    lp_settings.work_limit    = settings_.work_limit;
     lp_settings.scale_columns = false;
 
     // Solve LP relaxation
@@ -3451,10 +3264,8 @@ void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_state_t<i_t, 
     ++worker.nodes_explored_this_horizon;
     ++worker.total_nodes_explored;
 
-    // Update worker clock from work context
     worker.clock = worker.work_context.global_work_units_elapsed;
 
-    // Time/work limit - just break, outer loop will handle termination properly
     if (lp_status == dual::status_t::TIME_LIMIT || lp_status == dual::status_t::WORK_LIMIT) {
       break;
     }

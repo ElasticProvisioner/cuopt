@@ -99,4 +99,34 @@ class work_unit_scheduler_t {
   std::atomic<bool> stopped_{false};
 };
 
+// RAII helper for registering multiple contexts with automatic cleanup
+class scoped_context_registrations_t {
+ public:
+  explicit scoped_context_registrations_t(work_unit_scheduler_t& scheduler) : scheduler_(scheduler)
+  {
+  }
+
+  ~scoped_context_registrations_t()
+  {
+    for (auto* ctx : contexts_) {
+      scheduler_.deregister_context(*ctx);
+    }
+  }
+
+  void add(work_limit_context_t& ctx)
+  {
+    scheduler_.register_context(ctx);
+    contexts_.push_back(&ctx);
+  }
+
+  scoped_context_registrations_t(const scoped_context_registrations_t&)            = delete;
+  scoped_context_registrations_t& operator=(const scoped_context_registrations_t&) = delete;
+  scoped_context_registrations_t(scoped_context_registrations_t&&)                 = delete;
+  scoped_context_registrations_t& operator=(scoped_context_registrations_t&&)      = delete;
+
+ private:
+  work_unit_scheduler_t& scheduler_;
+  std::vector<work_limit_context_t*> contexts_;
+};
+
 }  // namespace cuopt

@@ -196,16 +196,10 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
       branch_and_bound_settings.num_threads = std::max(1, context.settings.num_cpu_threads);
     }
 
-    i_t num_threads        = branch_and_bound_settings.num_threads;
-    i_t num_bfs_workers    = std::max(1, num_threads / 4);
-    i_t num_diving_workers = std::max(1, num_threads - num_bfs_workers);
-    // deterministic mode: use BSP coordinator which internally allocates workers
-    // The BSP coordinator splits num_bfs_workers 50/50 between BFS and deterministic diving
-    if (context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC) {
-      num_bfs_workers    = std::max(1, num_threads);
-      num_diving_workers = 0;  // Opportunistic diving disabled; BSP diving handled internally
-    }
-    branch_and_bound_settings.num_bfs_workers                    = num_bfs_workers;
+    i_t num_threads                           = branch_and_bound_settings.num_threads;
+    i_t num_bfs_workers                       = std::max(1, num_threads / 4);
+    i_t num_diving_workers                    = std::max(1, num_threads - num_bfs_workers);
+    branch_and_bound_settings.num_bfs_workers = num_bfs_workers;
     branch_and_bound_settings.diving_settings.num_diving_workers = num_diving_workers;
 
     // Set the branch and bound -> primal heuristics callback
@@ -250,8 +244,7 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
       // TODO
       context.problem_ptr->branch_and_bound_callback =
         [bb = branch_and_bound.get()](const std::vector<f_t>& solution) {
-          double vt = bb->get_current_bsp_horizon();
-          bb->set_new_solution_deterministic(solution, vt);
+          bb->set_new_solution_deterministic(solution, 0.0);
         };
     }
 

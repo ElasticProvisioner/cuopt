@@ -952,19 +952,11 @@ class bsp_debug_logger_t {
         break;
     }
 
-    if (node->bsp_state == bsp_node_state_t::PAUSED) {
-      color      = "yellow";
-      status_str = "PAUSED";
-    }
-
     file << "  N" << node->node_id << " [label=\"N" << node->node_id;
     if (node->has_bsp_identity())
       file << " (w" << node->origin_worker_id << ":" << node->creation_seq << ")";
     file << "\\nlb=" << std::fixed << std::setprecision(1) << node->lower_bound;
     file << "\\n" << status_str;
-    if (node->bsp_state == bsp_node_state_t::PAUSED) {
-      file << "\\nacc_vt=" << node->accumulated_vt;
-    }
     file << "\" style=filled fillcolor=" << color << "];\n";
 
     // Emit edges to children

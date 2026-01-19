@@ -29,12 +29,6 @@ enum class node_status_t : int {
 
 enum class rounding_direction_t : int8_t { NONE = -1, DOWN = 0, UP = 1 };
 
-// BSP state for deterministic parallel B&B
-enum class bsp_node_state_t : int8_t {
-  READY  = 0,  // Node is ready to be processed
-  PAUSED = 1   // Node processing was paused at horizon boundary
-};
-
 bool inactive_status(node_status_t status);
 
 template <typename i_t, typename f_t>
@@ -245,7 +239,6 @@ class mip_node_t {
     copy.node_id            = node_id;
     // Copy BSP fields
     copy.accumulated_vt   = accumulated_vt;
-    copy.bsp_state        = bsp_state;
     copy.origin_worker_id = origin_worker_id;
     copy.creation_seq     = creation_seq;
     return copy;
@@ -268,8 +261,7 @@ class mip_node_t {
   std::vector<variable_status_t> vstatus;
 
   // BSP fields for deterministic parallel B&B
-  f_t accumulated_vt{0.0};                              // Virtual time spent on this node so far
-  bsp_node_state_t bsp_state{bsp_node_state_t::READY};  // BSP processing state
+  f_t accumulated_vt{0.0};  // Virtual time spent on this node so far
 
   // Worker-local identification for deterministic BSP ordering:
   // - origin_worker_id: which worker created this node (-1 for pre-BSP/initial nodes)
@@ -284,7 +276,7 @@ class mip_node_t {
 
   // Get a 64-bit identity value for hashing (combines worker_id and seq)
   // Uses origin_worker_id + 1 to handle -1 (pre-BSP nodes) gracefully
-  uint64_t get_bsp_identity_hash() const
+  uint64_t get_hash() const
   {
     return (static_cast<uint64_t>(origin_worker_id + 1) << 32) |
            static_cast<uint64_t>(static_cast<uint32_t>(creation_seq));
@@ -306,19 +298,6 @@ class mip_node_t {
       node = node->parent;
     }
     return hash;
-  }
-
-  // Get the branching path as a string for debugging
-  std::string get_path_string() const
-  {
-    std::string path;
-    const mip_node_t* node = this;
-    while (node != nullptr && node->branch_var >= 0) {
-      char dir = (node->branch_dir == rounding_direction_t::UP) ? 'U' : 'D';
-      path     = std::to_string(node->branch_var) + dir + (path.empty() ? "" : "-") + path;
-      node     = node->parent;
-    }
-    return path.empty() ? "root" : path;
   }
 };
 
@@ -358,26 +337,16 @@ class node_compare_t {
   bool deterministic_compare(const mip_node_t<i_t, f_t>& a, const mip_node_t<i_t, f_t>& b) const
   {
     // non-BSP case
-    if (!a.has_bsp_identity() && !b.has_bsp_identity()) { return a.depth > b.depth; }
+    if (!a.has_bsp_identity() || !b.has_bsp_identity()) {
+      return a.depth > b.depth;
+    }
     // If both have BSP identity, use lexicographic comparison of (origin_worker_id, creation_seq)
-    if (a.has_bsp_identity() && b.has_bsp_identity()) {
+    else {
       if (a.origin_worker_id != b.origin_worker_id) {
         return a.origin_worker_id > b.origin_worker_id;
       }
       return a.creation_seq > b.creation_seq;
     }
-
-    // If only one has BSP identity, prefer the one with identity (already established)
-    if (a.has_bsp_identity()) { return false; }  // a has priority
-    if (b.has_bsp_identity()) { return true; }   // b has priority
-
-    // Neither has BSP identity - use path_hash for deterministic comparison (non-BSP mode)
-    uint64_t hash_a = a.compute_path_hash();
-    uint64_t hash_b = b.compute_path_hash();
-    if (hash_a != hash_b) { return hash_a > hash_b; }
-
-    // Ultimate fallback: compare by depth (shouldn't happen with different paths)
-    return a.depth > b.depth;
   }
 };
 

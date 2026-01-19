@@ -27,6 +27,19 @@
 
 namespace cuopt::linear_programming::dual_simplex {
 
+// Indicate the search and variable selection algorithms used by each thread
+// in B&B (See [1]).
+//
+// [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
+// Berlin, 2007. doi: 10.14279/depositonce-1634.
+enum class bnb_worker_type_t {
+  BEST_FIRST         = 0,  // Best-First + Plunging.
+  PSEUDOCOST_DIVING  = 1,  // Pseudocost diving (9.2.5)
+  LINE_SEARCH_DIVING = 2,  // Line search diving (9.2.4)
+  GUIDED_DIVING = 3,  // Guided diving (9.2.3). If no incumbent is found yet, use pseudocost diving.
+  COEFFICIENT_DIVING = 4  // Coefficient diving (9.2.1)
+};
+
 // Queued pseudo-cost update for BSP determinism
 // Updates are collected during horizon, then applied in deterministic order at sync
 template <typename i_t, typename f_t>
@@ -200,6 +213,24 @@ struct bb_worker_state_t {
     // Clear queued updates from previous horizon
     integer_solutions.clear();
     pseudo_cost_updates.clear();
+  }
+
+  // Update snapshots from global state at horizon boundary
+  void set_snapshots(f_t global_upper_bound,
+                     const std::vector<f_t>& pc_sum_up,
+                     const std::vector<f_t>& pc_sum_down,
+                     const std::vector<i_t>& pc_num_up,
+                     const std::vector<i_t>& pc_num_down,
+                     double new_horizon_start,
+                     double new_horizon_end)
+  {
+    local_upper_bound    = global_upper_bound;
+    pc_sum_up_snapshot   = pc_sum_up;
+    pc_sum_down_snapshot = pc_sum_down;
+    pc_num_up_snapshot   = pc_num_up;
+    pc_num_down_snapshot = pc_num_down;
+    horizon_start        = new_horizon_start;
+    horizon_end          = new_horizon_end;
   }
 
   // Queue a pseudo-cost update for global sync AND apply it to local snapshot immediately
@@ -480,17 +511,6 @@ struct bb_worker_state_t {
     events.add(std::move(event));
   }
 
-  // Pause current node processing at horizon boundary
-  void pause_current_node(mip_node_t<i_t, f_t>* node, double accumulated_vt)
-  {
-    node->accumulated_vt = accumulated_vt;
-    node->bsp_state      = bsp_node_state_t::PAUSED;
-    current_node         = node;
-
-    record_event(
-      bb_event_t<i_t, f_t>::make_paused(clock, worker_id, node->node_id, 0, accumulated_vt));
-  }
-
   // Record node branching event
   void record_branched(
     mip_node_t<i_t, f_t>* node, i_t down_child_id, i_t up_child_id, i_t branch_var, f_t branch_val)
@@ -700,19 +720,25 @@ struct bsp_diving_worker_state_t {
     recompute_bounds_and_basis = true;
   }
 
-  void set_snapshots(const std::vector<f_t>& pc_sum_up,
+  void set_snapshots(f_t global_upper_bound,
+                     const std::vector<f_t>& pc_sum_up,
                      const std::vector<f_t>& pc_sum_down,
                      const std::vector<i_t>& pc_num_up,
                      const std::vector<i_t>& pc_num_down,
                      const std::vector<f_t>& incumbent,
-                     const std::vector<f_t>* root_sol)
+                     const std::vector<f_t>* root_sol,
+                     double new_horizon_start,
+                     double new_horizon_end)
   {
+    local_upper_bound    = global_upper_bound;
     pc_sum_up_snapshot   = pc_sum_up;
     pc_sum_down_snapshot = pc_sum_down;
     pc_num_up_snapshot   = pc_num_up;
     pc_num_down_snapshot = pc_num_down;
     incumbent_snapshot   = incumbent;
     root_solution        = root_sol;
+    horizon_start        = new_horizon_start;
+    horizon_end          = new_horizon_end;
   }
 
   void enqueue_dive_node(mip_node_t<i_t, f_t>* node) { dive_queue.push_back(node->detach_copy()); }

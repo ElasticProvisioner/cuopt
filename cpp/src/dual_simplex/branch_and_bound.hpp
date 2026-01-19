@@ -140,8 +140,6 @@ class branch_and_bound_t {
   const user_problem_t<i_t, f_t>& original_problem_;
   const simplex_solver_settings_t<i_t, f_t> settings_;
 
-  // Work unit contexts for each worker
-  // TODO: only one for now, sequential B&B for now
   work_limit_context_t work_unit_context_{"B&B"};
 
   // Initial guess.
@@ -406,10 +404,6 @@ class branch_and_bound_t {
     }
   };
   heap_t<diving_entry_t, diving_score_comp> diving_heap_;
-
- public:
-  // Accessor for GPU heuristics to get the current BSP horizon
-  double get_current_bsp_horizon() const { return bsp_current_horizon_; }
 };
 
 }  // namespace cuopt::linear_programming::dual_simplex
