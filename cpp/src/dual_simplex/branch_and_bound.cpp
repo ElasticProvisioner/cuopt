@@ -1710,7 +1710,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   // Compute final lower bound
   f_t lower_bound;
   if (bsp_mode_enabled_) {
-    // In BSP mode, compute lower bound from all sources (heap + worker queues)
+    // In BSP mode, compute lower bound from worker queues only (no global heap)
     lower_bound = compute_bsp_lower_bound();
     // If no unexplored nodes remain and we have an incumbent, lower bound = upper bound
     if (lower_bound == std::numeric_limits<f_t>::infinity() && incumbent_.has_incumbent) {
@@ -1807,18 +1807,17 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
 
   // Push initial children to the global heap
   // Set deterministic BSP identity for root children (pre-BSP origin with seq 0 and 1)
+  // Assign BSP identity to root children
   search_tree_.root.get_down_child()->origin_worker_id = -1;  // Pre-BSP marker
   search_tree_.root.get_down_child()->creation_seq     = 0;
   search_tree_.root.get_up_child()->origin_worker_id   = -1;
   search_tree_.root.get_up_child()->creation_seq       = 1;
 
-  heap_.push(search_tree_.root.get_down_child());
-  heap_.push(search_tree_.root.get_up_child());
-
-  constexpr i_t target_queue_size = 5;  // Target nodes per worker
-
-  // Initial distribution: fill worker queues once at the start
-  refill_worker_queues(target_queue_size);
+  // Distribute root children directly to BFS workers (no global heap in BSP mode)
+  (*bsp_workers_)[0].enqueue_node_with_identity(search_tree_.root.get_down_child());
+  (*bsp_workers_)[0].track_node_assigned();
+  (*bsp_workers_)[1 % num_bfs_workers].enqueue_node_with_identity(search_tree_.root.get_up_child());
+  (*bsp_workers_)[1 % num_bfs_workers].track_node_assigned();
   BSP_DEBUG_FLUSH_ASSIGN_TRACE(bsp_debug_settings_, bsp_debug_logger_);
 
   // Set sync callback - executed when all workers arrive at barrier
@@ -1902,7 +1901,7 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
     "\n");
   for (const auto& worker : *bsp_workers_) {
     double sync_time    = worker.work_context.total_sync_time;
-    double total_time   = worker.total_runtime + sync_time;
+    double total_time   = worker.total_runtime;  // Already includes sync time
     double sync_percent = (total_time > 0) ? (100.0 * sync_time / total_time) : 0.0;
     settings_.log.printf("  %6d | %7d | %8d | %6d | %7d | %6d | %8d | %7.3fs | %4.1f%% | %5.2fs\n",
                          worker.worker_id,
@@ -2061,7 +2060,8 @@ void branch_and_bound_t<i_t, f_t>::run_worker_loop(bb_worker_state_t<i_t, f_t>& 
         // Time/work limit hit - the loop head will detect this and terminate properly
         continue;
       }
-      // Node completed successfully - continue to next iteration
+      // Node completed successfully - loop back to process children
+      continue;
     }
 
     // No work available - advance to next sync point to participate in barrier
@@ -2227,11 +2227,9 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
     should_terminate = true;
   }
 
-  // No more work (for both BFS and diving)
+  // No more work (for both BFS and diving) - all nodes live in worker local structures
   bool diving_has_work = bsp_diving_workers_ && bsp_diving_workers_->any_has_work();
-  if (heap_.size() == 0 && !bsp_workers_->any_has_work() && !diving_has_work) {
-    should_terminate = true;
-  }
+  if (!bsp_workers_->any_has_work() && !diving_has_work) { should_terminate = true; }
 
   // Time limit
   if (toc(exploration_stats_.start_time) > settings_.time_limit) {
@@ -3086,21 +3084,7 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
     worker.plunge_stack.clear();
   }
 
-  // Also pull nodes from global heap if workers need work
-  mutex_heap_.lock();
-  f_t upper_bound = upper_bound_.load();
-  while (!heap_.empty() && all_nodes.size() < num_workers * 5) {
-    mip_node_t<i_t, f_t>* node = heap_.top();
-    heap_.pop();
-    if (node->lower_bound < upper_bound) {
-      all_nodes.push_back(node);
-    } else {
-      search_tree_.update(node, node_status_t::FATHOMED);
-      --exploration_stats_.nodes_unexplored;
-    }
-  }
-  mutex_heap_.unlock();
-
+  // In BSP mode, all nodes live in worker local structures - no global heap
   if (all_nodes.empty()) return;
 
   // Sort by BSP identity for deterministic distribution
@@ -3146,15 +3130,11 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
 template <typename i_t, typename f_t>
 f_t branch_and_bound_t<i_t, f_t>::compute_bsp_lower_bound()
 {
-  // Compute accurate lower bound from all BSP sources
-  // Called during sync phase (single-threaded), so no locking needed for worker queues
+  // Compute lower bound from BFS worker local structures only
+  // In BSP mode, all nodes live in worker queues - no global heap
+  // Called during sync phase (single-threaded), so no locking needed
   const f_t inf   = std::numeric_limits<f_t>::infinity();
   f_t lower_bound = inf;
-
-  // Check global heap (may have nodes not yet distributed)
-  mutex_heap_.lock();
-  if (heap_.size() > 0) { lower_bound = std::min(heap_.top()->lower_bound, lower_bound); }
-  mutex_heap_.unlock();
 
   // Check all BFS worker queues
   for (const auto& worker : *bsp_workers_) {
@@ -3174,7 +3154,7 @@ f_t branch_and_bound_t<i_t, f_t>::compute_bsp_lower_bound()
     }
   }
 
-  // Note: diving worker queues contain copies of nodes that remain in backlogs/heap
+  // Note: diving worker queues contain copies of nodes that remain in backlogs
   // (speculative diving model), so no need to check them separately.
 
   return lower_bound;
@@ -3197,11 +3177,10 @@ void branch_and_bound_t<i_t, f_t>::populate_diving_heap_at_sync()
   const int target_total                = num_diving * target_nodes_per_worker;
   f_t upper_bound                       = upper_bound_.load();
 
-  // Collect candidate nodes from backlogs with their scores.
-  // Following the opportunistic diving model: we DON'T remove nodes from their
-  // original locations. Diving is speculative - original nodes stay in backlogs/heap
-  // for BFS processing and correct lower bound computation. Diving workers get
-  // copies via detach_copy() in enqueue_dive_node().
+  // Collect candidate nodes from BFS worker backlogs only (no global heap in BSP mode).
+  // Following the speculative diving model: we DON'T remove nodes from backlogs.
+  // Original nodes stay in backlogs for BFS processing and correct lower bound computation.
+  // Diving workers get copies via detach_copy() in enqueue_dive_node().
   std::vector<std::pair<mip_node_t<i_t, f_t>*, f_t>> candidates;
 
   for (auto& worker : *bsp_workers_) {
@@ -3212,21 +3191,6 @@ void branch_and_bound_t<i_t, f_t>::populate_diving_heap_at_sync()
         candidates.push_back({node, score});
       }
     }
-  }
-
-  // If backlogs don't have enough nodes, also consider global heap nodes.
-  // Use data() to iterate without popping - nodes stay in heap.
-  if ((int)candidates.size() < target_total) {
-    mutex_heap_.lock();
-    for (auto* node : heap_.data()) {
-      if (node->lower_bound < upper_bound) {
-        f_t score = node->objective_estimate;
-        if (!std::isfinite(score)) { score = node->lower_bound; }
-        candidates.push_back({node, score});
-        if ((int)candidates.size() >= target_total) break;
-      }
-    }
-    mutex_heap_.unlock();
   }
 
   if (candidates.empty()) return;
@@ -3243,7 +3207,7 @@ void branch_and_bound_t<i_t, f_t>::populate_diving_heap_at_sync()
     diving_heap_.push({candidates[i].first, candidates[i].second});
   }
 
-  // Original nodes stay in backlogs/heap - no removal needed.
+  // Original nodes stay in backlogs - no removal needed.
   // Diving workers will get copies via detach_copy() in assign_diving_nodes().
 }
 

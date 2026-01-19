@@ -421,7 +421,7 @@ void compute_reduced_costs(const std::vector<f_t>& objective,
                            const std::vector<i_t>& nonbasic_list,
                            std::vector<f_t>& z)
 {
-  raft::common::nvtx::range scope("DualSimplex::compute_reduced_costs");
+  // raft::common::nvtx::range scope("DualSimplex::compute_reduced_costs");
 
   const i_t m = A.m;
   const i_t n = A.n;
@@ -456,7 +456,7 @@ void compute_primal_variables(const basis_update_mpf_t<i_t, f_t>& ft,
                               std::vector<f_t>& x,
                               ins_vector<f_t>& xB_workspace)
 {
-  raft::common::nvtx::range scope("DualSimplex::compute_primal_variables");
+  // raft::common::nvtx::range scope("DualSimplex::compute_primal_variables");
   const i_t m          = A.m;
   const i_t n          = A.n;
   std::vector<f_t> rhs = lp_rhs;
@@ -523,7 +523,7 @@ void compute_dual_residual(const csc_matrix_t<i_t, f_t>& A,
                            const std::vector<f_t>& z,
                            std::vector<f_t>& dual_residual)
 {
-  raft::common::nvtx::range scope("DualSimplex::compute_dual_residual");
+  // raft::common::nvtx::range scope("DualSimplex::compute_dual_residual");
 
   dual_residual = z;
   const i_t n   = A.n;
@@ -680,7 +680,7 @@ f_t compute_initial_primal_infeasibilities(const lp_problem_t<i_t, f_t>& lp,
                                            ins_vector<i_t>& infeasibility_indices,
                                            f_t& primal_inf)
 {
-  raft::common::nvtx::range scope("DualSimplex::compute_initial_primal_infeasibilities");
+  // raft::common::nvtx::range scope("DualSimplex::compute_initial_primal_infeasibilities");
   const i_t m = lp.num_rows;
   const i_t n = lp.num_cols;
   squared_infeasibilities.resize(n);
@@ -1972,7 +1972,7 @@ void set_primal_variables_on_bounds(const lp_problem_t<i_t, f_t>& lp,
                                     std::vector<variable_status_t>& vstatus,
                                     std::vector<f_t>& x)
 {
-  raft::common::nvtx::range scope("DualSimplex::set_primal_variables_on_bounds");
+  // raft::common::nvtx::range scope("DualSimplex::set_primal_variables_on_bounds");
   const i_t n = lp.num_cols;
   for (i_t j = 0; j < n; ++j) {
     // We set z_j = 0 for basic variables
@@ -2235,7 +2235,7 @@ dual::status_t dual_phase2(i_t phase,
                            i_t& iter,
                            std::vector<f_t>& delta_y_steepest_edge)
 {
-  raft::common::nvtx::range scope("DualSimplex::phase2");
+  // raft::common::nvtx::range scope("DualSimplex::phase2");
   const i_t m = lp.num_rows;
   const i_t n = lp.num_cols;
   std::vector<i_t> basic_list(m);
@@ -2274,7 +2274,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
                                                std::vector<f_t>& delta_y_steepest_edge,
                                                work_limit_context_t* work_unit_context)
 {
-  raft::common::nvtx::range scope("DualSimplex::phase2_advanced");
+  // raft::common::nvtx::range scope("DualSimplex::phase2_advanced");
   const i_t m = lp.num_rows;
   const i_t n = lp.num_cols;
   assert(m <= n);
@@ -2316,7 +2316,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
 
   phase2::bound_info(lp, settings);
   if (initialize_basis) {
-    raft::common::nvtx::range init_basis_scope("DualSimplex::init_basis");
+    // raft::common::nvtx::range init_basis_scope("DualSimplex::init_basis");
     std::vector<i_t> superbasic_list;
     nonbasic_list.clear();
     nonbasic_list.reserve(n - m);
@@ -2402,7 +2402,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
 #endif
 
   if (delta_y_steepest_edge.size() == 0) {
-    raft::common::nvtx::range scope("DualSimplex::initialize_steepest_edge_norms");
+    // raft::common::nvtx::range scope("DualSimplex::initialize_steepest_edge_norms");
     delta_y_steepest_edge.resize(n);
     if (slack_basis) {
       phase2::initialize_steepest_edge_norms_from_slack_basis(
@@ -2467,7 +2467,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
   manifold.add("A_transpose.i", A_transpose.i);
   manifold.add("A_transpose.x", A_transpose.x);
   {
-    raft::common::nvtx::range scope("DualSimplex::transpose_A");
+    // raft::common::nvtx::range scope("DualSimplex::transpose_A");
     lp.A.transpose(A_transpose);
   }
   f_t obj = compute_objective(lp, sol.x);
@@ -2551,7 +2551,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
   // Helper to compute scaled work units for a given number of iterations
   cuopt::work_unit_predictor_t<dualsimplex_predictor, cpu_work_unit_scaler_t> work_predictor{};
   auto predict_work_units = [&](i_t num_iters) -> f_t {
-    raft::common::nvtx::range scope("DualSimplex::predict_work_units");
+    // raft::common::nvtx::range scope("DualSimplex::predict_work_units");
     std::map<std::string, float> features_map;
     features_map["m"]           = static_cast<float>(features.num_rows);
     features_map["n"]           = static_cast<float>(features.num_cols);
@@ -2605,7 +2605,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
   });
 
   while (iter < iter_limit) {
-    raft::common::nvtx::range scope_main("DualSimplex::phase2_main_loop");
+    // raft::common::nvtx::range scope_main("DualSimplex::phase2_main_loop");
     // Pricing
     i_t direction           = 0;
     i_t basic_leaving_index = -1;
@@ -2613,7 +2613,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     f_t max_val;
     timers.start_timer();
     {
-      raft::common::nvtx::range scope_pricing("DualSimplex::pricing");
+      // raft::common::nvtx::range scope_pricing("DualSimplex::pricing");
       if (settings.use_steepest_edge_pricing) {
         leaving_index = phase2::steepest_edge_pricing_with_infeasibilities(lp,
                                                                            settings,
@@ -2658,7 +2658,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     delta_y_sparse.clear();
     UTsol_sparse.clear();
     {
-      raft::common::nvtx::range scope_btran("DualSimplex::btran");
+      // raft::common::nvtx::range scope_btran("DualSimplex::btran");
       phase2::compute_delta_y(ft, basic_leaving_index, direction, delta_y_sparse, UTsol_sparse);
     }
     timers.btran_time += timers.stop_timer();
@@ -2688,7 +2688,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     delta_y_nz_percentage    = delta_y_nz0 / static_cast<f_t>(m) * 100.0;
     const bool use_transpose = delta_y_nz_percentage <= 30.0;
     {
-      raft::common::nvtx::range scope_compute_delta_z("DualSimplex::delta_z");
+      // raft::common::nvtx::range scope_compute_delta_z("DualSimplex::delta_z");
       if (use_transpose) {
         sparse_delta_z++;
         phase2::compute_delta_z(A_transpose,
@@ -2733,7 +2733,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     const bool harris_ratio     = settings.use_harris_ratio;
     const bool bound_flip_ratio = settings.use_bound_flip_ratio;
     {
-      raft::common::nvtx::range scope_ratio("DualSimplex::ratio_test");
+      // raft::common::nvtx::range scope_ratio("DualSimplex::ratio_test");
       if (harris_ratio) {
         f_t max_step_length =
           phase2::first_stage_harris(lp, vstatus, nonbasic_list, sol.z, delta_z);
@@ -2992,7 +2992,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     scaled_delta_xB_sparse.clear();
     rhs_sparse.from_csc_column(lp.A, entering_index);
     {
-      raft::common::nvtx::range scope_ftran("DualSimplex::ftran");
+      // raft::common::nvtx::range scope_ftran("DualSimplex::ftran");
       if (phase2::compute_delta_x(lp,
                                   ft,
                                   entering_index,
@@ -3139,7 +3139,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     timers.start_timer();
     // Refactor or update the basis factorization
     {
-      raft::common::nvtx::range scope_update("DualSimplex::basis_update");
+      // raft::common::nvtx::range scope_update("DualSimplex::basis_update");
       bool should_refactor = ft.num_updates() > settings.refactor_frequency;
       if (!should_refactor) {
         i_t recommend_refactor = ft.update(utilde_sparse, UTsol_sparse, basic_leaving_index);
@@ -3153,7 +3153,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
       phase2::check_basic_infeasibilities(basic_list, basic_mark, infeasibility_indices, 6);
 #endif
       if (should_refactor) {
-        raft::common::nvtx::range scope_refactor("DualSimplex::refactorization");
+        // raft::common::nvtx::range scope_refactor("DualSimplex::refactorization");
         num_refactors++;
         bool should_recompute_x = false;
         if (ft.refactor_basis(
