@@ -435,16 +435,45 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
                      bnb_lp_iter,
                      reliable_threshold);
 
-  std::vector<i_t> pending = fractional;
-  std::vector<i_t> conflict;
-  conflict.reserve(fractional.size());
+  std::vector<i_t> pending(fractional.size(), -1);
+  std::vector<i_t> next(fractional.size(), -1);
+  omp_atomic_t<i_t> num_pending = 0;
+  omp_atomic_t<i_t> num_next    = 0;
+  omp_mutex_t score_mutex;
 
-  while (!pending.empty()) {
-    for (auto j : pending) {
+  for (auto j : fractional) {
+    std::lock_guard<omp_mutex_t> lock(pseudo_cost_mutex[j]);
+
+    if (pseudo_cost_num_down[j] < reliable_threshold ||
+        pseudo_cost_num_up[j] < reliable_threshold) {
+      pending[num_pending++] = j;
+      continue;
+    }
+
+    f_t pc_up   = pseudo_cost_num_up[j] > 0 ? pseudo_cost_sum_up[j] / pseudo_cost_num_up[j]
+                                            : pseudo_cost_up_avg;
+    f_t pc_down = pseudo_cost_sum_down[j] > 0 ? pseudo_cost_sum_down[j] / pseudo_cost_num_down[j]
+                                              : pseudo_cost_down_avg;
+
+    constexpr f_t eps = 1e-6;
+    const f_t f_down  = solution[j] - std::floor(solution[j]);
+    const f_t f_up    = std::ceil(solution[j]) - solution[j];
+    f_t score         = std::max(f_down * pc_down, eps) * std::max(f_up * pc_up, eps);
+
+    if (score > max_score) {
+      max_score  = score;
+      branch_var = j;
+    }
+  }
+
+  while (num_pending != 0) {
+#pragma omp taskloop priority(20)
+    for (i_t i = 0; i < num_pending; ++i) {
+      const i_t j    = pending[i];
       bool is_locked = pseudo_cost_mutex[j].try_lock();
 
       if (!is_locked) {
-        conflict.push_back(j);
+        next[num_next++] = j;
         continue;
       }
 
@@ -508,14 +537,15 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
       const f_t f_up    = std::ceil(solution[j]) - solution[j];
       f_t score         = std::max(f_down * pc_down, eps) * std::max(f_up * pc_up, eps);
 
-      if (score > max_score) {
+      if (std::lock_guard<omp_mutex_t> lock(score_mutex); score > max_score) {
         max_score  = score;
         branch_var = j;
       }
     }
 
-    std::swap(pending, conflict);
-    conflict.clear();
+    std::swap(pending, next);
+    num_pending = num_next;
+    num_next    = 0;
   }
 
   log.printf(
