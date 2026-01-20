@@ -11,6 +11,7 @@
 #include <dual_simplex/bb_worker_state.hpp>
 #include <dual_simplex/bsp_debug.hpp>
 #include <dual_simplex/diving_heuristics.hpp>
+#include <dual_simplex/dual_simplex_features.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/mip_node.hpp>
 #include <dual_simplex/node_queue.hpp>
@@ -175,6 +176,9 @@ class branch_and_bound_t {
 
   // Structure with the general info of the solver.
   bnb_stats_t<i_t, f_t> exploration_stats_;
+
+  // Bounds strengthening feature tracking (non-deterministic path)
+  bounds_strengthening_features_t<i_t, f_t> bs_features_;
 
   // Mutex for repair
   omp_mutex_t mutex_repair_;

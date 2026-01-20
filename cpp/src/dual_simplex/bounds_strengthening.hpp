@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -25,6 +25,7 @@ class bounds_strengthening_t {
                             const simplex_solver_settings_t<i_t, f_t>& settings);
 
   std::vector<bool> bounds_changed;
+  size_t last_nnz_processed{0};
 
  private:
   const csc_matrix_t<i_t, f_t>& A;

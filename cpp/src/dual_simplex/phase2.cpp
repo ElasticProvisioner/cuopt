@@ -2572,7 +2572,6 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
   };
 
   cuopt::scope_guard work_unit_guard([&]() {
-    if (!work_unit_context) return;
     i_t remaining_iters = iter - last_feature_log_iter;
     if (remaining_iters <= 0) return;
 
@@ -2592,11 +2591,14 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     features.total_bound_flips     = total_bound_flips;
     features.num_infeasibilities   = infeasibility_indices.size();
     features.delta_y_nz_percentage = delta_y_nz_percentage;
+    features.log_features(settings);
 
-    f_t prediction = predict_work_units(remaining_iters);
-    // printf("DualSimplex determ (final): %d iters, predicted %.4f\n", remaining_iters,
-    // prediction);
-    work_unit_context->record_work(prediction);
+    if (work_unit_context) {
+      f_t prediction = predict_work_units(remaining_iters);
+      // printf("DualSimplex determ (final): %d iters, predicted %.4f\n", remaining_iters,
+      // prediction);
+      work_unit_context->record_work(prediction);
+    }
   });
 
   while (iter < iter_limit) {
@@ -3230,6 +3232,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
       features.total_bound_flips     = total_bound_flips;
       features.num_infeasibilities   = infeasibility_indices.size();
       features.delta_y_nz_percentage = delta_y_nz_percentage;
+      features.log_features(settings);
 
       if (work_unit_context) {
         f_t prediction = predict_work_units(iters_elapsed);

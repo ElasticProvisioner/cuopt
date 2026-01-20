@@ -116,33 +116,33 @@ struct dual_simplex_features_t {
    */
   void log_features(const simplex_solver_settings_t<i_t, f_t>& settings) const
   {
-    // printf(
-    //   "DS_FEATURES: iter=%d m=%d n=%d nnz=%d density=%.6e avg_nnz_col=%.2f avg_nnz_row=%.2f "
-    //   "bounded=%d free=%d fixed=%d phase=%d refact_freq=%d num_refacts=%d num_updates=%d "
-    //   "sparse_dz=%d dense_dz=%d bound_flips=%d num_infeas=%d dy_nz_pct=%.2f "
-    //   "byte_loads=%zu byte_stores=%zu runtime=%.6f\n",
-    //   iteration,
-    //   num_rows,
-    //   num_cols,
-    //   num_nonzeros,
-    //   matrix_density,
-    //   avg_nnz_per_col,
-    //   avg_nnz_per_row,
-    //   num_bounded_vars,
-    //   num_free_vars,
-    //   num_fixed_vars,
-    //   phase,
-    //   refactor_frequency,
-    //   num_refactors,
-    //   num_basis_updates,
-    //   sparse_delta_z_count,
-    //   dense_delta_z_count,
-    //   total_bound_flips,
-    //   num_infeasibilities,
-    //   delta_y_nz_percentage,
-    //   byte_loads,
-    //   byte_stores,
-    //   interval_runtime);
+    printf(
+      "DS_FEATURES: iter=%d m=%d n=%d nnz=%d density=%.6e avg_nnz_col=%.2f avg_nnz_row=%.2f "
+      "bounded=%d free=%d fixed=%d phase=%d refact_freq=%d num_refacts=%d num_updates=%d "
+      "sparse_dz=%d dense_dz=%d bound_flips=%d num_infeas=%d dy_nz_pct=%.2f "
+      "byte_loads=%zu byte_stores=%zu runtime=%.6f\n",
+      iteration,
+      num_rows,
+      num_cols,
+      num_nonzeros,
+      matrix_density,
+      avg_nnz_per_col,
+      avg_nnz_per_row,
+      num_bounded_vars,
+      num_free_vars,
+      num_fixed_vars,
+      phase,
+      refactor_frequency,
+      num_refactors,
+      num_basis_updates,
+      sparse_delta_z_count,
+      dense_delta_z_count,
+      total_bound_flips,
+      num_infeasibilities,
+      delta_y_nz_percentage,
+      byte_loads,
+      byte_stores,
+      interval_runtime);
   }
 
   /**
@@ -167,16 +167,14 @@ struct bounds_strengthening_features_t {
   i_t nnz{0};                 // number of nonzeros in constraint matrix
   i_t num_iterations{0};      // propagation iterations until fixpoint
   i_t num_bounds_changed{0};  // total bounds tightened
-  size_t byte_loads{0};
-  size_t byte_stores{0};
+  size_t nnz_processed{0};    // non-zeros traversed (work metric)
   f_t runtime{0.0};
 
   // Interval aggregates (for when bounds strengthening is called multiple times)
   i_t call_count{0};
   i_t total_iterations{0};
   i_t total_bounds_changed{0};
-  size_t total_byte_loads{0};
-  size_t total_byte_stores{0};
+  size_t total_nnz_processed{0};
   f_t total_runtime{0.0};
 
   void accumulate()
@@ -184,25 +182,22 @@ struct bounds_strengthening_features_t {
     call_count++;
     total_iterations += num_iterations;
     total_bounds_changed += num_bounds_changed;
-    total_byte_loads += byte_loads;
-    total_byte_stores += byte_stores;
+    total_nnz_processed += nnz_processed;
     total_runtime += runtime;
   }
 
   void log_single(i_t m_val, i_t n_val, i_t nnz_val) const
   {
-    // printf(
-    //   "BOUNDS_STRENGTH_FEATURES: m=%d n=%d nnz=%d "
-    //   "iterations=%d bounds_changed=%d "
-    //   "byte_loads=%zu byte_stores=%zu runtime=%.6f\n",
-    //   m_val,
-    //   n_val,
-    //   nnz_val,
-    //   num_iterations,
-    //   num_bounds_changed,
-    //   byte_loads,
-    //   byte_stores,
-    //   runtime);
+    printf(
+      "BOUNDS_STRENGTH_FEATURES: m=%d n=%d nnz=%d "
+      "iterations=%d bounds_changed=%d nnz_processed=%zu runtime=%.6f\n",
+      m_val,
+      n_val,
+      nnz_val,
+      num_iterations,
+      num_bounds_changed,
+      nnz_processed,
+      runtime);
   }
 
   void reset()
@@ -210,8 +205,7 @@ struct bounds_strengthening_features_t {
     call_count           = 0;
     total_iterations     = 0;
     total_bounds_changed = 0;
-    total_byte_loads     = 0;
-    total_byte_stores    = 0;
+    total_nnz_processed  = 0;
     total_runtime        = 0.0;
   }
 };

@@ -752,8 +752,17 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(
   bool feasible;
   {
     raft::common::nvtx::range scope_bs("BB::bound_strengthening");
+    f_t bs_start = tic();
     feasible =
       node_presolver.bounds_strengthening(leaf_problem.lower, leaf_problem.upper, lp_settings);
+    f_t bs_runtime = toc(bs_start);
+
+    bs_features_.m             = leaf_problem.num_rows;
+    bs_features_.n             = leaf_problem.num_cols;
+    bs_features_.nnz           = leaf_problem.A.col_start[leaf_problem.num_cols];
+    bs_features_.nnz_processed = node_presolver.last_nnz_processed;
+    bs_features_.runtime       = bs_runtime;
+    bs_features_.log_single(bs_features_.m, bs_features_.n, bs_features_.nnz);
   }
 
   dual::status_t lp_status = dual::status_t::DUAL_UNBOUNDED;
