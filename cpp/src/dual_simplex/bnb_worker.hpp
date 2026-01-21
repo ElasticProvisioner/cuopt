@@ -27,7 +27,7 @@ constexpr int bnb_num_worker_types = 5;
 // [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
 // Berlin, 2007. doi: 10.14279/depositonce-1634.
 enum bnb_worker_type_t : int {
-  EXPLORATION        = 0,  // Best-First + Plunging.
+  BEST_FIRST         = 0,  // Best-First + Plunging.
   PSEUDOCOST_DIVING  = 1,  // Pseudocost diving (9.2.5)
   LINE_SEARCH_DIVING = 2,  // Line search diving (9.2.4)
   GUIDED_DIVING      = 3,  // Guided diving (9.2.3).
@@ -77,7 +77,7 @@ class bnb_worker_data_t {
                     const std::vector<variable_type_t>& var_type,
                     const simplex_solver_settings_t<i_t, f_t>& settings)
     : worker_id(worker_id),
-      worker_type(EXPLORATION),
+      worker_type(BEST_FIRST),
       is_active(false),
       lower_bound(-std::numeric_limits<f_t>::infinity()),
       leaf_problem(original_lp),
@@ -96,7 +96,7 @@ class bnb_worker_data_t {
     start_node  = node;
     start_lower = original_lp.lower;
     start_upper = original_lp.upper;
-    worker_type = EXPLORATION;
+    worker_type = BEST_FIRST;
     lower_bound = node->lower_bound;
     is_active   = true;
   }
@@ -222,7 +222,7 @@ class bnb_worker_pool_t {
     f_t lower_bound = std::numeric_limits<f_t>::infinity();
 
     for (i_t i = 0; i < workers_.size(); ++i) {
-      if (workers_[i]->worker_type == EXPLORATION && workers_[i]->is_active) {
+      if (workers_[i]->worker_type == BEST_FIRST && workers_[i]->is_active) {
         lower_bound = std::min(workers_[i]->lower_bound.load(), lower_bound);
       }
     }
@@ -246,7 +246,7 @@ std::vector<bnb_worker_type_t> bnb_get_worker_types(diving_heuristics_settings_t
 {
   std::vector<bnb_worker_type_t> types;
   types.reserve(bnb_num_worker_types);
-  types.push_back(EXPLORATION);
+  types.push_back(BEST_FIRST);
   if (!settings.disable_pseudocost_diving) { types.push_back(PSEUDOCOST_DIVING); }
   if (!settings.disable_line_search_diving) { types.push_back(LINE_SEARCH_DIVING); }
   if (!settings.disable_guided_diving) { types.push_back(GUIDED_DIVING); }
@@ -262,7 +262,7 @@ std::array<i_t, bnb_num_worker_types> bnb_get_num_workers_round_robin(
   auto worker_types = bnb_get_worker_types(settings);
 
   max_num_workers.fill(0);
-  max_num_workers[EXPLORATION] = std::max(1, num_threads / 2);
+  max_num_workers[BEST_FIRST] = std::max(1, num_threads / 2);
 
   i_t diving_workers = 2 * settings.num_diving_workers;
   i_t m              = worker_types.size() - 1;

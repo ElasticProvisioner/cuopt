@@ -56,14 +56,16 @@ class branch_and_bound_t {
                                     f_t user_objective,
                                     i_t iterations)
   {
-    root_crossover_soln_.x              = primal;
-    root_crossover_soln_.y              = dual;
-    root_crossover_soln_.z              = reduced_costs;
-    root_objective_                     = objective;
-    root_crossover_soln_.objective      = objective;
-    root_crossover_soln_.user_objective = user_objective;
-    root_crossover_soln_.iterations     = iterations;
-    root_crossover_solution_set_.store(true, std::memory_order_release);
+    if (!is_running) {
+      root_crossover_soln_.x              = primal;
+      root_crossover_soln_.y              = dual;
+      root_crossover_soln_.z              = reduced_costs;
+      root_objective_                     = objective;
+      root_crossover_soln_.objective      = objective;
+      root_crossover_soln_.user_objective = user_objective;
+      root_crossover_soln_.iterations     = iterations;
+      root_crossover_solution_set_.store(true, std::memory_order_release);
+    }
   }
 
   // Set a solution based on the user problem during the course of the solve
@@ -98,6 +100,12 @@ class branch_and_bound_t {
   lp_problem_t<i_t, f_t> original_lp_;
   std::vector<i_t> new_slacks_;
   std::vector<variable_type_t> var_types_;
+
+  // Variable locks (see definition 3.3 from T. Achterberg, “Constraint Integer Programming,”
+  // PhD, Technischen Universität Berlin, Berlin, 2007. doi: 10.14279/depositonce-1634).
+  // Here we assume that the constraints are in the form `Ax = b, l <= x <= u`.
+  std::vector<i_t> var_up_locks_;
+  std::vector<i_t> var_down_locks_;
 
   // Mutex for upper bound
   omp_mutex_t mutex_upper_;
@@ -156,7 +164,7 @@ class branch_and_bound_t {
   omp_atomic_t<f_t> lower_bound_ceiling_;
 
   void report_heuristic(f_t obj);
-  void report(std::string symbol, f_t obj, f_t lower_bound, i_t node_depth);
+  void report(char symbol, f_t obj, f_t lower_bound, i_t node_depth);
 
   // Set the final solution.
   void set_final_solution(mip_solution_t<i_t, f_t>& solution, f_t lower_bound);
@@ -171,10 +179,13 @@ class branch_and_bound_t {
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
 
-  // Perform a plunge over a subtree using a given worker.
+  // We use best-first to pick the `start_node` and then perform a depth-first search
+  // from this node (i.e., a plunge). It can only backtrack to a sibling node.
+  // Unexplored nodes in the subtree are inserted back into the global heap.
   void plunge_with(bnb_worker_data_t<i_t, f_t>* worker_data);
 
-  // Perform a deep dive over a subtree using a given worker.
+  // Perform a deep dive in the subtree determined by the `start_node` in order
+  // to find integer feasible solutions.
   void dive_with(bnb_worker_data_t<i_t, f_t>* worker_data);
 
   // Solve the LP relaxation of a leaf node

@@ -262,14 +262,14 @@ void rins_t<i_t, f_t>::run_rins()
 
   // In the future, let RINS use all the diving heuristics. For now,
   // restricting to guided diving.
-  branch_and_bound_settings.diving_settings.num_diving_workers         = 1;
-  branch_and_bound_settings.diving_settings.disable_line_search_diving = true;
-  branch_and_bound_settings.diving_settings.disable_coefficient_diving = true;
-  branch_and_bound_settings.diving_settings.disable_pseudocost_diving  = true;
-  branch_and_bound_settings.log.log                                    = false;
-  branch_and_bound_settings.log.log_prefix                             = "[RINS] ";
-  branch_and_bound_settings.solution_callback = [this, &rins_solution_queue](
-                                                  std::vector<f_t>& solution, f_t objective) {
+  branch_and_bound_settings.diving_settings.num_diving_workers = 1;
+  branch_and_bound_settings.diving_settings.line_search_diving = 0;
+  branch_and_bound_settings.diving_settings.coefficient_diving = 0;
+  branch_and_bound_settings.diving_settings.pseudocost_diving  = 0;
+  branch_and_bound_settings.log.log                            = false;
+  branch_and_bound_settings.log.log_prefix                     = "[RINS] ";
+  branch_and_bound_settings.solution_callback = [&rins_solution_queue](std::vector<f_t>& solution,
+                                                                       f_t objective) {
     rins_solution_queue.push_back(solution);
   };
   dual_simplex::branch_and_bound_t<i_t, f_t> branch_and_bound(branch_and_bound_problem,

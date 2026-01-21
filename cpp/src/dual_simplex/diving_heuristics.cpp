@@ -21,7 +21,7 @@ branch_variable_t<i_t> line_search_diving(const std::vector<i_t>& fractional,
   f_t min_score                  = std::numeric_limits<f_t>::max();
   rounding_direction_t round_dir = rounding_direction_t::NONE;
 
-  for (auto j : fractional) {
+  for (i_t j : fractional) {
     f_t score                = inf;
     rounding_direction_t dir = rounding_direction_t::NONE;
 
@@ -71,6 +71,7 @@ branch_variable_t<i_t> pseudocost_diving(pseudo_costs_t<i_t, f_t>& pc,
                                          const std::vector<f_t>& root_solution,
                                          logger_t& log)
 {
+  std::lock_guard<omp_mutex_t> lock(pc.mutex);
   i_t branch_var                 = -1;
   f_t max_score                  = std::numeric_limits<f_t>::lowest();
   rounding_direction_t round_dir = rounding_direction_t::NONE;
@@ -83,19 +84,17 @@ branch_variable_t<i_t> pseudocost_diving(pseudo_costs_t<i_t, f_t>& pc,
   pc.initialized(
     num_initialized_down, num_initialized_up, pseudo_cost_down_avg, pseudo_cost_up_avg);
 
-  for (auto j : fractional) {
+  for (i_t j : fractional) {
     rounding_direction_t dir = rounding_direction_t::NONE;
     f_t f_down               = solution[j] - std::floor(solution[j]);
     f_t f_up                 = std::ceil(solution[j]) - solution[j];
 
-    pc.pseudo_cost_mutex[j].lock();
     f_t pc_down = pc.pseudo_cost_num_down[j] != 0
                     ? pc.pseudo_cost_sum_down[j] / pc.pseudo_cost_num_down[j]
                     : pseudo_cost_down_avg;
 
     f_t pc_up = pc.pseudo_cost_num_up[j] != 0 ? pc.pseudo_cost_sum_up[j] / pc.pseudo_cost_num_up[j]
                                               : pseudo_cost_up_avg;
-    pc.pseudo_cost_mutex[j].unlock();
 
     f_t score_down = std::sqrt(f_up) * (1 + pc_up) / (1 + pc_down);
     f_t score_up   = std::sqrt(f_down) * (1 + pc_down) / (1 + pc_up);
@@ -147,6 +146,7 @@ branch_variable_t<i_t> guided_diving(pseudo_costs_t<i_t, f_t>& pc,
                                      const std::vector<f_t>& incumbent,
                                      logger_t& log)
 {
+  std::lock_guard<omp_mutex_t> lock(pc.mutex);
   i_t branch_var                 = -1;
   f_t max_score                  = std::numeric_limits<f_t>::lowest();
   rounding_direction_t round_dir = rounding_direction_t::NONE;
@@ -159,7 +159,7 @@ branch_variable_t<i_t> guided_diving(pseudo_costs_t<i_t, f_t>& pc,
   pc.initialized(
     num_initialized_down, num_initialized_up, pseudo_cost_down_avg, pseudo_cost_up_avg);
 
-  for (auto j : fractional) {
+  for (i_t j : fractional) {
     f_t f_down    = solution[j] - std::floor(solution[j]);
     f_t f_up      = std::ceil(solution[j]) - solution[j];
     f_t down_dist = std::abs(incumbent[j] - std::floor(solution[j]));
@@ -167,14 +167,12 @@ branch_variable_t<i_t> guided_diving(pseudo_costs_t<i_t, f_t>& pc,
     rounding_direction_t dir =
       down_dist < up_dist + eps ? rounding_direction_t::DOWN : rounding_direction_t::UP;
 
-    pc.pseudo_cost_mutex[j].lock();
     f_t pc_down = pc.pseudo_cost_num_down[j] != 0
                     ? pc.pseudo_cost_sum_down[j] / pc.pseudo_cost_num_down[j]
                     : pseudo_cost_down_avg;
 
     f_t pc_up = pc.pseudo_cost_num_up[j] != 0 ? pc.pseudo_cost_sum_up[j] / pc.pseudo_cost_num_up[j]
                                               : pseudo_cost_up_avg;
-    pc.pseudo_cost_mutex[j].unlock();
 
     f_t score1 = dir == rounding_direction_t::DOWN ? 5 * pc_down * f_down : 5 * pc_up * f_up;
     f_t score2 = dir == rounding_direction_t::DOWN ? pc_up * f_up : pc_down * f_down;
@@ -200,39 +198,34 @@ branch_variable_t<i_t> guided_diving(pseudo_costs_t<i_t, f_t>& pc,
 }
 
 template <typename i_t, typename f_t>
-std::tuple<i_t, i_t> calculate_variable_locks(const lp_problem_t<i_t, f_t>& lp_problem, i_t var_idx)
+void calculate_variable_locks(const lp_problem_t<i_t, f_t>& lp_problem,
+                              std::vector<i_t>& up_locks,
+                              std::vector<i_t>& down_locks)
 {
-  i_t up_lock   = 0;
-  i_t down_lock = 0;
-  i_t start     = lp_problem.A.col_start[var_idx];
-  i_t end       = lp_problem.A.col_start[var_idx + 1];
+  constexpr f_t eps = 1E-6;
+  up_locks.assign(lp_problem.num_cols, 0);
+  down_locks.assign(lp_problem.num_cols, 0);
 
-  for (i_t k = start; k < end; ++k) {
-    f_t nz_val = lp_problem.A.x[k];
-    i_t nz_row = lp_problem.A.i[k];
+  for (i_t j = 0; j < lp_problem.num_cols; ++j) {
+    i_t start = lp_problem.A.col_start[j];
+    i_t end   = lp_problem.A.col_start[j + 1];
 
-    if (std::isfinite(lp_problem.upper[nz_row]) && std::isfinite(lp_problem.lower[nz_row])) {
-      down_lock += 1;
-      up_lock += 1;
-      continue;
-    }
-
-    f_t sign = std::isfinite(lp_problem.upper[nz_row]) ? 1 : -1;
-
-    if (nz_val * sign > 0) {
-      up_lock += 1;
-    } else {
-      down_lock += 1;
+    for (i_t p = start; p < end; ++p) {
+      f_t val = lp_problem.A.x[p];
+      if (std::abs(val) > eps) {
+        up_locks[j]++;
+        down_locks[j]++;
+      }
     }
   }
-
-  return {up_lock, down_lock};
 }
 
 template <typename i_t, typename f_t>
 branch_variable_t<i_t> coefficient_diving(const lp_problem_t<i_t, f_t>& lp_problem,
                                           const std::vector<i_t>& fractional,
                                           const std::vector<f_t>& solution,
+                                          const std::vector<i_t>& up_locks,
+                                          const std::vector<i_t>& down_locks,
                                           logger_t& log)
 {
   i_t branch_var                 = -1;
@@ -240,14 +233,19 @@ branch_variable_t<i_t> coefficient_diving(const lp_problem_t<i_t, f_t>& lp_probl
   rounding_direction_t round_dir = rounding_direction_t::NONE;
   constexpr f_t eps              = 1e-6;
 
-  for (auto j : fractional) {
-    f_t f_down                = solution[j] - std::floor(solution[j]);
-    f_t f_up                  = std::ceil(solution[j]) - solution[j];
-    auto [up_lock, down_lock] = calculate_variable_locks(lp_problem, j);
-    i_t locks                 = std::min(up_lock, down_lock);
+  for (i_t j : fractional) {
+    f_t f_down    = solution[j] - std::floor(solution[j]);
+    f_t f_up      = std::ceil(solution[j]) - solution[j];
+    i_t up_lock   = up_locks[j];
+    i_t down_lock = down_locks[j];
+    f_t upper     = lp_problem.upper[j];
+    f_t lower     = lp_problem.lower[j];
+    if (std::isfinite(upper)) { up_lock++; }
+    if (std::isfinite(lower)) { down_lock++; }
+    i_t alpha = std::min(up_lock, down_lock);
 
-    if (min_locks > locks) {
-      min_locks  = locks;
+    if (min_locks > alpha) {
+      min_locks  = alpha;
       branch_var = j;
 
       if (up_lock < down_lock) {
@@ -293,9 +291,15 @@ template branch_variable_t<int> guided_diving(pseudo_costs_t<int, double>& pc,
                                               const std::vector<double>& incumbent,
                                               logger_t& log);
 
+template void calculate_variable_locks(const lp_problem_t<int, double>& lp_problem,
+                                       std::vector<int>& up_locks,
+                                       std::vector<int>& down_locks);
+
 template branch_variable_t<int> coefficient_diving(const lp_problem_t<int, double>& lp_problem,
                                                    const std::vector<int>& fractional,
                                                    const std::vector<double>& solution,
+                                                   const std::vector<int>& up_locks,
+                                                   const std::vector<int>& down_locks,
                                                    logger_t& log);
 #endif
 
