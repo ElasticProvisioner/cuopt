@@ -38,6 +38,7 @@ struct diving_heuristics_settings_t {
 
 template <typename i_t, typename f_t>
 struct reliability_branching_settings_t {
+  // Enable or disable reliability branching
   bool enable = false;
 
   // For now, setting to 1, which correspond to pseudocost with strong branching
@@ -55,6 +56,9 @@ struct reliability_branching_settings_t {
   // Priority of the tasks created when running the trial branching in parallel.
   // Set to 1 to have the same priority as the other tasks.
   i_t task_priority = 5;
+
+  // Set the max number of tasks spawned for performing strong branching
+  i_t num_tasks = -1;
 };
 
 template <typename i_t, typename f_t>

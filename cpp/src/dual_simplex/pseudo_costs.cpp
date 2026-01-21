@@ -430,8 +430,11 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   // const i_t min_v        = 1;
   // i_t reliable_threshold = std::clamp((1 - gamma) * min_v + gamma * max_v, min_v, max_v);
   // reliable_threshold     = total_lp_iter < max_iter ? reliable_threshold : 0;
-  i_t reliable_threshold = settings.reliability_branching_settings.reliable_threshold;
-  int task_priority      = settings.reliability_branching_settings.task_priority;
+  const i_t reliable_threshold = settings.reliability_branching_settings.reliable_threshold;
+  const int task_priority      = settings.reliability_branching_settings.task_priority;
+  int num_tasks                = settings.reliability_branching_settings.num_tasks;
+  if (num_tasks < 0) { num_tasks = omp_get_num_threads(); }
+  num_tasks = std::max(num_tasks, 1);
 
   std::vector<i_t> pending(fractional.size(), -1);
   std::vector<i_t> next(fractional.size(), -1);
@@ -475,7 +478,8 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   }
 
   while (num_pending != 0) {
-#pragma omp taskloop if (num_pending > 1) priority(task_priority) grainsize(1) untied
+#pragma omp taskloop if (num_pending > 1 && num_tasks > 1) priority(task_priority) \
+  num_tasks(num_tasks) untied
     for (i_t i = 0; i < num_pending; ++i) {
       const i_t j    = pending[i];
       bool is_locked = pseudo_cost_mutex[j].try_lock();
