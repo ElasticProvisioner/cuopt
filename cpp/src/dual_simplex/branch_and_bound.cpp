@@ -1658,10 +1658,29 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                       original_lp_,
                       log);
 
-  settings_.log.printf("Exploring the B&B tree using %d threads (best-first = %d, diving = %d)\n",
-                       settings_.num_threads,
-                       settings_.num_bfs_workers,
-                       settings_.num_threads - settings_.num_bfs_workers);
+  {
+    uint32_t lp_hash = detail::compute_hash(original_lp_.objective);
+    lp_hash ^= detail::compute_hash(original_lp_.A.x.underlying());
+    settings_.log.printf("lp A.x hash: %08x\n",
+                         detail::compute_hash(original_lp_.A.x.underlying()));
+    lp_hash ^= detail::compute_hash(original_lp_.A.i.underlying());
+    settings_.log.printf("lp A.j hash: %08x\n",
+                         detail::compute_hash(original_lp_.A.i.underlying()));
+    lp_hash ^= detail::compute_hash(original_lp_.A.col_start.underlying());
+    settings_.log.printf("lp A.col_start hash: %08x\n",
+                         detail::compute_hash(original_lp_.A.col_start.underlying()));
+    lp_hash ^= detail::compute_hash(original_lp_.rhs);
+    settings_.log.printf("lp rhs hash: %08x\n", detail::compute_hash(original_lp_.rhs));
+    lp_hash ^= detail::compute_hash(original_lp_.lower);
+    settings_.log.printf("lp lower hash: %08x\n", detail::compute_hash(original_lp_.lower));
+    lp_hash ^= detail::compute_hash(original_lp_.upper);
+    settings_.log.printf(
+      "Exploring the B&B tree using %d threads (best-first = %d, diving = %d) [LP hash: %08x]\n",
+      settings_.num_threads,
+      settings_.num_bfs_workers,
+      settings_.num_threads - settings_.num_bfs_workers,
+      lp_hash);
+  }
 
   exploration_stats_.nodes_explored       = 0;
   exploration_stats_.nodes_unexplored     = 2;
@@ -2127,6 +2146,7 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
     }
 
     state_hash = detail::compute_hash(state_data);
+    state_hash ^= pc_.compute_state_hash();
     BSP_DEBUG_LOG_HORIZON_HASH(
       bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_end, state_hash);
   }

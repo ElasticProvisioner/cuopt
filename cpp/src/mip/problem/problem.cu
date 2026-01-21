@@ -19,6 +19,7 @@
 
 #include <mip/presolve/trivial_presolve.cuh>
 #include <mip/utils.cuh>
+#include <utilities/hashing.hpp>
 
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
@@ -1970,10 +1971,12 @@ void problem_t<i_t, f_t>::get_host_user_problem(
   auto stream            = handle_ptr->get_stream();
   user_problem.objective = cuopt::host_copy(objective_coefficients, stream);
 
+  // Explicitly construct ins_vector wrappers to ensure data_ptr is properly initialized
+  // (direct assignment via implicit conversion doesn't update data_ptr correctly)
   dual_simplex::csr_matrix_t<i_t, f_t> csr_A(m, n, nz);
-  csr_A.x         = cuopt::host_copy(coefficients, stream);
-  csr_A.j         = cuopt::host_copy(variables, stream);
-  csr_A.row_start = cuopt::host_copy(offsets, stream);
+  csr_A.x         = ins_vector<f_t>(cuopt::host_copy(coefficients, stream));
+  csr_A.j         = ins_vector<i_t>(cuopt::host_copy(variables, stream));
+  csr_A.row_start = ins_vector<i_t>(cuopt::host_copy(offsets, stream));
 
   csr_A.to_compressed_col(user_problem.A);
 
@@ -2062,21 +2065,36 @@ template <typename i_t, typename f_t>
 uint32_t problem_t<i_t, f_t>::get_fingerprint() const
 {
   // CSR representation should be unique and sorted at this point
+  auto stream = handle_ptr->get_stream();
+
+  uint32_t h_coeff      = detail::compute_hash(coefficients, stream);
+  uint32_t h_vars       = detail::compute_hash(variables, stream);
+  uint32_t h_offsets    = detail::compute_hash(offsets, stream);
+  uint32_t h_rev_coeff  = detail::compute_hash(reverse_coefficients, stream);
+  uint32_t h_rev_off    = detail::compute_hash(reverse_offsets, stream);
+  uint32_t h_rev_constr = detail::compute_hash(reverse_constraints, stream);
+  uint32_t h_obj        = detail::compute_hash(objective_coefficients, stream);
+  uint32_t h_varbounds  = detail::compute_hash(variable_bounds, stream);
+  uint32_t h_clb        = detail::compute_hash(constraint_lower_bounds, stream);
+  uint32_t h_cub        = detail::compute_hash(constraint_upper_bounds, stream);
+  uint32_t h_vartypes   = detail::compute_hash(variable_types, stream);
+  uint32_t h_obj_off    = detail::compute_hash(presolve_data.objective_offset);
+  uint32_t h_obj_scale  = detail::compute_hash(presolve_data.objective_scaling_factor);
 
   std::vector<uint32_t> hashes = {
-    detail::compute_hash(coefficients, handle_ptr->get_stream()),
-    detail::compute_hash(variables, handle_ptr->get_stream()),
-    detail::compute_hash(offsets, handle_ptr->get_stream()),
-    detail::compute_hash(reverse_coefficients, handle_ptr->get_stream()),
-    detail::compute_hash(reverse_offsets, handle_ptr->get_stream()),
-    detail::compute_hash(reverse_constraints, handle_ptr->get_stream()),
-    detail::compute_hash(objective_coefficients, handle_ptr->get_stream()),
-    detail::compute_hash(variable_bounds, handle_ptr->get_stream()),
-    detail::compute_hash(constraint_lower_bounds, handle_ptr->get_stream()),
-    detail::compute_hash(constraint_upper_bounds, handle_ptr->get_stream()),
-    detail::compute_hash(variable_types, handle_ptr->get_stream()),
-    detail::compute_hash(presolve_data.objective_offset),
-    detail::compute_hash(presolve_data.objective_scaling_factor),
+    h_coeff,
+    h_vars,
+    h_offsets,
+    h_rev_coeff,
+    h_rev_off,
+    h_rev_constr,
+    h_obj,
+    h_varbounds,
+    h_clb,
+    h_cub,
+    h_vartypes,
+    h_obj_off,
+    h_obj_scale,
   };
   return detail::compute_hash(hashes);
 }
