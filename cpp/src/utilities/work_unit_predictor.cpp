@@ -25,6 +25,7 @@
 #include <raft/common/nvtx.hpp>
 #include <stdexcept>
 
+#include "models/bounds_strengthening_predictor/header.h"
 #include "models/cpufj_predictor/header.h"
 #include "models/dualsimplex_predictor/header.h"
 #include "models/fj_predictor/header.h"
@@ -79,5 +80,6 @@ template class work_unit_predictor_t<fj_predictor, gpu_work_unit_scaler_t>;
 template class work_unit_predictor_t<cpufj_predictor, cpu_work_unit_scaler_t>;
 template class work_unit_predictor_t<dualsimplex_predictor, cpu_work_unit_scaler_t>;
 template class work_unit_predictor_t<pdlp_predictor, gpu_work_unit_scaler_t>;
+template class work_unit_predictor_t<bounds_strengthening_predictor, cpu_work_unit_scaler_t>;
 
 }  // namespace cuopt

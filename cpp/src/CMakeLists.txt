@@ -1,5 +1,5 @@
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 
@@ -16,7 +16,9 @@ set(UTIL_SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/utilities/seed_generator.cu
                    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/models/dualsimplex_predictor/main.cpp
                    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/models/dualsimplex_predictor/quantize.cpp
                    ${CMAKE_CURRENT_SOURCE_DIR}/utilities/models/pdlp_predictor/main.cpp
-                   ${CMAKE_CURRENT_SOURCE_DIR}/utilities/models/pdlp_predictor/quantize.cpp)
+                   ${CMAKE_CURRENT_SOURCE_DIR}/utilities/models/pdlp_predictor/quantize.cpp
+                   ${CMAKE_CURRENT_SOURCE_DIR}/utilities/models/bounds_strengthening_predictor/main.cpp
+                   ${CMAKE_CURRENT_SOURCE_DIR}/utilities/models/bounds_strengthening_predictor/quantize.cpp)
 
 add_subdirectory(linear_programming)
 add_subdirectory(math_optimization)

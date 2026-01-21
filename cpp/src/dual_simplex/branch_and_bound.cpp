@@ -7,6 +7,7 @@
 
 #include <dual_simplex/branch_and_bound.hpp>
 
+#include <utilities/models/bounds_strengthening_predictor/header.h>
 #include <dual_simplex/bounds_strengthening.hpp>
 #include <dual_simplex/crossover.hpp>
 #include <dual_simplex/initial_basis.hpp>
@@ -20,6 +21,7 @@
 #include <dual_simplex/user_problem.hpp>
 #include <raft/common/nvtx.hpp>
 #include <utilities/hashing.hpp>
+#include <utilities/work_unit_predictor.hpp>
 
 #include <omp.h>
 
@@ -30,6 +32,7 @@
 #include <deque>
 #include <future>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 #include <thread>
@@ -2347,10 +2350,36 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   lp_settings.scale_columns = false;
 
   bool feasible = true;
-  // TODO: incorporate into work unit estimation
-  if (!settings_.deterministic) {
+  if (false) {
+    raft::common::nvtx::range scope_bs("BB::bound_strengthening");
     feasible = worker.node_presolver->bounds_strengthening(
       worker.leaf_problem->lower, worker.leaf_problem->upper, lp_settings);
+
+    if (settings_.deterministic) {
+      static cuopt::work_unit_predictor_t<bounds_strengthening_predictor, cpu_work_unit_scaler_t>
+        bs_predictor;
+
+      const i_t m   = worker.leaf_problem->num_rows;
+      const i_t n   = worker.leaf_problem->num_cols;
+      const i_t nnz = worker.leaf_problem->A.col_start[n];
+
+      i_t num_bounds_changed = 0;
+      for (bool changed : worker.node_presolver->bounds_changed) {
+        if (changed) ++num_bounds_changed;
+      }
+
+      std::map<std::string, float> features;
+      features["m"]              = static_cast<float>(m);
+      features["n"]              = static_cast<float>(n);
+      features["nnz"]            = static_cast<float>(nnz);
+      features["nnz_processed"]  = static_cast<float>(worker.node_presolver->last_nnz_processed);
+      features["bounds_changed"] = static_cast<float>(num_bounds_changed);
+
+      // predicts milliseconds
+      f_t prediction =
+        std::max(f_t(0), static_cast<f_t>(bs_predictor.predict_scalar(features))) / 1000;
+      worker.work_context.record_work(prediction);
+    }
   }
 
   if (!feasible) {
