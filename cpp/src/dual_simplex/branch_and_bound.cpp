@@ -577,10 +577,7 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
   switch (worker_data->worker_type) {
     case bnb_worker_type_t::BEST_FIRST:
 
-      // RINS/SubMIP path
-      if (!enable_concurrent_lp_root_solve()) {
-        branch_var = pc_.variable_selection(fractional, solution, log);
-      } else {
+      if (settings_.reliability_branching_settings.enable) {
         branch_var = pc_.reliable_variable_selection(worker_data->leaf_problem,
                                                      settings_,
                                                      var_types_,
@@ -596,6 +593,8 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
                                                      exploration_stats_.total_lp_iters,
                                                      exploration_stats_.nodes_explored,
                                                      log);
+      } else {
+        branch_var = pc_.variable_selection(fractional, solution, log);
       }
 
       round_dir = martin_criteria(solution[branch_var], root_relax_soln_.x[branch_var]);

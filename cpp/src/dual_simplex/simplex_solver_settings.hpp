@@ -38,6 +38,8 @@ struct diving_heuristics_settings_t {
 
 template <typename i_t, typename f_t>
 struct reliability_branching_settings_t {
+  bool enable = false;
+
   // For now, setting to 1, which correspond to pseudocost with strong branching
   // initialization. Later, it can be set dynamically depending on the number
   // of LP iterations in the strong branching and B&B.

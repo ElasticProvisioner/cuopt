@@ -465,7 +465,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   }
 
   if (num_pending != 0) {
-    log.printf(
+    printf(
       "RB LP iterations = %d, B&B LP iterations = %d reliable_threshold = %d, num strong branches "
       "= %d\n",
       total_lp_iter.load(),

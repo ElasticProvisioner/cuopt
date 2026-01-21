@@ -104,6 +104,7 @@ class sub_mip_recombiner_t : public recombiner_t<i_t, f_t> {
       branch_and_bound_settings.integer_tol     = context.settings.tolerances.integrality_tolerance;
       branch_and_bound_settings.num_threads     = 2;
       branch_and_bound_settings.num_bfs_workers = 1;
+      branch_and_bound_settings.reliability_branching_settings.enable = false;
 
       // In the future, let SubMIP use all the diving heuristics. For now,
       // restricting to guided diving.
