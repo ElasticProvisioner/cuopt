@@ -244,6 +244,7 @@ mip_solution_t<i_t, f_t> solve_mip(optimization_problem_t<i_t, f_t>& op_problem,
 
     if (run_presolve) {
       auto status_to_skip = sol.get_termination_status() == mip_termination_status_t::TimeLimit ||
+                            sol.get_termination_status() == mip_termination_status_t::WorkLimit ||
                             sol.get_termination_status() == mip_termination_status_t::Infeasible;
       auto primal_solution =
         cuopt::device_copy(sol.get_solution(), op_problem.get_handle_ptr()->get_stream());

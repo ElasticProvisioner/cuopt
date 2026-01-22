@@ -1205,7 +1205,8 @@ return status;
 cuopt_int_t test_deterministic_bb(const char* filename,
                                   cuopt_int_t num_runs,
                                   cuopt_int_t num_threads,
-                                  cuopt_float_t time_limit)
+                                  cuopt_float_t time_limit,
+                                  cuopt_float_t work_limit)
 {
   cuOptOptimizationProblem problem = NULL;
   cuOptSolverSettings settings     = NULL;
@@ -1243,6 +1244,12 @@ cuopt_int_t test_deterministic_bb(const char* filename,
   status = cuOptSetFloatParameter(settings, CUOPT_TIME_LIMIT, time_limit);
   if (status != CUOPT_SUCCESS) {
     printf("Error setting time limit: %d\n", status);
+    goto DONE;
+  }
+
+  status = cuOptSetFloatParameter(settings, CUOPT_WORK_LIMIT, work_limit);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error setting work limit: %d\n", status);
     goto DONE;
   }
 

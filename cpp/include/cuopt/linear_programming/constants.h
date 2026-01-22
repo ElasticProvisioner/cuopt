@@ -32,6 +32,7 @@
 #define CUOPT_DUAL_INFEASIBLE_TOLERANCE   "dual_infeasible_tolerance"
 #define CUOPT_ITERATION_LIMIT             "iteration_limit"
 #define CUOPT_TIME_LIMIT                  "time_limit"
+#define CUOPT_WORK_LIMIT                  "work_limit"
 #define CUOPT_PDLP_SOLVER_MODE            "pdlp_solver_mode"
 #define CUOPT_METHOD                      "method"
 #define CUOPT_PER_CONSTRAINT_RESIDUAL     "per_constraint_residual"
@@ -74,6 +75,7 @@
 #define CUOPT_TERIMINATION_STATUS_UNBOUNDED        3
 #define CUOPT_TERIMINATION_STATUS_ITERATION_LIMIT  4
 #define CUOPT_TERIMINATION_STATUS_TIME_LIMIT       5
+#define CUOPT_TERIMINATION_STATUS_WORK_LIMIT       10
 #define CUOPT_TERIMINATION_STATUS_NUMERICAL_ERROR  6
 #define CUOPT_TERIMINATION_STATUS_PRIMAL_FEASIBLE  7
 #define CUOPT_TERIMINATION_STATUS_FEASIBLE_FOUND   8
