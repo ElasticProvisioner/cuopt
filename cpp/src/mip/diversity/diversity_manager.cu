@@ -194,7 +194,6 @@ bool diversity_manager_t<i_t, f_t>::run_presolve(f_t time_limit)
     if (context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC) {
       time_for_probing_cache = std::numeric_limits<f_t>::infinity();
     }
-    time_for_probing_cache = 0;
     timer_t probing_timer{time_for_probing_cache};
     // this function computes probing cache, finds singletons, substitutions and changes the problem
     bool problem_is_infeasible =
