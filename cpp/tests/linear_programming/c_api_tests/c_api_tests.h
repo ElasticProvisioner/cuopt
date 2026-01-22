@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -34,6 +34,11 @@ cuopt_int_t test_quadratic_problem(cuopt_int_t* termination_status_ptr,
                                    cuopt_float_t* objective_ptr);
 cuopt_int_t test_quadratic_ranged_problem(cuopt_int_t* termination_status_ptr,
                                           cuopt_float_t* objective_ptr);
+
+cuopt_int_t test_deterministic_bb(const char* filename,
+                                  cuopt_int_t num_runs,
+                                  cuopt_int_t num_threads,
+                                  cuopt_float_t time_limit);
 
 #ifdef __cplusplus
 }

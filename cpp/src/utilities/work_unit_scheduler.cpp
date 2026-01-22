@@ -36,7 +36,6 @@ void work_unit_scheduler_t::register_context(work_limit_context_t& ctx)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   contexts_.push_back(ctx);
-  callback_queues_[&ctx]  = callback_queue_t{};
   last_sync_target_[&ctx] = 0.0;
   ctx.scheduler           = this;
 }
@@ -51,7 +50,6 @@ void work_unit_scheduler_t::deregister_context(work_limit_context_t& ctx)
                                    return &ref.get() == &ctx;
                                  }),
                   contexts_.end());
-  callback_queues_.erase(&ctx);
   last_sync_target_.erase(&ctx);
   cv_.notify_all();
 }
@@ -101,16 +99,6 @@ sync_result_t work_unit_scheduler_t::wait_for_next_sync(work_limit_context_t& ct
 
   return stopped_.load() ? sync_result_t::STOPPED : sync_result_t::CONTINUE;
 }
-
-// void work_unit_scheduler_t::queue_callback(work_limit_context_t& source,
-//                                            work_limit_context_t& destination,
-//                                            callback_t callback)
-// {
-//   std::lock_guard<std::mutex> lock(mutex_);
-//   double tag = source.global_work_units_elapsed;
-//   auto it    = callback_queues_.find(&destination);
-//   if (it != callback_queues_.end()) { it->second.push({tag, std::move(callback)}); }
-// }
 
 double work_unit_scheduler_t::current_sync_target() const
 {
@@ -166,12 +154,6 @@ void work_unit_scheduler_t::wait_at_sync_point(work_limit_context_t& ctx, double
 
   size_t my_exit_generation = exit_generation_;
 
-  if (verbose) { CUOPT_LOG_DEBUG("[%s] Processing callbacks", ctx.name.c_str()); }
-  // lock.unlock();
-  // process_callbacks_for_context(ctx, sync_target);
-  // lock.lock();
-  if (verbose) { CUOPT_LOG_DEBUG("[%s] Done processing callbacks", ctx.name.c_str()); }
-
   contexts_at_barrier_--;
   if (contexts_at_barrier_ == 0) {
     exit_generation_++;
@@ -204,11 +186,5 @@ void work_unit_scheduler_t::wait_at_sync_point(work_limit_context_t& ctx, double
                     wait_secs * 1000.0);
   }
 }
-
-// void work_unit_scheduler_t::process_callbacks_for_context(work_limit_context_t& ctx,
-//                                                           double up_to_work_units)
-// {
-
-// }
 
 }  // namespace cuopt

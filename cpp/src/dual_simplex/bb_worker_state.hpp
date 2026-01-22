@@ -133,7 +133,6 @@ struct bb_worker_state_t {
 
   // Per-horizon statistics (reset each horizon)
   i_t nodes_processed_this_horizon{0};
-  double work_units_this_horizon{0.0};
 
   // Cumulative statistics (across all horizons)
   i_t total_nodes_processed{0};
@@ -142,7 +141,6 @@ struct bb_worker_state_t {
   i_t total_nodes_infeasible{0};
   i_t total_integer_solutions{0};
   i_t total_nodes_assigned{0};  // via load balancing
-  double total_work_units{0.0};
 
   // Timing statistics (in seconds)
   double total_runtime{0.0};      // Total time spent doing actual work
@@ -213,7 +211,6 @@ struct bb_worker_state_t {
     events.horizon_end           = horizon_end;
     event_sequence               = 0;
     nodes_processed_this_horizon = 0;
-    work_units_this_horizon      = 0.0;
     // Also sync work_context to match clock for consistent tracking
     work_context.global_work_units_elapsed = horizon_start;
     // Note: next_creation_seq is NOT reset - it's cumulative for unique identity
@@ -383,15 +380,6 @@ struct bb_worker_state_t {
     return plunge_stack.size() + backlog.size() + (current_node != nullptr ? 1 : 0);
   }
 
-  // Extract only backlog nodes (for redistribution at horizon sync)
-  // Plunge stack nodes stay with worker for locality
-  std::vector<mip_node_t<i_t, f_t>*> extract_backlog_nodes()
-  {
-    std::vector<mip_node_t<i_t, f_t>*> nodes = std::move(backlog);
-    backlog.clear();
-    return nodes;
-  }
-
   // Record an event
   void record_event(bb_event_t<i_t, f_t> event)
   {
@@ -438,15 +426,6 @@ struct bb_worker_state_t {
   void record_numerical(mip_node_t<i_t, f_t>* node)
   {
     record_event(bb_event_t<i_t, f_t>::make_numerical(clock, worker_id, node->node_id, 0));
-  }
-
-  // Update clock with work units
-  void advance_clock(double work_units)
-  {
-    clock += work_units;
-    work_units_this_horizon += work_units;
-    total_work_units += work_units;
-    work_context.record_work(work_units);
   }
 
   // Track node processed (called when a node LP solve completes)
@@ -549,7 +528,6 @@ struct bsp_diving_worker_state_t {
   // Statistics
   // ==========================================================================
 
-  i_t nodes_explored_this_horizon{0};
   i_t total_nodes_explored{0};
   i_t total_integer_solutions{0};
   i_t total_dives{0};
@@ -596,8 +574,7 @@ struct bsp_diving_worker_state_t {
     horizon_end                            = end;
     work_context.global_work_units_elapsed = start;
 
-    local_upper_bound           = upper_bound;
-    nodes_explored_this_horizon = 0;
+    local_upper_bound = upper_bound;
     // Note: Don't clear dive_queue here - workers may still have nodes to process
     integer_solutions.clear();
     recompute_bounds_and_basis = true;

@@ -20,7 +20,6 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
-#include <queue>
 #include <unordered_map>
 #include <vector>
 
@@ -35,8 +34,6 @@ enum class sync_result_t {
 
 class work_unit_scheduler_t {
  public:
-  using callback_t = std::function<void()>;
-
   explicit work_unit_scheduler_t(double sync_interval = 5.0);
 
   void set_sync_interval(double interval);
@@ -45,9 +42,6 @@ class work_unit_scheduler_t {
   void register_context(work_limit_context_t& ctx);
   void deregister_context(work_limit_context_t& ctx);
   void on_work_recorded(work_limit_context_t& ctx, double total_work);
-  // void queue_callback(work_limit_context_t& source,
-  //                     work_limit_context_t& destination,
-  //                     callback_t callback);
 
   // Sync callback support - callback is executed when all contexts reach sync point
   // If callback returns true, scheduler stops and all workers exit cleanly
@@ -66,25 +60,10 @@ class work_unit_scheduler_t {
   double sync_interval_;
 
  private:
-  struct tagged_callback_t {
-    double work_unit_tag;
-    callback_t callback;
-
-    bool operator>(const tagged_callback_t& other) const
-    {
-      return work_unit_tag > other.work_unit_tag;
-    }
-  };
-
-  using callback_queue_t =
-    std::priority_queue<tagged_callback_t, std::vector<tagged_callback_t>, std::greater<>>;
-
   double current_sync_target() const;
   void wait_at_sync_point(work_limit_context_t& ctx, double sync_target);
-  void process_callbacks_for_context(work_limit_context_t& ctx, double up_to_work_units);
 
   std::vector<std::reference_wrapper<work_limit_context_t>> contexts_;
-  std::unordered_map<work_limit_context_t*, callback_queue_t> callback_queues_;
   std::unordered_map<work_limit_context_t*, double> last_sync_target_;
 
   std::mutex mutex_;

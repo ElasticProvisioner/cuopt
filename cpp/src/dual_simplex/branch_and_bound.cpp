@@ -2062,13 +2062,12 @@ void branch_and_bound_t<i_t, f_t>::run_worker_loop(bb_worker_state_t<i_t, f_t>& 
       // Track last solved node for warm-start detection
       worker.last_solved_node = node;
 
-      // Handle result
-      worker.current_node = nullptr;
       if (status == node_solve_info_t::TIME_LIMIT || status == node_solve_info_t::WORK_LIMIT) {
         // Time/work limit hit - the loop head will detect this and terminate properly
         continue;
       }
       // Node completed successfully - loop back to process children
+      worker.current_node = nullptr;
       continue;
     }
 
@@ -2101,45 +2100,6 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
     bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_start, horizon_end);
 
   bb_event_batch_t<i_t, f_t> all_events = bsp_workers_->collect_and_sort_events();
-
-  // // Diagnostic logging: event boundaries
-  // {
-  //   settings_.log.printf("SYNC S%d: horizon=[%.6f, %.6f], %zu events\n",
-  //                        bsp_horizon_number_, horizon_start, horizon_end,
-  //                        all_events.events.size());
-
-  //   if (!all_events.events.empty()) {
-  //     double min_wut = all_events.events.front().wut;
-  //     double max_wut = all_events.events.back().wut;
-  //     settings_.log.printf("  Event WUT range: [%.6f, %.6f]\n", min_wut, max_wut);
-
-  //     // Log events near horizon boundary (within 1% of horizon_step)
-  //     double boundary_epsilon = bsp_horizon_step_ * 0.01;
-  //     for (const auto& event : all_events.events) {
-  //       if (std::abs(event.wut - horizon_end) < boundary_epsilon ||
-  //           std::abs(event.wut - horizon_start) < boundary_epsilon) {
-  //         const char* type_str = "?";
-  //         switch (event.type) {
-  //           case bb_event_type_t::NODE_BRANCHED: type_str = "BRANCHED"; break;
-  //           case bb_event_type_t::NODE_FATHOMED: type_str = "FATHOMED"; break;
-  //           case bb_event_type_t::NODE_INTEGER: type_str = "INTEGER"; break;
-  //           case bb_event_type_t::NODE_INFEASIBLE: type_str = "INFEASIBLE"; break;
-  //           case bb_event_type_t::NODE_PAUSED: type_str = "PAUSED"; break;
-  //           case bb_event_type_t::NODE_NUMERICAL: type_str = "NUMERICAL"; break;
-  //           case bb_event_type_t::HEURISTIC_SOLUTION: type_str = "HEURISTIC"; break;
-  //         }
-  //         settings_.log.printf("  BOUNDARY EVENT: wut=%.9f, worker=%d, node=%d, type=%s\n",
-  //                              event.wut, event.worker_id, event.node_id, type_str);
-  //       }
-  //     }
-  //   }
-
-  //   // Log per-worker clock values
-  //   for (const auto& worker : *bsp_workers_) {
-  //     settings_.log.printf("  Worker %d: clock=%.6f, work_this_horizon=%.6f\n",
-  //                          worker.worker_id, worker.clock, worker.work_units_this_horizon);
-  //   }
-  // }
 
   BSP_DEBUG_LOG_SYNC_PHASE_START(
     bsp_debug_settings_, bsp_debug_logger_, horizon_end, all_events.size());
@@ -2536,12 +2496,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
 
   double work_performed = worker.work_context.global_work_units_elapsed - work_units_at_start;
   worker.clock += work_performed;
-  worker.work_units_this_horizon += work_performed;
-
-  // // Diagnostic: log work performed for each node solve
-  // settings_.log.printf("NODE_SOLVE: W%d N%d: iters=%d work=%.9f clock=%.9f horizon_end=%.6f\n",
-  //                      worker.worker_id, node_ptr->node_id, node_iter,
-  //                      work_performed, worker.clock, worker.horizon_end);
 
   exploration_stats_.total_lp_solve_time += toc(lp_start_time);
   exploration_stats_.total_lp_iters += node_iter;
@@ -2726,6 +2680,8 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
 
   } else if (lp_status == dual::status_t::TIME_LIMIT) {
     return node_solve_info_t::TIME_LIMIT;
+  } else if (lp_status == dual::status_t::WORK_LIMIT) {
+    return node_solve_info_t::WORK_LIMIT;
 
   } else {
     worker.record_numerical(node_ptr);
@@ -2822,8 +2778,7 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
         case bb_event_type_t::NODE_BRANCHED:
         case bb_event_type_t::NODE_FATHOMED:
         case bb_event_type_t::NODE_INFEASIBLE:
-        case bb_event_type_t::NODE_NUMERICAL:
-        case bb_event_type_t::HEURISTIC_SOLUTION: break;
+        case bb_event_type_t::NODE_NUMERICAL: break;
       }
     }
 
@@ -3183,28 +3138,6 @@ void branch_and_bound_t<i_t, f_t>::merge_diving_solutions()
 {
   if (!bsp_diving_workers_) return;
 
-  // // Diagnostic logging for diving workers
-  // {
-  //   int total_solutions = 0;
-  //   int total_nodes_explored = 0;
-  //   for (const auto& worker : *bsp_diving_workers_) {
-  //     total_solutions += worker.integer_solutions.size();
-  //     total_nodes_explored += worker.nodes_explored_this_horizon;
-  //   }
-  //   settings_.log.printf("  Diving workers: %d solutions, %d nodes explored this horizon\n",
-  //                        total_solutions, total_nodes_explored);
-
-  //   // Log per-diving-worker state
-  //   for (const auto& worker : *bsp_diving_workers_) {
-  //     if (worker.nodes_explored_this_horizon > 0 || !worker.integer_solutions.empty()) {
-  //       settings_.log.printf("    DW%d: clock=%.6f, nodes=%d, sols=%zu\n",
-  //                            worker.worker_id, worker.clock,
-  //                            worker.nodes_explored_this_horizon,
-  //                            worker.integer_solutions.size());
-  //     }
-  //   }
-  // }
-
   // Collect all integer solutions from diving workers
   std::vector<queued_integer_solution_t<i_t, f_t>*> all_solutions;
   for (auto& worker : *bsp_diving_workers_) {
@@ -3399,7 +3332,6 @@ void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_state_t<i_t, 
                                                                &worker.work_context);
 
     ++nodes_this_dive;
-    ++worker.nodes_explored_this_horizon;
     ++worker.total_nodes_explored;
 
     worker.clock = worker.work_context.global_work_units_elapsed;

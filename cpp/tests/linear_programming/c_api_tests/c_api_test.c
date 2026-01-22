@@ -1201,3 +1201,113 @@ cuOptDestroySolution(&solution);
 
 return status;
 }
+
+cuopt_int_t test_deterministic_bb(const char* filename,
+                                  cuopt_int_t num_runs,
+                                  cuopt_int_t num_threads,
+                                  cuopt_float_t time_limit)
+{
+  cuOptOptimizationProblem problem = NULL;
+  cuOptSolverSettings settings     = NULL;
+  cuopt_float_t first_objective    = 0.0;
+  cuopt_int_t first_status         = -1;
+  cuopt_int_t status;
+  cuopt_int_t run;
+
+  printf("Testing deterministic B&B: %s with %d threads, %d runs\n", filename, num_threads, num_runs);
+
+  status = cuOptReadProblem(filename, &problem);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error reading problem: %d\n", status);
+    goto DONE;
+  }
+
+  status = cuOptCreateSolverSettings(&settings);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error creating solver settings: %d\n", status);
+    goto DONE;
+  }
+
+  status = cuOptSetIntegerParameter(settings, CUOPT_MIP_DETERMINISM_MODE, CUOPT_MODE_DETERMINISTIC);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error setting determinism mode: %d\n", status);
+    goto DONE;
+  }
+
+  status = cuOptSetIntegerParameter(settings, CUOPT_NUM_CPU_THREADS, num_threads);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error setting num threads: %d\n", status);
+    goto DONE;
+  }
+
+  status = cuOptSetFloatParameter(settings, CUOPT_TIME_LIMIT, time_limit);
+  if (status != CUOPT_SUCCESS) {
+    printf("Error setting time limit: %d\n", status);
+    goto DONE;
+  }
+
+  for (run = 0; run < num_runs; run++) {
+    cuOptSolution solution = NULL;
+    cuopt_float_t objective;
+    cuopt_int_t termination_status;
+
+    status = cuOptSolve(problem, settings, &solution);
+    if (status != CUOPT_SUCCESS) {
+      printf("Error solving problem on run %d: %d\n", run, status);
+      cuOptDestroySolution(&solution);
+      goto DONE;
+    }
+
+    status = cuOptGetObjectiveValue(solution, &objective);
+    if (status != CUOPT_SUCCESS) {
+      printf("Error getting objective value on run %d: %d\n", run, status);
+      cuOptDestroySolution(&solution);
+      goto DONE;
+    }
+
+    status = cuOptGetTerminationStatus(solution, &termination_status);
+    if (status != CUOPT_SUCCESS) {
+      printf("Error getting termination status on run %d: %d\n", run, status);
+      cuOptDestroySolution(&solution);
+      goto DONE;
+    }
+
+    printf("Run %d: status=%s (%d), objective=%f\n",
+           run,
+           termination_status_to_string(termination_status),
+           termination_status,
+           objective);
+
+    if (run == 0) {
+      first_objective = objective;
+      first_status    = termination_status;
+    } else {
+      if (first_status != termination_status) {
+        printf("Determinism failure: run %d termination status %d differs from run 0 status %d\n",
+               run,
+               termination_status,
+               first_status);
+        status = CUOPT_VALIDATION_ERROR;
+        cuOptDestroySolution(&solution);
+        goto DONE;
+      }
+      if (first_objective != objective) {
+        printf("Determinism failure: run %d objective %f differs from run 0 objective %f\n",
+               run,
+               objective,
+               first_objective);
+        status = CUOPT_VALIDATION_ERROR;
+        cuOptDestroySolution(&solution);
+        goto DONE;
+      }
+    }
+    cuOptDestroySolution(&solution);
+  }
+
+  printf("Deterministic B&B test PASSED: all %d runs produced identical results\n", num_runs);
+
+DONE:
+  cuOptDestroyProblem(&problem);
+  cuOptDestroySolverSettings(&settings);
+  return status;
+}
