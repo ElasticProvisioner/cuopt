@@ -31,8 +31,7 @@ constexpr int default_int_lower     = std::numeric_limits<int>::min();
 constexpr double zero_bound         = 0.;
 
 template <typename i_t>
-inline uint32_t compute_hash(raft::device_span<i_t> values,
-                             rmm::cuda_stream_view stream = rmm::cuda_stream_default)
+inline uint32_t compute_hash(raft::device_span<i_t> values, rmm::cuda_stream_view stream)
 {
   auto h_contents = cuopt::host_copy(values, stream);
   RAFT_CHECK_CUDA(stream);
@@ -40,8 +39,7 @@ inline uint32_t compute_hash(raft::device_span<i_t> values,
 }
 
 template <typename i_t>
-inline uint32_t compute_hash(const rmm::device_uvector<i_t>& values,
-                             rmm::cuda_stream_view stream = rmm::cuda_stream_default)
+inline uint32_t compute_hash(const rmm::device_uvector<i_t>& values, rmm::cuda_stream_view stream)
 {
   auto h_contents = cuopt::host_copy(values, stream);
   RAFT_CHECK_CUDA(stream);
