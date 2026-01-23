@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights
  * reserved. SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -130,6 +130,9 @@ void fill_knapsack_constraints(const dual_simplex::user_problem_t<i_t, f_t>& pro
 {
   // we might add additional constraints for the equality constraints
   i_t added_constraints = 0;
+  // in user problems, ranged constraint ids monotonically increase.
+  // when a row sense is "E", check if it is ranged constraint and treat accordingly
+  i_t ranged_constraint_counter = 0;
   for (i_t i = 0; i < A.m; i++) {
     std::pair<i_t, i_t> constraint_range = A.get_constraint_range(i);
     if (constraint_range.second - constraint_range.first < 2) {
@@ -160,9 +163,17 @@ void fill_knapsack_constraints(const dual_simplex::user_problem_t<i_t, f_t>& pro
       for (i_t j = constraint_range.first; j < constraint_range.second; j++) {
         knapsack_constraint.entries.push_back({A.j[j], -A.x[j]});
       }
-    } else if (problem.row_sense[i] == 'E') {
+    }
+    // equality part
+    else {
+      bool ranged_constraint = ranged_constraint_counter < problem.num_range_rows &&
+                               problem.range_rows[ranged_constraint_counter] == i;
       // less than part
       knapsack_constraint.rhs = problem.rhs[i];
+      if (ranged_constraint) {
+        knapsack_constraint.rhs += problem.range_value[ranged_constraint_counter];
+        ranged_constraint_counter++;
+      }
       for (i_t j = constraint_range.first; j < constraint_range.second; j++) {
         knapsack_constraint.entries.push_back({A.j[j], A.x[j]});
       }
@@ -473,12 +484,14 @@ void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
                    problem.row_sense.end(),
                    [&removal_marker, n = i_t(0)](char) mutable { return removal_marker[n++]; });
   problem.row_sense.erase(new_end, problem.row_sense.end());
+  int n = 0;
   // Remove problem.rhs entries for which removal_marker is true, using remove_if
-  auto new_end_rhs = std::remove_if(
-    problem.rhs.begin(), problem.rhs.end(), [&removal_marker, n = i_t(0)](f_t) mutable {
+  auto new_end_rhs =
+    std::remove_if(problem.rhs.begin(), problem.rhs.end(), [&removal_marker, &n](f_t) mutable {
       return removal_marker[n++];
     });
   problem.rhs.erase(new_end_rhs, problem.rhs.end());
+  CUOPT_LOG_DEBUG("Number of removed constraints by clique covering: %d", n);
 }
 
 template <typename i_t, typename f_t>
@@ -525,10 +538,6 @@ template <typename i_t, typename f_t>
 void find_initial_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
                           typename mip_solver_settings_t<i_t, f_t>::tolerances_t tolerances)
 {
-  if (problem.num_range_rows > 0) {
-    CUOPT_LOG_ERROR("Range rows are not supported yet");
-    exit(1);
-  }
   std::vector<knapsack_constraint_t<i_t, f_t>> knapsack_constraints;
   std::unordered_set<i_t> set_packing_constraints;
   dual_simplex::csr_matrix_t<i_t, f_t> A(problem.num_rows, problem.num_cols, 0);
