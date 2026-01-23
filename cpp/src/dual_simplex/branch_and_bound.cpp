@@ -1000,6 +1000,11 @@ template <typename i_t, typename f_t>
 lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
   simplex_solver_settings_t<i_t, f_t> const& lp_settings)
 {
+  f_t start_time          = tic();
+  f_t user_objective      = 0;
+  i_t iter                = 0;
+  std::string solver_name = "";
+
   // Root node path
   lp_status_t root_status;
   std::future<lp_status_t> root_status_future;
@@ -1020,8 +1025,6 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
   }
 
   if (root_crossover_solution_set_.load(std::memory_order_acquire)) {
-    settings_.log.printf("\nRunning crossover\n\n");
-
     // Crush the root relaxation solution on converted user problem
     std::vector<f_t> crushed_root_x;
     crush_primal_solution(
@@ -1054,23 +1057,39 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
 
     // Check if crossover was stopped by dual simplex
     if (crossover_status == crossover_status_t::OPTIMAL) {
-      settings_.log.printf("\nCrossover found an optimal solution for the root relaxation\n\n");
-      root_solver_type_ = root_solver_type_t::CROSSOVER;
-
       set_root_concurrent_halt(1);  // Stop dual simplex
       root_status = root_status_future.get();
+
       // Override the root relaxation solution with the crossover solution
       root_relax_soln_ = root_crossover_soln_;
       root_vstatus_    = crossover_vstatus_;
       root_status      = lp_status_t::OPTIMAL;
+      user_objective   = root_crossover_soln_.user_objective;
+      iter             = root_crossover_soln_.iterations;
+      solver_name      = "Barrier/PDLP and Crossover";
+
     } else {
-      root_status       = root_status_future.get();
-      root_solver_type_ = root_solver_type_t::DUAL_SIMPLEX;
+      root_status    = root_status_future.get();
+      user_objective = root_relax_soln_.user_objective;
+      iter           = root_relax_soln_.iterations;
+      solver_name    = "Dual Simplex";
     }
   } else {
-    root_status       = root_status_future.get();
-    root_solver_type_ = root_solver_type_t::DUAL_SIMPLEX;
+    root_status    = root_status_future.get();
+    user_objective = root_relax_soln_.user_objective;
+    iter           = root_relax_soln_.iterations;
+    solver_name    = "Dual Simplex";
   }
+
+  settings_.log.printf("\n");
+  settings_.log.printf("Root relaxation solution found in %d iterations and %.2fs by %s\n",
+                       iter,
+                       toc(start_time),
+                       solver_name.c_str());
+  settings_.log.printf("Root relaxation objective %+.8e\n", user_objective);
+  settings_.log.printf("\n");
+
+  is_root_solution_set = true;
   return root_status;
 }
 
@@ -1242,11 +1261,10 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   worker_pool_.init(2 * settings_.num_threads, original_lp_, Arow_, var_types_, settings_);
   active_workers_per_type.fill(0);
 
-  settings_.log.printf(
-    "\nExploring the B&B tree using %d threads (best-first = %d, diving = %d)\n\n",
-    settings_.num_threads,
-    settings_.num_bfs_workers,
-    settings_.num_threads - settings_.num_bfs_workers);
+  settings_.log.printf("Exploring the B&B tree using %d threads (best-first = %d, diving = %d)\n\n",
+                       settings_.num_threads,
+                       settings_.num_bfs_workers,
+                       settings_.num_threads - settings_.num_bfs_workers);
 
   exploration_stats_.nodes_explored       = 0;
   exploration_stats_.nodes_unexplored     = 2;
