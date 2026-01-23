@@ -479,7 +479,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
 
   omp_atomic_t<i_t> unchanged = 0;
   int num_tasks               = settings.reliability_branching_settings.num_tasks;
-  num_tasks                   = std::clamp<int>(num_tasks, 1, unreliable_list.size());
+  num_tasks                   = std::clamp<int>(num_tasks, 1, num_sb_vars);
   assert(num_tasks > 0);
 
   settings.log.printf("RB iters = %d, B&B iters = %d, unreliable = %d, num_tasks = %d\n",
