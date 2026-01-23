@@ -264,7 +264,7 @@ void optimization_problem_solution_t<i_t, f_t>::write_to_file(std::string_view f
 template <typename i_t, typename f_t>
 void optimization_problem_solution_t<i_t, f_t>::set_solve_time(double ms)
 {
-  // TODO batch mode: shouldn't we have a different solve time per climber?
+  // TODO later batch mode: shouldn't we have a different solve time per climber?
   // Currently the issue is that we would need one solve time per climber and one overall solve time
   std::for_each(termination_stats_.begin(), termination_stats_.end(), [ms](auto& termination) { termination.solve_time = ms; });
 }
@@ -280,7 +280,7 @@ void optimization_problem_solution_t<i_t, f_t>::set_termination_status(
 template <typename i_t, typename f_t>
 double optimization_problem_solution_t<i_t, f_t>::get_solve_time() const
 {
-  // TODO batch mode: shouldn't we have a different solve time per climber?
+  // TODO later batch mode: shouldn't we have a different solve time per climber?
   // Currently the issue is that we would need one solve time per climber and one overall solve tim
   return termination_stats_[0].solve_time;
 }

@@ -637,7 +637,6 @@ std::optional<optimization_problem_solution_t<i_t, f_t>> pdlp_solver_t<i_t, f_t>
       #ifdef BATCH_VERBOSE_MODE
       std::cout << "Original batch size was " << original_batch_size << " but is now " << climber_strategies_.size() << std::endl;
       #endif
-      // TODO batch mode: optimize if it's a perf issue
       cuopt_assert(current_termination_strategy_.get_terminations_status().size() == climber_strategies_.size(), "Terminations status size mismatch");
       for (size_t i = 0; i < current_termination_strategy_.get_terminations_status().size(); ++i) {
         // Found one that is done
@@ -2537,7 +2536,7 @@ void pdlp_solver_t<i_t, f_t>::compute_initial_primal_weight()
 
   // Here we use the combined bounds of the op_problem_scaled which may or may not be scaled yet
   // based on pdlp config
-  // TODO batch mode: is this safe if combined bounds is larger? Same for below with objectife coefficient 
+  // TODO later batch mode: handle per problem objective coefficients and rhs
   detail::combine_constraint_bounds<i_t, f_t>(op_problem_scaled_,
                                               op_problem_scaled_.combined_bounds);
   rmm::device_scalar<f_t> c_vec_norm{0.0, stream_view_};

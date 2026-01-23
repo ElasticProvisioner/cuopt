@@ -486,7 +486,7 @@ pdlp_termination_strategy_t<i_t, f_t>::fill_return_problem_solution(
     term_stats_vector(climber_strategies_.size());
   for (size_t i = 0; i < climber_strategies_.size(); ++i)
   {
-    // TODO batch mode: handle per climber number_of_iterations
+    // TODO later batch mode: handle per climber number_of_iterations
     term_stats_vector[i].number_of_steps_taken           = number_of_iterations;
     term_stats_vector[i].total_number_of_attempted_steps = current_pdhg_solver.get_total_pdhg_iterations();
 
