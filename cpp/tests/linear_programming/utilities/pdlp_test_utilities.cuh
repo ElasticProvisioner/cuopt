@@ -64,7 +64,7 @@ static void test_constraint_sanity(
   bool presolve_enabled = false)
 {
   const std::vector<double> primal_vars =
-    host_copy(solution.get_primal_solution(), solution.get_primal_solution().stream());
+    host_copy(primal_solution, primal_solution.stream());
   const std::vector<double>& values                  = op_problem.get_constraint_matrix_values();
   const std::vector<int>& indices                    = op_problem.get_constraint_matrix_indices();
   const std::vector<int>& offsets                    = op_problem.get_constraint_matrix_offsets();
