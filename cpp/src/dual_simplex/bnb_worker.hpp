@@ -259,17 +259,17 @@ std::vector<bnb_worker_type_t> bnb_get_worker_types(diving_heuristics_settings_t
   return types;
 }
 
-template <typename f_t, typename i_t>
-std::array<i_t, bnb_num_worker_types> bnb_get_num_workers_round_robin(
-  i_t num_threads, diving_heuristics_settings_t<i_t, f_t> settings)
+template <typename i_t>
+std::array<i_t, bnb_num_worker_types> bnb_get_max_workers(
+  i_t num_workers, std::vector<bnb_worker_type_t> worker_types)
 {
   std::array<i_t, bnb_num_worker_types> max_num_workers;
-  auto worker_types = bnb_get_worker_types(settings);
-
   max_num_workers.fill(0);
-  max_num_workers[BEST_FIRST] = std::max(1, num_threads / 4);
 
-  i_t diving_workers = settings.num_diving_workers;
+  i_t bfs_workers = std::max(worker_types.size() == 1 ? num_workers : num_workers / 4, 1);
+  max_num_workers[BEST_FIRST] = bfs_workers;
+
+  i_t diving_workers = (num_workers - bfs_workers);
   i_t m              = worker_types.size() - 1;
 
   for (size_t i = 1, k = 0; i < worker_types.size(); ++i) {

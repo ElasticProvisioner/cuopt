@@ -1249,19 +1249,17 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   node_queue_.push(search_tree_.root.get_up_child());
 
   diving_heuristics_settings_t<i_t, f_t> diving_settings = settings_.diving_settings;
+  const i_t num_workers                                  = 2 * settings_.num_threads;
   bool is_ramp_up_finished                               = false;
 
   std::vector<bnb_worker_type_t> worker_types = {BEST_FIRST};
   std::array<i_t, bnb_num_worker_types> max_num_workers_per_type;
   max_num_workers_per_type.fill(0);
-  max_num_workers_per_type[BEST_FIRST] = settings_.num_threads;
-  worker_pool_.init(settings_.num_threads, original_lp_, Arow_, var_types_, settings_);
+  max_num_workers_per_type[BEST_FIRST] = num_workers;
+  worker_pool_.init(num_workers, original_lp_, Arow_, var_types_, settings_);
   active_workers_per_type.fill(0);
 
-  settings_.log.printf("Exploring the B&B tree using %d threads (best-first = %d, diving = %d)\n\n",
-                       settings_.num_threads,
-                       settings_.num_bfs_workers,
-                       settings_.num_threads - settings_.num_bfs_workers);
+  settings_.log.printf("Exploring the B&B tree using %d threads\n\n", settings_.num_threads);
 
   exploration_stats_.nodes_explored       = 0;
   exploration_stats_.nodes_unexplored     = 2;
@@ -1301,10 +1299,9 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
         if (!is_ramp_up_finished) {
           if (node_queue_.best_first_queue_size() >= min_node_queue_size_) {
             if (!std::isfinite(upper_bound_)) { diving_settings.guided_diving = false; }
-            max_num_workers_per_type =
-              bnb_get_num_workers_round_robin(settings_.num_threads, diving_settings);
-            worker_types        = bnb_get_worker_types(diving_settings);
-            is_ramp_up_finished = true;
+            worker_types             = bnb_get_worker_types(diving_settings);
+            max_num_workers_per_type = bnb_get_max_workers(num_workers, worker_types);
+            is_ramp_up_finished      = true;
 
 #ifdef CUOPT_LOG_DEBUG
             settings_.log.debug(
@@ -1326,9 +1323,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
         if (settings_.diving_settings.guided_diving != diving_settings.guided_diving) {
           if (std::isfinite(upper_bound_)) {
             diving_settings.guided_diving = settings_.diving_settings.guided_diving;
-            max_num_workers_per_type =
-              bnb_get_num_workers_round_robin(settings_.num_threads, diving_settings);
-            worker_types = bnb_get_worker_types(diving_settings);
+            worker_types                  = bnb_get_worker_types(diving_settings);
+            max_num_workers_per_type      = bnb_get_max_workers(num_workers, worker_types);
 
 #ifdef CUOPT_LOG_DEBUG
             for (auto type : worker_types) {
