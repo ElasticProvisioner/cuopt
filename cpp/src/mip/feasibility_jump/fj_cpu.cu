@@ -13,6 +13,8 @@
 
 #include <utilities/seed_generator.cuh>
 
+#include <raft/common/nvtx.hpp>
+
 #include <chrono>
 #include <iomanip>
 #include <mutex>
@@ -23,6 +25,16 @@
 #include <vector>
 
 #define CPUFJ_TIMING_TRACE 0
+
+// Define CPUFJ_NVTX_RANGES to enable detailed NVTX profiling ranges
+#ifdef CPUFJ_NVTX_RANGES
+#define CPUFJ_NVTX_RANGE(name)  raft::common::nvtx::range NVTX_UNIQUE_NAME(nvtx_scope_)(name)
+#define NVTX_UNIQUE_NAME(base)  NVTX_CONCAT(base, __LINE__)
+#define NVTX_CONCAT(a, b)       NVTX_CONCAT_INNER(a, b)
+#define NVTX_CONCAT_INNER(a, b) a##b
+#else
+#define CPUFJ_NVTX_RANGE(name) ((void)0)
+#endif
 
 namespace cuopt::linear_programming::detail {
 
@@ -607,6 +619,7 @@ static inline std::pair<fj_staged_score_t, f_t> compute_score(fj_cpu_climber_t<i
 template <typename i_t, typename f_t>
 static void smooth_weights(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
 {
+  CPUFJ_NVTX_RANGE("CPUFJ::smooth_weights");
   for (i_t cstr_idx = 0; cstr_idx < fj_cpu.view.pb.n_constraints; cstr_idx++) {
     // consider only satisfied constraints
     if (fj_cpu.violated_constraints.count(cstr_idx)) continue;
@@ -627,6 +640,7 @@ template <typename i_t, typename f_t>
 static void update_weights(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
 {
   timing_raii_t<i_t, f_t> timer(fj_cpu.update_weights_times);
+  CPUFJ_NVTX_RANGE("CPUFJ::update_weights");
 
   raft::random::PCGenerator rng(fj_cpu.settings.seed + fj_cpu.iterations, 0, 0);
   bool smoothing = rng.next_float() <= fj_cpu.settings.parameters.weight_smoothing_probability;
@@ -685,6 +699,7 @@ static void apply_move(fj_cpu_climber_t<i_t, f_t>& fj_cpu,
                        bool localmin = false)
 {
   timing_raii_t<i_t, f_t> timer(fj_cpu.apply_move_times);
+  CPUFJ_NVTX_RANGE("CPUFJ::apply_move");
 
   raft::random::PCGenerator rng(fj_cpu.settings.seed + fj_cpu.iterations, 0, 0);
 
@@ -807,6 +822,7 @@ template <typename i_t, typename f_t, MTMMoveType move_type>
 static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move(
   fj_cpu_climber_t<i_t, f_t>& fj_cpu, const std::vector<i_t>& target_cstrs, bool localmin = false)
 {
+  CPUFJ_NVTX_RANGE("CPUFJ::find_mtm_move");
   auto& problem = *fj_cpu.pb_ptr;
 
   raft::random::PCGenerator rng(fj_cpu.settings.seed + fj_cpu.iterations, 0, 0);
@@ -969,6 +985,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move_viol(
   fj_cpu_climber_t<i_t, f_t>& fj_cpu, i_t sample_size = 100, bool localmin = false)
 {
   timing_raii_t<i_t, f_t> timer(fj_cpu.find_mtm_move_viol_times);
+  CPUFJ_NVTX_RANGE("CPUFJ::find_mtm_move_viol");
 
   std::vector<i_t> sampled_cstrs;
   sampled_cstrs.reserve(sample_size);
@@ -986,6 +1003,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move_sat(
   fj_cpu_climber_t<i_t, f_t>& fj_cpu, i_t sample_size = 100)
 {
   timing_raii_t<i_t, f_t> timer(fj_cpu.find_mtm_move_sat_times);
+  CPUFJ_NVTX_RANGE("CPUFJ::find_mtm_move_sat");
 
   std::vector<i_t> sampled_cstrs;
   sampled_cstrs.reserve(sample_size);
@@ -1001,6 +1019,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_mtm_move_sat(
 template <typename i_t, typename f_t>
 static void recompute_lhs(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
 {
+  CPUFJ_NVTX_RANGE("CPUFJ::recompute_lhs");
   cuopt_assert(fj_cpu.h_lhs.size() == fj_cpu.view.pb.n_constraints, "h_lhs size mismatch");
 
   fj_cpu.violated_constraints.clear();
@@ -1037,6 +1056,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_lift_move(
   fj_cpu_climber_t<i_t, f_t>& fj_cpu)
 {
   timing_raii_t<i_t, f_t> timer(fj_cpu.find_lift_move_times);
+  CPUFJ_NVTX_RANGE("CPUFJ::find_lift_move");
 
   fj_move_t best_move          = fj_move_t{-1, 0};
   fj_staged_score_t best_score = fj_staged_score_t::zero();
@@ -1144,6 +1164,7 @@ static thrust::tuple<fj_move_t, fj_staged_score_t> find_lift_move(
 template <typename i_t, typename f_t>
 static void perturb(fj_cpu_climber_t<i_t, f_t>& fj_cpu)
 {
+  CPUFJ_NVTX_RANGE("CPUFJ::perturb");
   // select N variables, assign them a random value between their bounds
   std::vector<i_t> sampled_vars;
   std::sample(fj_cpu.h_objective_vars.begin(),
@@ -1514,7 +1535,7 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
 #endif
 
     // Collect and print PAPI metrics and regression features every 1000 iterations
-    if (fj_cpu.iterations % 1000 == 0 && fj_cpu.iterations > 0) {
+    if (fj_cpu.iterations % 100 == 0 && fj_cpu.iterations > 0) {
       auto now              = std::chrono::high_resolution_clock::now();
       double time_window_ms = std::chrono::duration_cast<std::chrono::duration<double>>(
                                 now - fj_cpu.last_feature_log_time)
@@ -1552,7 +1573,7 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
       // Notify producer_sync if registered
       if (fj_cpu.producer_sync != nullptr) { fj_cpu.producer_sync->notify_progress(); }
 
-      CUOPT_LOG_TRACE("CPUFJ work units: %f incumbent %g",
+      CUOPT_LOG_DEBUG("CPUFJ work units: %f incumbent %g",
                       fj_cpu.work_units_elapsed.load(std::memory_order_relaxed),
                       fj_cpu.pb_ptr->get_user_obj_from_solver_obj(fj_cpu.h_best_objective));
     }

@@ -1763,6 +1763,8 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
 
   bsp_horizon_step_ = 0.05;
 
+  // bsp_horizon_step_ = 1;
+
   const int num_bfs_workers    = settings_.num_bfs_workers;
   const int num_diving_workers = settings_.diving_settings.num_diving_workers;
 
@@ -1801,6 +1803,7 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   // Initialize scheduler for automatic sync at horizon boundaries
   // Workers will block in record_work() when they cross sync points
   bsp_scheduler_ = std::make_unique<work_unit_scheduler_t>(bsp_horizon_step_);
+  // bsp_scheduler_->verbose = true;
 
   scoped_context_registrations_t context_registrations(*bsp_scheduler_);
   for (auto& worker : *bsp_workers_) {
@@ -1944,7 +1947,18 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
                            worker.total_nowork_time);
     }
   }
-  settings_.log.printf("\n");
+
+  if (producer_sync_.num_producers() > 0 || producer_wait_count_ > 0) {
+    double avg_wait =
+      (producer_wait_count_ > 0) ? total_producer_wait_time_ / producer_wait_count_ : 0.0;
+    settings_.log.printf("Producer Sync Statistics:\n");
+    settings_.log.printf(
+      "  Producers: %zu, Syncs: %d\n", producer_sync_.num_producers(), producer_wait_count_);
+    settings_.log.printf("  Total wait: %.3fs, Avg: %.4fs, Max: %.4fs\n",
+                         total_producer_wait_time_,
+                         avg_wait,
+                         max_producer_wait_time_);
+  }
 
   // Finalize debug logger
   BSP_DEBUG_FINALIZE(bsp_debug_settings_, bsp_debug_logger_);
@@ -2088,7 +2102,12 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 
   // Wait for external producers (CPUFJ) to reach horizon_start before processing
   // This ensures we don't process B&B events before producers have caught up
+  double wait_start = tic();
   producer_sync_.wait_for_producers(horizon_start);
+  double wait_time = toc(wait_start);
+  total_producer_wait_time_ += wait_time;
+  max_producer_wait_time_ = std::max(max_producer_wait_time_, wait_time);
+  ++producer_wait_count_;
 
   work_unit_context_.global_work_units_elapsed = horizon_end;
 
