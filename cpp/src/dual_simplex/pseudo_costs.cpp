@@ -155,12 +155,12 @@ void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
   pc.strong_branch_up.resize(fractional.size());
   pc.num_strong_branches_completed = 0;
 
-  printf("Strong branching using %d threads and %ld fractional variables\n",
+  settings.log.printf("Strong branching using %d threads and %ld fractional variables\n",
                       settings.num_threads,
                       fractional.size());
 
   if (settings.mip_batch_pdlp_strong_branching) {
-    printf("Batch PDLP strong branching enabled\n");
+    settings.log.printf("Batch PDLP strong branching enabled\n");
 
     std::chrono::steady_clock::time_point start_batch = std::chrono::steady_clock::now();
 
@@ -184,7 +184,7 @@ void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
     std::vector<f_t> primal_solutions = batch_pdlp_solve(original_problem, fractional, fraction_values);
     std::chrono::steady_clock::time_point end_batch = std::chrono::steady_clock::now();
     std::chrono::duration<f_t> duration = end_batch - start_batch;
-    printf("Batch PDLP strong branching took %.2f seconds\n", duration.count());
+    settings.log.printf("Batch PDLP strong branching took %.2f seconds\n", duration.count());
 
     for (i_t k = 0; k < fractional.size(); k++) {
       const i_t j = fractional[k];
@@ -252,7 +252,7 @@ void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
     }
     std::chrono::steady_clock::time_point end_timea = std::chrono::steady_clock::now();
     std::chrono::duration<f_t> duration = end_timea - start_timea;
-    printf("Dual Simplex Strong branching took %.2f seconds\n", duration.count());
+    settings.log.printf("Dual Simplex Strong branching took %.2f seconds\n", duration.count());
   }
 
   pc.update_pseudo_costs_from_strong_branching(fractional, root_soln);
