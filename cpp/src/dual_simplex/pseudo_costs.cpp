@@ -467,7 +467,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   const int task_priority      = settings.reliability_branching_settings.task_priority;
   const i_t max_num_candidates = settings.reliability_branching_settings.max_num_candidates;
   const i_t max_lookahead      = settings.reliability_branching_settings.max_lookahead;
-  const size_t num_sb_vars     = std::min<size_t>(unreliable_list.size(), max_num_candidates);
+  const i_t num_sb_vars        = std::min<size_t>(unreliable_list.size(), max_num_candidates);
 
   assert(task_priority > 0);
   assert(max_num_candidates > 0);
@@ -478,8 +478,9 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   if (unreliable_list.size() > max_num_candidates) { worker_data->rng.shuffle(unreliable_list); }
 
   omp_atomic_t<i_t> unchanged = 0;
-  int num_tasks               = settings.reliability_branching_settings.num_tasks;
-  num_tasks                   = std::clamp<int>(num_tasks, 1, num_sb_vars);
+  i_t num_tasks               = settings.reliability_branching_settings.num_tasks;
+  num_tasks                   = std::clamp(num_tasks, 1, num_sb_vars / 4);
+  num_tasks                   = std::min(num_tasks, max_lookahead);
   assert(num_tasks > 0);
 
   settings.log.printf("RB iters = %d, B&B iters = %d, unreliable = %d, num_tasks = %d\n",
