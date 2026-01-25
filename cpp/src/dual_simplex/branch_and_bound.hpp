@@ -310,11 +310,6 @@ class branch_and_bound_t {
   // Refill worker queues from the global pool
   void refill_worker_queues(i_t target_queue_size);
 
-  // Run a single worker until it reaches the horizon
-  void run_worker_until_horizon(bb_worker_state_t<i_t, f_t>& worker,
-                                search_tree_t<i_t, f_t>& search_tree,
-                                double current_horizon);
-
   // Process history and synchronize - the "brain" of BSP
   void process_history_and_sync(const bb_event_batch_t<i_t, f_t>& events);
 

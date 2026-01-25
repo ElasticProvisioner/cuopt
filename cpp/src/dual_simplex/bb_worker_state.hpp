@@ -524,6 +524,9 @@ struct bsp_diving_worker_state_t {
   // Solution sequence counter for deterministic tie-breaking (cumulative across horizons)
   int next_solution_seq{0};
 
+  // Queued pseudo-cost updates (applied to global pseudo-costs at sync)
+  std::vector<pseudo_cost_update_t<i_t, f_t>> pseudo_cost_updates;
+
   // ==========================================================================
   // Statistics
   // ==========================================================================
@@ -531,6 +534,7 @@ struct bsp_diving_worker_state_t {
   i_t total_nodes_explored{0};
   i_t total_integer_solutions{0};
   i_t total_dives{0};
+  i_t lp_iters_this_dive{0};  // LP iterations in current dive (for iteration limit)
   double total_runtime{0.0};
   double total_nowork_time{0.0};
 
@@ -575,8 +579,8 @@ struct bsp_diving_worker_state_t {
     work_context.global_work_units_elapsed = start;
 
     local_upper_bound = upper_bound;
-    // Note: Don't clear dive_queue here - workers may still have nodes to process
     integer_solutions.clear();
+    pseudo_cost_updates.clear();
     recompute_bounds_and_basis = true;
   }
 
@@ -620,6 +624,20 @@ struct bsp_diving_worker_state_t {
   {
     integer_solutions.push_back({objective, solution, depth, worker_id, next_solution_seq++});
     ++total_integer_solutions;
+  }
+
+  // Queue a pseudo-cost update for global sync AND apply it to local snapshot immediately.
+  void queue_pseudo_cost_update(i_t variable, rounding_direction_t direction, f_t delta)
+  {
+    pseudo_cost_updates.push_back({variable, direction, delta, clock, worker_id});
+
+    if (direction == rounding_direction_t::DOWN) {
+      pc_sum_down_snapshot[variable] += delta;
+      pc_num_down_snapshot[variable]++;
+    } else {
+      pc_sum_up_snapshot[variable] += delta;
+      pc_num_up_snapshot[variable]++;
+    }
   }
 
   // Variable selection using snapshot pseudo-costs (for pseudocost diving)
