@@ -475,16 +475,20 @@ void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
       }
     }
   }
+  // TODO if more row removal is needed somewher else(e.g another presolve), standardize this
   dual_simplex::csr_matrix_t<i_t, f_t> A_removed(0, 0, 0);
   A.remove_rows(removal_marker, A_removed);
+  A_removed.to_compressed_col(problem.A);
   problem.num_rows = A_removed.m;
+  cuopt_assert(problem.rhs.size() == problem.row_sense.size(), "rhs and row sense size mismatch");
+  i_t n = 0;
   // Remove problem.row_sense entries for which removal_marker is true, using remove_if
-  auto new_end =
-    std::remove_if(problem.row_sense.begin(),
-                   problem.row_sense.end(),
-                   [&removal_marker, n = i_t(0)](char) mutable { return removal_marker[n++]; });
+  auto new_end = std::remove_if(
+    problem.row_sense.begin(), problem.row_sense.end(), [&removal_marker, &n](char) mutable {
+      return removal_marker[n++];
+    });
   problem.row_sense.erase(new_end, problem.row_sense.end());
-  int n = 0;
+  n = 0;
   // Remove problem.rhs entries for which removal_marker is true, using remove_if
   auto new_end_rhs =
     std::remove_if(problem.rhs.begin(), problem.rhs.end(), [&removal_marker, &n](f_t) mutable {
@@ -492,6 +496,37 @@ void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
     });
   problem.rhs.erase(new_end_rhs, problem.rhs.end());
   CUOPT_LOG_DEBUG("Number of removed constraints by clique covering: %d", n);
+  cuopt_assert(problem.rhs.size() == problem.row_sense.size(), "rhs and row sense size mismatch");
+  cuopt_assert(problem.A.m == problem.rhs.size(), "matrix and num rows mismatch after removal");
+  // Renumber the ranged row indices in problem.range_rows to ensure consistency after constraint
+  // removals. Create a mapping from old indices to new indices.
+  if (!problem.range_rows.empty()) {
+    std::vector<i_t> old_to_new_indices;
+    old_to_new_indices.reserve(removal_marker.size());
+    i_t new_idx = 0;
+    for (size_t i = 0; i < removal_marker.size(); ++i) {
+      if (!removal_marker[i]) {
+        old_to_new_indices.push_back(new_idx++);
+      } else {
+        old_to_new_indices.push_back(-1);  // removed constraint
+      }
+    }
+    // Remove entries from range_rows and range_value where the underlying row has been removed.
+    std::vector<i_t> new_range_rows;
+    std::vector<f_t> new_range_values;
+    for (size_t i = 0; i < problem.range_rows.size(); ++i) {
+      i_t old_row = problem.range_rows[i];
+      if (old_row >= 0 && old_row < (i_t)removal_marker.size() && !removal_marker[old_row]) {
+        i_t new_row = old_to_new_indices[old_row];
+        cuopt_assert(new_row != -1, "Invalid new row index for ranged row renumbering");
+        new_range_rows.push_back(new_row);
+        new_range_values.push_back(problem.range_value[i]);
+      }
+      // else: the ranged row was removed, so we skip it
+    }
+    problem.range_rows  = std::move(new_range_rows);
+    problem.range_value = std::move(new_range_values);
+  }
 }
 
 template <typename i_t, typename f_t>
@@ -566,7 +601,7 @@ void find_initial_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
   fill_var_clique_maps(clique_table);
   i_t n_extended_cliques = extend_cliques(knapsack_constraints, clique_table, problem, A);
   remove_dominated_cliques(problem, A, clique_table, set_packing_constraints, n_extended_cliques);
-  exit(0);
+  // exit(0);
 }
 
 #define INSTANTIATE(F_TYPE)                              \

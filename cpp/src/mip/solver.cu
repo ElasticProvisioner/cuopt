@@ -158,6 +158,7 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     // Convert the presolved problem to dual_simplex::user_problem_t
     op_problem_.get_host_user_problem(branch_and_bound_problem);
     find_initial_cliques(branch_and_bound_problem, context.settings.tolerances);
+    context.problem_ptr->set_constraints_from_host_user_problem(branch_and_bound_problem);
     // Resize the solution now that we know the number of columns/variables
     branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
 

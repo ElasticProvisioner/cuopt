@@ -103,6 +103,8 @@ class problem_t {
 
   void get_host_user_problem(
     cuopt::linear_programming::dual_simplex::user_problem_t<i_t, f_t>& user_problem) const;
+  void set_constraints_from_host_user_problem(
+    const cuopt::linear_programming::dual_simplex::user_problem_t<i_t, f_t>& user_problem);
 
   void add_cutting_plane_at_objective(f_t objective);
   void compute_vars_with_objective_coeffs();
