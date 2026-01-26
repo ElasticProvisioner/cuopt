@@ -739,9 +739,10 @@ optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
   optimization_problem_t<i_t, f_t>& problem, pdlp_solver_settings_t<i_t, f_t> const& settings)
 {
   // Hyper parameter than can be changed, I have put what I believe to be the best
-  bool primal_dual_init       = true;
-  bool primal_weight_init     = true;
-  bool use_optimal_batch_size = false;
+  bool primal_dual_init         = true;
+  bool primal_weight_init       = true;
+  bool use_optimal_batch_size   = false;
+  constexpr int iteration_limit = 100000;
   // Shouldn't we work on the unpresolved and/or unscaled problem for PDLP?
   // Shouldn't we put an iteration limit? If yes what should we do with the partial solutions?
 
@@ -769,6 +770,7 @@ optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
     warm_start_settings.presolve             = false;
     warm_start_settings.pdlp_solver_mode     = pdlp_solver_mode_t::Stable3;
     warm_start_settings.detect_infeasibility = false;
+    warm_start_settings.iteration_limit      = iteration_limit;
     optimization_problem_solution_t<i_t, f_t> original_solution =
       solve_lp(problem, warm_start_settings);
     if (primal_dual_init) {
@@ -798,6 +800,7 @@ optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
   batch_settings.presolve                         = false;
   batch_settings.pdlp_solver_mode                 = pdlp_solver_mode_t::Stable3;
   batch_settings.detect_infeasibility             = false;
+  batch_settings.iteration_limit                  = iteration_limit;
   if (primal_dual_init) {
     batch_settings.set_initial_primal_solution(
       initial_primal.data(), initial_primal.size(), initial_primal.stream());
