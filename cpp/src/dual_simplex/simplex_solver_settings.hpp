@@ -72,7 +72,7 @@ struct reliability_branching_settings_t {
   i_t max_num_candidates = 100;
 
   // The maximum number of candidates evaluated that does not improve the best score.
-  i_t max_lookahead = 10;
+  i_t max_lookahead = 20;
 };
 
 template <typename i_t, typename f_t>
