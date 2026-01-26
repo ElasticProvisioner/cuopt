@@ -1757,6 +1757,64 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 // BSP (Bulk Synchronous Parallel) Deterministic implementation
 // ============================================================================
 
+// The BSP model is based on letting independent workers execute during virtual time intervals,
+// and exchange data during serialized interval sync points.
+/*
+
+Work Units:   0                              0.5                              1.0
+              │                               │                                │
+              │◄──────── Horizon 0 ──────────►│◄───────── Horizon 1 ──────────►│
+              │                               │                                │
+══════════════╪═══════════════════════════════╪════════════════════════════════╪════
+              │                               │                                │
+              │                        ┌──────────────┐                  ┌──────────────┐
+ BFS Worker 0 │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │              │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │              │
+ ├ plunge     │  explore nodes         │              │  explore nodes   │              │
+ │  stack     │  emit events (wut)     │              │  emit events     │              │
+ ├ backlog    │                        │   SYNC S1    │                  │   SYNC S2    │
+ │  heap      │                        │              │                  │              │
+ ├ PC snap    │                        │ • Sort by    │                  │ • Sort by    │
+ ├ events[]   │                        │   (wut, w,   │                  │   (wut, w,   │
+ └ solutions[]│                        │    seq)      │                  │    seq)      │
+──────────────┼────────────────────────│ • Replay     │──────────────────│ • Replay     │
+              │                        │ • Merge PC   │                  │ • Merge PC   │
+ BFS Worker 1 │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │ • Merge sols │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │ • Merge sols │
+ ├ plunge     │  explore nodes         │ • Prune      │  explore nodes   │ • Prune      │
+ │  stack     │  emit events (wut)     │ • Balance    │  emit events     │ • Balance    │
+ ├ backlog    │                        │ • Assign     │                  │ • Assign     │
+ │  heap      │                        │ • Snapshot   │                  │ • Snapshot   │
+ ├ PC snap    │                        │              │                  │              │
+ ├ events[]   │                        │ [38779ebd]   │                  │ [2ad65699]   │
+ └ solutions[]│                        │              │                  │              │
+──────────────┼────────────────────────│              │──────────────────│              │
+              │                        │              │                  │              │
+ Diving D0    │ ░░░░░░░░░░░░░░░░░░░░░░ │              │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │              │
+ ├ dive_queue │  (waiting)             │              │  dive, find sols │              │
+ ├ PC snap    │                        │              │                  │              │
+ ├ incumbent  │                        │              │                  │              │
+ │  snap      │                        │              │                  │              │
+ ├ pc_updates │                        │              │                  │              │
+ └ solutions[]│                        │              │                  │              │
+──────────────┼────────────────────────│              │──────────────────│              │
+              │                        │              │                  │              │
+ Diving D1    │ ░░░░░░░░░░░░░░░░░░░░░░ │              │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ │              │
+ ├ dive_queue │  (waiting)             │              │  dive, find sols │              │
+ ├ PC snap    │                        │              │                  │              │
+ ├ incumbent  │                        └──────────────┘                  └──────────────┘
+ │  snap      │
+ ├ pc_updates │
+ └ solutions[]│
+══════════════╪═══════════════════════════════════════════════════════════════════════════
+              │
+              ▼
+──────────────────────────────────────────────────────────────────────────────────────────►
+                                                                        Work Unit Time
+
+Legend:  ▓▓▓ = actively working    ░░░ = waiting at barrier    [hash] = state hash for verification
+         wut = work unit timestamp    PC = pseudo-costs    snap = snapshot (local copy)
+
+*/
+
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f_t>& Arow)
 {
