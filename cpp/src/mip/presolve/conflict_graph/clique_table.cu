@@ -495,7 +495,8 @@ void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
       return removal_marker[n++];
     });
   problem.rhs.erase(new_end_rhs, problem.rhs.end());
-  CUOPT_LOG_DEBUG("Number of removed constraints by clique covering: %d", n);
+  size_t n_of_removed_constraints = std::distance(new_end, problem.row_sense.end());
+  CUOPT_LOG_DEBUG("Number of removed constraints by clique covering: %d", n_of_removed_constraints);
   cuopt_assert(problem.rhs.size() == problem.row_sense.size(), "rhs and row sense size mismatch");
   cuopt_assert(problem.A.m == problem.rhs.size(), "matrix and num rows mismatch after removal");
   // Renumber the ranged row indices in problem.range_rows to ensure consistency after constraint
