@@ -2113,7 +2113,7 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
   double horizon_end   = bsp_current_horizon_;
 
   double wait_start = tic();
-  producer_sync_.wait_for_producers(horizon_start);
+  producer_sync_.wait_for_producers(horizon_end);
   double wait_time = toc(wait_start);
   total_producer_wait_time_ += wait_time;
   max_producer_wait_time_ = std::max(max_producer_wait_time_, wait_time);
@@ -2820,6 +2820,11 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
     if (process_heuristic) {
       const auto& hsol = heuristic_solutions[heuristic_idx++];
 
+      CUOPT_LOG_TRACE(
+        "BSP sync: Heuristic solution received at WUT %f with objective %g, current horizon %f",
+        hsol.wut,
+        hsol.objective,
+        bsp_current_horizon_);
       // Debug: Log heuristic received
       BSP_DEBUG_LOG_HEURISTIC_RECEIVED(
         bsp_debug_settings_, bsp_debug_logger_, hsol.wut, hsol.objective);
