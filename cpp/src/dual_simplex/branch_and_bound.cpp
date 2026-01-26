@@ -2054,7 +2054,8 @@ void branch_and_bound_t<i_t, f_t>::run_worker_loop(bb_worker_state_t<i_t, f_t>& 
 
       // Check if node should be pruned (use worker's snapshot for determinism)
       f_t upper_bound = worker.local_upper_bound;
-      if (node->lower_bound >= upper_bound) {
+      f_t rel_gap     = user_relative_gap(original_lp_, upper_bound, node->lower_bound);
+      if (node->lower_bound >= upper_bound || rel_gap < settings_.relative_mip_gap_tol) {
         worker.current_node = nullptr;
         worker.record_fathomed(node, node->lower_bound);
         worker.track_node_pruned();
@@ -2352,57 +2353,54 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
 
   bool feasible = true;
 #ifndef BSP_DISABLE_BOUNDS_STRENGTHENING
-  // TODO: fix once the bounds strengthening predictor is more accurate
-  if (true) {
-    raft::common::nvtx::range scope_bs("BB::bound_strengthening");
-    f_t bs_start_time = tic();
-    feasible          = worker.node_presolver->bounds_strengthening(
-      worker.leaf_problem->lower, worker.leaf_problem->upper, lp_settings);
-    f_t bs_actual_time = toc(bs_start_time);
+  raft::common::nvtx::range scope_bs("BB::bound_strengthening");
+  f_t bs_start_time = tic();
+  feasible          = worker.node_presolver->bounds_strengthening(
+    worker.leaf_problem->lower, worker.leaf_problem->upper, lp_settings);
+  f_t bs_actual_time = toc(bs_start_time);
 
-    if (settings_.deterministic) {
-      static cuopt::work_unit_predictor_t<bounds_strengthening_predictor, cpu_work_unit_scaler_t>
-        bs_predictor;
+  if (settings_.deterministic) {
+    static cuopt::work_unit_predictor_t<bounds_strengthening_predictor, cpu_work_unit_scaler_t>
+      bs_predictor;
 
-      const i_t m   = worker.leaf_problem->num_rows;
-      const i_t n   = worker.leaf_problem->num_cols;
-      const i_t nnz = worker.leaf_problem->A.col_start[n];
+    const i_t m   = worker.leaf_problem->num_rows;
+    const i_t n   = worker.leaf_problem->num_cols;
+    const i_t nnz = worker.leaf_problem->A.col_start[n];
 
-      i_t num_bounds_changed = 0;
-      for (bool changed : worker.node_presolver->bounds_changed) {
-        if (changed) ++num_bounds_changed;
-      }
+    i_t num_bounds_changed = 0;
+    for (bool changed : worker.node_presolver->bounds_changed) {
+      if (changed) ++num_bounds_changed;
+    }
 
-      std::map<std::string, float> features;
-      features["m"]              = static_cast<float>(m);
-      features["n"]              = static_cast<float>(n);
-      features["nnz"]            = static_cast<float>(nnz);
-      features["nnz_processed"]  = static_cast<float>(worker.node_presolver->last_nnz_processed);
-      features["bounds_changed"] = static_cast<float>(num_bounds_changed);
+    std::map<std::string, float> features;
+    features["m"]              = static_cast<float>(m);
+    features["n"]              = static_cast<float>(n);
+    features["nnz"]            = static_cast<float>(nnz);
+    features["nnz_processed"]  = static_cast<float>(worker.node_presolver->last_nnz_processed);
+    features["bounds_changed"] = static_cast<float>(num_bounds_changed);
 
-      // predicts milliseconds
-      f_t prediction =
-        std::max(f_t(0), static_cast<f_t>(bs_predictor.predict_scalar(features))) / 1000;
+    // predicts milliseconds
+    f_t prediction =
+      std::max(f_t(0), static_cast<f_t>(bs_predictor.predict_scalar(features))) / 1000;
 
 #ifdef CUOPT_DEBUG_WORK_PREDICTION
-      f_t ratio = (prediction > 0.0) ? (bs_actual_time / prediction) : 0.0;
-      settings_.log.printf(
-        "[WORK_PRED_BS] W%d N%d: actual=%.6fs predicted=%.6fwu ratio=%.3f (m=%d n=%d nnz=%d "
-        "processed=%d changed=%d)\n",
-        worker.worker_id,
-        node_ptr->node_id,
-        bs_actual_time,
-        prediction,
-        ratio,
-        m,
-        n,
-        nnz,
-        worker.node_presolver->last_nnz_processed,
-        num_bounds_changed);
+    f_t ratio = (prediction > 0.0) ? (bs_actual_time / prediction) : 0.0;
+    settings_.log.printf(
+      "[WORK_PRED_BS] W%d N%d: actual=%.6fs predicted=%.6fwu ratio=%.3f (m=%d n=%d nnz=%d "
+      "processed=%d changed=%d)\n",
+      worker.worker_id,
+      node_ptr->node_id,
+      bs_actual_time,
+      prediction,
+      ratio,
+      m,
+      n,
+      nnz,
+      worker.node_presolver->last_nnz_processed,
+      num_bounds_changed);
 #endif
 
-      worker.work_context.record_work(prediction);
-    }
+    worker.work_context.record_work(prediction);
   }
 #endif
 
@@ -3008,20 +3006,12 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
 
   if (!needs_balance) return;
 
-  // Collect all redistributable nodes from worker queues
   std::vector<mip_node_t<i_t, f_t>*> all_nodes;
   for (auto& worker : *bsp_workers_) {
-    // Extract backlog nodes
     for (auto* node : worker.backlog) {
       all_nodes.push_back(node);
     }
     worker.backlog.clear();
-
-    // Extract plunge stack nodes
-    for (auto* node : worker.plunge_stack) {
-      all_nodes.push_back(node);
-    }
-    worker.plunge_stack.clear();
   }
 
   if (all_nodes.empty()) return;
