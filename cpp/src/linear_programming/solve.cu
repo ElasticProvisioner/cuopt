@@ -745,6 +745,59 @@ optimization_problem_solution_t<i_t, f_t> run_pdlp(detail::problem_t<i_t, f_t>& 
 }
 
 template <typename i_t, typename f_t>
+static size_t batch_pdlp_memory_estimator(const optimization_problem_t<i_t, f_t>& problem,
+                                          int max_batch_size)
+{
+  size_t total_memory = 0;
+  // In PDLP we store the scaled version of the problem which contains all of those
+  total_memory += problem.get_constraint_matrix_indices().size() * sizeof(i_t);
+  total_memory += problem.get_constraint_matrix_offsets().size() * sizeof(i_t);
+  total_memory += problem.get_constraint_matrix_values().size() * sizeof(f_t);
+  total_memory *= 2;  // To account for the A_t matrix
+  total_memory += problem.get_objective_coefficients().size() * sizeof(f_t);
+  total_memory += problem.get_constraint_bounds().size() * sizeof(f_t);
+  total_memory += problem.get_variable_lower_bounds().size() * sizeof(f_t);
+  total_memory += problem.get_variable_upper_bounds().size() * sizeof(f_t);
+  total_memory += problem.get_constraint_lower_bounds().size() * sizeof(f_t);
+  total_memory += problem.get_constraint_upper_bounds().size() * sizeof(f_t);
+
+  // Batch data estimator
+
+  // Data from PDHG
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_constraints() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_constraints() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_constraints() * sizeof(f_t);
+
+  // Data from the saddle point state
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_constraints() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_constraints() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_constraints() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+
+  // Data for the convergeance information
+  total_memory += max_batch_size * problem.get_n_constraints() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_constraints() * sizeof(f_t);
+
+  // Data for the localized duality gap container
+  total_memory += max_batch_size * problem.get_n_variables() * sizeof(f_t);
+  total_memory += max_batch_size * problem.get_n_constraints() * sizeof(f_t);
+
+  total_memory *= 1.2;  // 20% overhead
+
+  // Data from saddle point state
+  return total_memory;
+}
+
+template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
   optimization_problem_t<i_t, f_t>& problem, pdlp_solver_settings_t<i_t, f_t> const& settings)
 {
@@ -764,10 +817,27 @@ optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
   double initial_primal_weight = std::numeric_limits<f_t>::signaling_NaN();
 
   cuopt_assert(settings.new_bounds.size() > 0, "Batch size should be greater than 0");
-  const int max_batch_size = settings.new_bounds.size();
-  int optimal_batch_size   = use_optimal_batch_size
-                               ? detail::optimal_batch_size_handler(problem, max_batch_size)
-                               : max_batch_size;
+  const int max_batch_size  = settings.new_bounds.size();
+  int memory_max_batch_size = max_batch_size;
+
+  // Check if we don't hit the limit using max_batch_size
+  const size_t memory_estimate = batch_pdlp_memory_estimator(problem, max_batch_size);
+  size_t free_mem, total_mem;
+  RAFT_CUDA_TRY(cudaMemGetInfo(&free_mem, &total_mem));
+
+  if (memory_estimate > free_mem) {
+    use_optimal_batch_size = true;
+    // Decrement batch size iteratively until we find a batch size that fits
+    while (memory_max_batch_size > 1) {
+      const size_t memory_estimate = batch_pdlp_memory_estimator(problem, memory_max_batch_size);
+      if (memory_estimate <= free_mem) { break; }
+      memory_max_batch_size--;
+    }
+  }
+
+  int optimal_batch_size = use_optimal_batch_size
+                             ? detail::optimal_batch_size_handler(problem, memory_max_batch_size)
+                             : max_batch_size;
   cuopt_assert(optimal_batch_size != 0 && optimal_batch_size <= max_batch_size,
                "Optimal batch size should be between 1 and max batch size");
   using f_t2 = typename type_2<f_t>::type;

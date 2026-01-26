@@ -7,7 +7,7 @@
 
 #include <linear_programming/cusparse_view.hpp>
 #include <linear_programming/optimal_batch_size_handler/optimal_batch_size_handler.hpp>
-#include <linear_programming/utilities/ping_pong_graph.cuh>
+#include <linear_programming/pdlp_constants.hpp>
 #include <utilities/event_handler.cuh>
 
 #include <mip/mip_constants.hpp>
@@ -26,11 +26,13 @@ struct SpMM_benchmarks_context_t {
       y(dual_size * current_batch_size, handle_ptr->get_stream()),
       buffer_non_transpose_batch(0, handle_ptr->get_stream()),
       buffer_transpose_batch(0, handle_ptr->get_stream()),
-      ping_pong_graph(handle_ptr->get_stream())
+      alpha(1, handle_ptr->get_stream()),
+      beta(0, handle_ptr->get_stream()),
+      A(A),
+      A_T(A_T),
+      handle_ptr(handle_ptr)
   {
     auto stream_view = handle_ptr->get_stream();
-    cusparse_dn_mat_descr_wrapper_t<f_t> x_descr;
-    cusparse_dn_mat_descr_wrapper_t<f_t> y_descr;
 
     int rows_primal = primal_size;
     int col_primal  = current_batch_size;
@@ -44,8 +46,6 @@ struct SpMM_benchmarks_context_t {
     y_descr.create(rows_dual, col_dual, ld_dual, y.data(), CUSPARSE_ORDER_ROW);
 
     // Init buffers for SpMMs
-    const rmm::device_scalar<f_t> alpha{1, stream_view};
-    const rmm::device_scalar<f_t> beta{0, stream_view};
     size_t buffer_size_non_transpose_batch = 0;
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm_bufferSize(
       handle_ptr->get_cusparse_handle(),
@@ -74,8 +74,8 @@ struct SpMM_benchmarks_context_t {
       &buffer_size_transpose_batch,
       stream_view));
 
-    rmm::device_buffer buffer_transpose_batch(buffer_size_transpose_batch, stream_view);
-    rmm::device_buffer buffer_non_transpose_batch(buffer_size_non_transpose_batch, stream_view);
+    buffer_transpose_batch     = rmm::device_buffer(buffer_size_transpose_batch, stream_view);
+    buffer_non_transpose_batch = rmm::device_buffer(buffer_size_non_transpose_batch, stream_view);
 
 #if CUDART_VERSION >= 12040
     // Preprocess buffers for SpMMs
@@ -106,8 +106,14 @@ struct SpMM_benchmarks_context_t {
       stream_view);
 #endif
 
-    // First empty run for warm up and put it in a CUDA Graph
-    ping_pong_graph.start_capture(0);
+    // First empty run for warm up
+    // TODO batch mode: put back CUDA Graphs here once supported for SpMM
+    this->launch();
+  }
+
+  void launch()
+  {
+    auto stream_view = handle_ptr->get_stream();
     RAFT_CUSPARSE_TRY(raft::sparse::detail::cusparsespmm(
       handle_ptr->get_cusparse_handle(),
       CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -133,13 +139,7 @@ struct SpMM_benchmarks_context_t {
       (deterministic_batch_pdlp) ? CUSPARSE_SPMM_CSR_ALG3 : CUSPARSE_SPMM_CSR_ALG2,
       (f_t*)buffer_transpose_batch.data(),
       stream_view));
-
-    ping_pong_graph.end_capture(0);
-    // Just for the warm up
-    ping_pong_graph.launch(0);
   }
-
-  void launch() { ping_pong_graph.launch(0); }
 
   cusparse_dn_mat_descr_wrapper_t<f_t> x_descr;
   cusparse_dn_mat_descr_wrapper_t<f_t> y_descr;
@@ -147,7 +147,11 @@ struct SpMM_benchmarks_context_t {
   rmm::device_uvector<f_t> y;
   rmm::device_buffer buffer_non_transpose_batch;
   rmm::device_buffer buffer_transpose_batch;
-  ping_pong_graph_t<i_t> ping_pong_graph;
+  rmm::device_scalar<f_t> alpha;
+  rmm::device_scalar<f_t> beta;
+  cusparse_sp_mat_descr_wrapper_t<i_t, f_t>& A;
+  cusparse_sp_mat_descr_wrapper_t<i_t, f_t>& A_T;
+  raft::handle_t const* handle_ptr;
 };
 
 template <typename i_t, typename f_t>
