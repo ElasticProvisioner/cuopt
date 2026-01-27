@@ -9,10 +9,12 @@
 #include "diversity_manager.cuh"
 
 #include <mip/mip_constants.hpp>
+#include <mip/presolve/conflict_graph/clique_table.cuh>
 #include <mip/presolve/probing_cache.cuh>
 #include <mip/presolve/trivial_presolve.cuh>
 #include <mip/problem/problem_helpers.cuh>
 
+#include <dual_simplex/user_problem.hpp>
 #include <linear_programming/solve.cuh>
 
 #include <utilities/scope_guard.hpp>
@@ -200,16 +202,22 @@ bool diversity_manager_t<i_t, f_t>::run_presolve(f_t time_limit)
   const bool remap_cache_ids = true;
   trivial_presolve(*problem_ptr, remap_cache_ids);
   if (!problem_ptr->empty && !check_bounds_sanity(*problem_ptr)) { return false; }
-  // May overconstrain if Papilo presolve has been run before
-  if (!context.settings.presolve) {
-    if (!problem_ptr->empty) {
-      // do the resizing no-matter what, bounds presolve might not change the bounds but initial
-      // trivial presolve might have
-      ls.constraint_prop.bounds_update.resize(*problem_ptr);
+  if (!context.settings.heuristics_only && !problem_ptr->empty) {
+    dual_simplex::user_problem_t<i_t, f_t> host_problem(problem_ptr->handle_ptr);
+    problem_ptr->get_host_user_problem(host_problem);
+    find_initial_cliques(host_problem, context.settings.tolerances);
+    problem_ptr->set_constraints_from_host_user_problem(host_problem);
+  }
+  if (!problem_ptr->empty) {
+    // do the resizing no-matter what, bounds presolve might not change the bounds but
+    // initial trivial presolve might have
+    ls.constraint_prop.bounds_update.resize(*problem_ptr);
+    // May overconstrain if Papilo presolve has been run before
+    if (!context.settings.presolve) {
       ls.constraint_prop.conditional_bounds_update.update_constraint_bounds(
         *problem_ptr, ls.constraint_prop.bounds_update);
-      if (!check_bounds_sanity(*problem_ptr)) { return false; }
     }
+    if (!check_bounds_sanity(*problem_ptr)) { return false; }
   }
   stats.presolve_time = presolve_timer.elapsed_time();
   lp_optimal_solution.resize(problem_ptr->n_variables, problem_ptr->handle_ptr->get_stream());
