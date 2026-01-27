@@ -939,7 +939,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(bnb_worker_data_t<i_t, f_t>* worker
   dive_stats.total_lp_iters      = 0;
   dive_stats.total_lp_solve_time = 0;
   dive_stats.nodes_explored      = 0;
-  dive_stats.nodes_unexplored    = 0;
+  dive_stats.nodes_unexplored    = 1;
 
   while (stack.size() > 0 && solver_status_ == mip_status_t::UNSET && is_running) {
     mip_node_t<i_t, f_t>* node_ptr = stack.front();

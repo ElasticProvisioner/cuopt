@@ -342,11 +342,11 @@ i_t pseudo_costs_t<i_t, f_t>::variable_selection(const std::vector<i_t>& fractio
 
   initialized(num_initialized_down, num_initialized_up, pseudo_cost_down_avg, pseudo_cost_up_avg);
 
-  log.debug("PC: num initialized down %d up %d avg down %e up %e\n",
-            num_initialized_down,
-            num_initialized_up,
-            pseudo_cost_down_avg,
-            pseudo_cost_up_avg);
+  log.printf("PC: num initialized down %d up %d avg down %e up %e\n",
+             num_initialized_down,
+             num_initialized_up,
+             pseudo_cost_down_avg,
+             pseudo_cost_up_avg);
 
   for (i_t k = 0; k < num_fractional; k++) {
     const i_t j = fractional[k];
@@ -629,7 +629,7 @@ f_t pseudo_costs_t<i_t, f_t>::obj_estimate(const std::vector<i_t>& fractional,
       std::min(std::max(pseudo_cost_down * f_down, eps), std::max(pseudo_cost_up * f_up, eps));
   }
 
-  log.debug("pseudocost estimate = %e\n", estimate);
+  log.printf("pseudocost estimate = %e\n", estimate);
   return estimate;
 }
 
