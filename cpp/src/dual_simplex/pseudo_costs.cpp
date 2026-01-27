@@ -11,6 +11,8 @@
 #include <dual_simplex/solve.hpp>
 #include <dual_simplex/tic_toc.hpp>
 
+#include <cuopt/linear_programming/solve.hpp>
+
 #include <omp.h>
 
 namespace cuopt::linear_programming::dual_simplex {
@@ -136,7 +138,8 @@ void strong_branch_helper(i_t start,
 }  // namespace
 
 template <typename i_t, typename f_t>
-void strong_branching(const lp_problem_t<i_t, f_t>& original_lp,
+void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
+                      const lp_problem_t<i_t, f_t>& original_lp,
                       const simplex_solver_settings_t<i_t, f_t>& settings,
                       f_t start_time,
                       const std::vector<variable_type_t>& var_types,
@@ -156,40 +159,116 @@ void strong_branching(const lp_problem_t<i_t, f_t>& original_lp,
                       settings.num_threads,
                       fractional.size());
 
-#pragma omp parallel num_threads(settings.num_threads)
-  {
-    i_t n = std::min<i_t>(4 * settings.num_threads, fractional.size());
+  if (settings.mip_batch_pdlp_strong_branching) {
+    settings.log.printf("Batch PDLP strong branching enabled\n");
 
-    // Here we are creating more tasks than the number of threads
-    // such that they can be scheduled dynamically to the threads.
-#pragma omp for schedule(dynamic, 1)
-    for (i_t k = 0; k < n; k++) {
-      i_t start = std::floor(k * fractional.size() / n);
-      i_t end   = std::floor((k + 1) * fractional.size() / n);
+    std::chrono::steady_clock::time_point start_batch = std::chrono::steady_clock::now();
 
-      constexpr bool verbose = false;
-      if (verbose) {
-        settings.log.printf("Thread id %d task id %d start %d end %d. size %d\n",
-                            omp_get_thread_num(),
-                            k,
-                            start,
-                            end,
-                            end - start);
-      }
+    // Use original_problem to create the BatchLP problem
+    csr_matrix_t<i_t, f_t> A_row(original_problem.A.m, original_problem.A.n, 0);
+    original_problem.A.to_compressed_row(A_row);
 
-      strong_branch_helper(start,
-                           end,
-                           start_time,
-                           original_lp,
-                           settings,
-                           var_types,
-                           fractional,
-                           root_obj,
-                           root_soln,
-                           root_vstatus,
-                           edge_norms,
-                           pc);
+    // Convert the root_soln to the original problem space
+    std::vector<f_t> original_root_soln_x;
+    uncrush_primal_solution(original_problem, original_lp, root_soln, original_root_soln_x);
+
+    std::vector<f_t> fraction_values;
+
+    for (i_t k = 0; k < fractional.size(); k++) {
+      const i_t j = fractional[k];
+      fraction_values.push_back(original_root_soln_x[j]);
     }
+
+    const auto solutions = batch_pdlp_solve(original_problem, fractional, fraction_values);
+    std::chrono::steady_clock::time_point end_batch = std::chrono::steady_clock::now();
+    std::chrono::duration<f_t> duration             = end_batch - start_batch;
+
+    // Find max iteration on how many are done accross the batch
+    i_t max_iterations = 0;
+    i_t amount_done    = 0;
+    for (i_t k = 0; k < solutions.get_additional_termination_informations().size(); k++) {
+      max_iterations = std::max(
+        max_iterations, solutions.get_additional_termination_information(k).number_of_steps_taken);
+      // TODO batch mode infeasible: should also count as done if infeasible
+      if (solutions.get_termination_status(k) == pdlp_termination_status_t::Optimal) {
+        amount_done++;
+      }
+    }
+
+    settings.log.printf(
+      "Batch PDLP strong branching took %.2f seconds. Solved %d/%d with max %d iterations\n",
+      duration.count(),
+      amount_done,
+      fractional.size() * 2,
+      max_iterations);
+
+    for (i_t k = 0; k < fractional.size(); k++) {
+      // Call BatchLP solver. Solve 2*fractional.size() subproblems.
+      // Let j = fractional[k]. We want to solve the two trial branching problems
+      // Branch down:
+      // minimize c^T x
+      // subject to lb <= A*x <= ub
+      // x_j <= floor(root_soln[j])
+      // l <= x < u
+      // Let the optimal objective value of thie problem be obj_down
+      f_t obj_down = (solutions.get_termination_status(k) == pdlp_termination_status_t::Optimal)
+                       ? solutions.get_dual_objective_value(k)
+                       : root_obj;
+
+      // Branch up:
+      // minimize c^T x
+      // subject to lb <= A*x <= ub
+      // x_j >= ceil(root_soln[j])
+      // Let the optimal objective value of thie problem be obj_up
+      f_t obj_up = (solutions.get_termination_status(k + fractional.size()) ==
+                    pdlp_termination_status_t::Optimal)
+                     ? solutions.get_dual_objective_value(k + fractional.size())
+                     : root_obj;
+
+      pc.strong_branch_down[k] = obj_down - root_obj;
+      pc.strong_branch_up[k]   = obj_up - root_obj;
+    }
+  } else {
+    std::chrono::steady_clock::time_point start_timea = std::chrono::steady_clock::now();
+
+#pragma omp parallel num_threads(settings.num_threads)
+    {
+      i_t n = std::min<i_t>(4 * settings.num_threads, fractional.size());
+
+      // Here we are creating more tasks than the number of threads
+      // such that they can be scheduled dynamically to the threads.
+#pragma omp for schedule(dynamic, 1)
+      for (i_t k = 0; k < n; k++) {
+        i_t start = std::floor(k * fractional.size() / n);
+        i_t end   = std::floor((k + 1) * fractional.size() / n);
+
+        constexpr bool verbose = false;
+        if (verbose) {
+          settings.log.printf("Thread id %d task id %d start %d end %d. size %d\n",
+                              omp_get_thread_num(),
+                              k,
+                              start,
+                              end,
+                              end - start);
+        }
+
+        strong_branch_helper(start,
+                             end,
+                             start_time,
+                             original_lp,
+                             settings,
+                             var_types,
+                             fractional,
+                             root_obj,
+                             root_soln,
+                             root_vstatus,
+                             edge_norms,
+                             pc);
+      }
+    }
+    std::chrono::steady_clock::time_point end_timea = std::chrono::steady_clock::now();
+    std::chrono::duration<f_t> duration             = end_timea - start_timea;
+    settings.log.printf("Dual Simplex Strong branching took %.2f seconds\n", duration.count());
   }
 
   pc.update_pseudo_costs_from_strong_branching(fractional, root_soln);
@@ -386,7 +465,8 @@ void pseudo_costs_t<i_t, f_t>::update_pseudo_costs_from_strong_branching(
 
 template class pseudo_costs_t<int, double>;
 
-template void strong_branching<int, double>(const lp_problem_t<int, double>& original_lp,
+template void strong_branching<int, double>(const user_problem_t<int, double>& original_problem,
+                                            const lp_problem_t<int, double>& original_lp,
                                             const simplex_solver_settings_t<int, double>& settings,
                                             double start_time,
                                             const std::vector<variable_type_t>& var_types,

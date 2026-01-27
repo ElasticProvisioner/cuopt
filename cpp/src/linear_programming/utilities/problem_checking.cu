@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -65,7 +65,9 @@ void problem_checking_t<i_t, f_t>::check_initial_primal_representation(
       "has size %zu, while objective vector has size %zu.",
       primal_initial_solution.size(),
       op_problem.get_objective_coefficients().size());
-    cuopt_expects(!thrust::any_of(op_problem.get_handle_ptr()->get_thrust_policy(),
+    // TODO batch mode: Akif/Alice why?
+    // This clashes with batch PDLP warm start which by design will not be within the bounds
+    /*cuopt_expects(!thrust::any_of(op_problem.get_handle_ptr()->get_thrust_policy(),
                                   thrust::make_counting_iterator(0),
                                   thrust::make_counting_iterator(0) + op_problem.get_n_variables(),
                                   [lower_bounds = make_span(op_problem.get_variable_lower_bounds()),
@@ -76,7 +78,7 @@ void problem_checking_t<i_t, f_t>::check_initial_primal_representation(
                                            assignment_span[idx] > upper_bounds[idx] + int_tol;
                                   }),
                   error_type_t::ValidationError,
-                  "Initial solution violates variable bounds.");
+                  "Initial solution violates variable bounds.");*/
   }
 }
 
