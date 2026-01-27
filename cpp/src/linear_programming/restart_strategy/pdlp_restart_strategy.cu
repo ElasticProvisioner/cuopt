@@ -696,36 +696,7 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_cupdlpx_restart(i_t total_number_
     printf("forced restart at first major\n");
 #endif
     std::fill(should_restart.begin(), should_restart.end(), 1);
-    return;
   } else if (total_number_of_iterations > hyper_params_.major_iteration) {
-    /* For now will do a simpler method
-    for (size_t i = 0; i < climber_strategies_.size(); ++i)
-    {
-      cuopt_assert(initial_fixed_point_error_[i] != std::numeric_limits<f_t>::signaling_NaN(),
-                  "Numerical error: initial_fixed_point_error_ should not be at nan at this stage");
-      cuopt_assert(fixed_point_error_[i] != std::numeric_limits<f_t>::signaling_NaN(),
-                  "Numerical error: fixed_point_error_ should not be at nan at this stage");
-      if (fixed_point_error_[i] <= hyper_params_.sufficient_reduction_for_restart *
-                                  initial_fixed_point_error_[i]) {
-        #ifdef CUPDLP_DEBUG_MODE
-          printf("sufficient restart\n");
-        #endif
-        should_restart[i] = 1;
-      } else if (fixed_point_error_[i] <=
-                   hyper_params_.necessary_reduction_for_restart *
-                     initial_fixed_point_error_[i] &&
-                 fixed_point_error_[i] > last_trial_fixed_point_error_[i]) {
-  #ifdef CUPDLP_DEBUG_MODE
-        printf("neseccary restart\n");
-  #endif
-        should_restart[i] = 1;
-      } else if (should_do_artificial_restart(total_number_of_iterations)) {
-  #ifdef CUPDLP_DEBUG_MODE
-        printf("artificial restart\n");
-  #endif
-        should_restart[i] = true;
-      }
-    }*/
     // For now just taking the average and restarting everyone or no one
     for (size_t i = 0; i < climber_strategies_.size(); ++i) {
       cuopt_assert(
@@ -779,9 +750,8 @@ void pdlp_restart_strategy_t<i_t, f_t>::should_cupdlpx_restart(i_t total_number_
       std::fill(should_restart.begin(), should_restart.end(), 1);
     }
   }
-  std::copy(last_trial_fixed_point_error_.begin(),
-            last_trial_fixed_point_error_.end(),
-            fixed_point_error_.begin());
+  std::copy(
+    fixed_point_error_.begin(), fixed_point_error_.end(), last_trial_fixed_point_error_.begin());
 }
 
 template <typename f_t>
@@ -1007,12 +977,10 @@ void pdlp_restart_strategy_t<i_t, f_t>::cupdlpx_restart(
   print("New pdhg_solver.get_dual_solution", pdhg_solver.get_dual_solution());
 #endif
 
+  // TODO later batch mode: remove if you have per climber restart
   for (size_t i = 0; i < climber_strategies_.size(); ++i) {
-    // TODO later batch mode: remove if you have per climber restart
-    if (should_restart[i]) {
-      weighted_average_solution_.iterations_since_last_restart_ = 0;
-      last_trial_fixed_point_error_[i] = std::numeric_limits<f_t>::infinity();
-    }
+    weighted_average_solution_.iterations_since_last_restart_ = 0;
+    last_trial_fixed_point_error_[i] = std::numeric_limits<f_t>::infinity();
   }
 }
 
