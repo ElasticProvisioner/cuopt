@@ -198,6 +198,8 @@ int run_single_file(std::string file_path,
     }
   }
 
+  CUOPT_LOG_INFO("Reliability branching: %d\n", enable_rb);
+
   settings.time_limit                    = time_limit;
   settings.heuristics_only               = heuristics_only;
   settings.num_cpu_threads               = num_cpu_threads;

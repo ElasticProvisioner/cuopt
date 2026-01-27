@@ -147,6 +147,7 @@ f_t trial_branching(const lp_problem_t<i_t, f_t>& original_lp,
                     f_t branch_var_upper,
                     f_t upper_bound,
                     i_t bnb_lp_iter_per_node,
+                    f_t start_time,
                     omp_atomic_t<int64_t>& total_lp_iter)
 {
   lp_problem_t child_problem      = original_lp;
@@ -155,7 +156,6 @@ f_t trial_branching(const lp_problem_t<i_t, f_t>& original_lp,
 
   simplex_solver_settings_t<i_t, f_t> child_settings = settings;
   child_settings.set_log(false);
-  f_t lp_start_time              = tic();
   i_t lp_iter_upper              = settings.reliability_branching_settings.upper_max_lp_iter;
   i_t lp_iter_lower              = settings.reliability_branching_settings.lower_max_lp_iter;
   child_settings.iteration_limit = std::clamp(bnb_lp_iter_per_node, lp_iter_lower, lp_iter_upper);
@@ -174,7 +174,7 @@ f_t trial_branching(const lp_problem_t<i_t, f_t>& original_lp,
   dual::status_t status = dual_phase2_with_advanced_basis(2,
                                                           0,
                                                           false,
-                                                          lp_start_time,
+                                                          start_time,
                                                           child_problem,
                                                           child_settings,
                                                           child_vstatus,
@@ -404,6 +404,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   f_t upper_bound,
   logger_t& log)
 {
+  f_t start_time = bnb_stats.start_time;
   i_t branch_var = fractional[0];
   f_t max_score  = -1;
   i_t num_initialized_down;
@@ -423,19 +424,18 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   const int64_t bnb_nodes_explored = bnb_stats.nodes_explored;
   const i_t bnb_lp_iter_per_node   = bnb_total_lp_iter / bnb_stats.nodes_explored;
 
-  const i_t max_threshold = settings.reliability_branching_settings.max_reliable_threshold;
-  const i_t min_threshold = settings.reliability_branching_settings.min_reliable_threshold;
-  const i_t iter_factor   = settings.reliability_branching_settings.bnb_lp_factor;
-  const i_t iter_offset   = settings.reliability_branching_settings.bnb_lp_offset;
-  const int64_t alpha     = iter_factor * bnb_total_lp_iter;
-  const int64_t max_iter  = alpha + settings.reliability_branching_settings.bnb_lp_offset;
-
   i_t reliable_threshold = settings.reliability_branching_settings.reliable_threshold;
   if (reliable_threshold < 0) {
-    i_t gamma = (max_iter - sb_total_lp_iter) / (sb_total_lp_iter + 1);
-    gamma     = std::min(1, gamma);
-    gamma     = std::max<i_t>((alpha - sb_total_lp_iter) / (sb_total_lp_iter + 1), gamma);
+    const i_t max_threshold = settings.reliability_branching_settings.max_reliable_threshold;
+    const i_t min_threshold = settings.reliability_branching_settings.min_reliable_threshold;
+    const f_t iter_factor   = settings.reliability_branching_settings.bnb_lp_factor;
+    const i_t iter_offset   = settings.reliability_branching_settings.bnb_lp_offset;
+    const int64_t alpha     = iter_factor * bnb_total_lp_iter;
+    const int64_t max_iter  = alpha + settings.reliability_branching_settings.bnb_lp_offset;
 
+    f_t gamma          = (max_iter - sb_total_lp_iter) / (sb_total_lp_iter + 1.0);
+    gamma              = std::min(1.0, gamma);
+    gamma              = std::max((alpha - sb_total_lp_iter) / (sb_total_lp_iter + 1.0), gamma);
     reliable_threshold = (1 - gamma) * min_threshold + gamma * max_threshold;
     reliable_threshold = sb_total_lp_iter < max_iter ? reliable_threshold : 0;
   }
@@ -477,24 +477,18 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
 
   const int task_priority      = settings.reliability_branching_settings.task_priority;
   const i_t max_num_candidates = settings.reliability_branching_settings.max_num_candidates;
-  const i_t max_lookahead      = settings.reliability_branching_settings.max_lookahead;
   const i_t num_sb_vars        = std::min<size_t>(unreliable_list.size(), max_num_candidates);
 
   assert(task_priority > 0);
   assert(max_num_candidates > 0);
-  assert(max_lookahead > 0);
   assert(num_sb_vars > 0);
 
-  // Shuffle the unreliable list so every variable has the same chance to be selected.
-  if (unreliable_list.size() > max_num_candidates) { worker_data->rng.shuffle(unreliable_list); }
-
-  omp_atomic_t<i_t> unchanged = 0;
-  const i_t max_tasks         = std::clamp(num_sb_vars / 2, 1, max_lookahead);
-  i_t num_tasks               = settings.reliability_branching_settings.num_tasks;
-  num_tasks                   = std::clamp(num_tasks, 1, max_tasks);
+  const i_t max_tasks = std::max(num_sb_vars / 2, 1);
+  i_t num_tasks       = settings.reliability_branching_settings.num_tasks;
+  num_tasks           = std::clamp(num_tasks, 1, max_tasks);
   assert(num_tasks > 0);
 
-  settings.log.printf(
+  log.printf(
     "RB iters = %d, B&B iters = %d, unreliable = %d, num_tasks = %d, reliable_threshold = %d\n",
     sb_total_lp_iter.load(),
     bnb_total_lp_iter,
@@ -502,17 +496,19 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
     num_tasks,
     reliable_threshold);
 
+  // Shuffle the unreliable list so every variable has the same chance to be selected.
+  if (unreliable_list.size() > max_num_candidates) { worker_data->rng.shuffle(unreliable_list); }
+
 #pragma omp taskloop if (num_tasks > 1) priority(task_priority) num_tasks(num_tasks) untied
   for (int task_id = 0; task_id < num_tasks; ++task_id) {
     size_t start = (double)task_id * num_sb_vars / num_tasks;
     size_t end   = (double)(task_id + 1) * num_sb_vars / num_tasks;
 
     for (i_t i = start; i < end; ++i) {
-      if (unchanged > max_lookahead) { break; }
+      if (toc(start_time) > settings.time_limit) { break; }
 
       const i_t j = unreliable_list[i];
       pseudo_cost_mutex[j].lock();
-
       if (pseudo_cost_num_down[j] < reliable_threshold) {
         // Do trial branching on the down branch
         f_t obj = trial_branching(worker_data->leaf_problem,
@@ -528,7 +524,9 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
                                   std::floor(solution[j]),
                                   upper_bound,
                                   bnb_lp_iter_per_node,
+                                  start_time,
                                   sb_total_lp_iter);
+
         if (!std::isnan(obj)) {
           f_t change_in_obj = obj - node_ptr->lower_bound;
           f_t change_in_x   = solution[j] - std::floor(solution[j]);
@@ -536,7 +534,10 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
           pseudo_cost_num_down[j]++;
         }
       }
+      pseudo_cost_mutex[j].unlock();
+      if (toc(start_time) > settings.time_limit) { break; }
 
+      pseudo_cost_mutex[j].lock();
       if (pseudo_cost_num_up[j] < reliable_threshold) {
         f_t obj = trial_branching(worker_data->leaf_problem,
                                   settings,
@@ -551,6 +552,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
                                   worker_data->leaf_problem.upper[j],
                                   upper_bound,
                                   bnb_lp_iter_per_node,
+                                  start_time,
                                   sb_total_lp_iter);
 
         if (!std::isnan(obj)) {
@@ -560,14 +562,13 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
           pseudo_cost_num_up[j]++;
         }
       }
+      pseudo_cost_mutex[j].unlock();
+      if (toc(start_time) > settings.time_limit) { break; }
 
       f_t pc_up   = pseudo_cost_num_up[j] > 0 ? pseudo_cost_sum_up[j] / pseudo_cost_num_up[j]
                                               : pseudo_cost_up_avg;
       f_t pc_down = pseudo_cost_sum_down[j] > 0 ? pseudo_cost_sum_down[j] / pseudo_cost_num_down[j]
                                                 : pseudo_cost_down_avg;
-
-      pseudo_cost_mutex[j].unlock();
-
       constexpr f_t eps = 1e-6;
       const f_t f_down  = solution[j] - std::floor(solution[j]);
       const f_t f_up    = std::ceil(solution[j]) - solution[j];
@@ -577,9 +578,6 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
       if (score > max_score) {
         max_score  = score;
         branch_var = j;
-        unchanged  = 0;
-      } else {
-        unchanged++;
       }
       score_mutex.unlock();
     }

@@ -65,14 +65,11 @@ struct reliability_branching_settings_t {
   // node
   i_t max_num_candidates = 100;
 
-  // The maximum number of candidates evaluated that does not improve the best score.
-  i_t max_lookahead = 10;
-
   // Define the maximum number of iteration spent in strong branching.
   // Let `bnb_lp_iter` = total number of iterations in B&B, then
   // `max iter in strong branching = bnb_lp_factor * bnb_lp_iter + bnb_lp_offset`.
   // This is used for determining the `reliable_threshold`.
-  i_t bnb_lp_factor = 0.5;
+  f_t bnb_lp_factor = 0.5;
   i_t bnb_lp_offset = 100000;
 
   // Threshold for determining for the number of pseudocost updates. Used for
@@ -82,9 +79,9 @@ struct reliability_branching_settings_t {
   // - >0: will use the value for the threshold.
   i_t reliable_threshold = -1;
 
-  // Maximum and minimum values for `reliable_threshold`. If strong branching is
-  // cheap, then the value of the `reliable_threshold` can be greater
-  // than the `max_reliable_threshold`.
+  // Maximum and minimum points of the curve to determine the value
+  // of the `reliable_threshold` based on the current number of LP
+  // iterations in strong branching and B&B.
   // Only used when `reliable_threshold` is negative
   i_t max_reliable_threshold = 5;
   i_t min_reliable_threshold = 1;
