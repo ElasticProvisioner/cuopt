@@ -158,7 +158,7 @@ class branch_and_bound_t {
 
   // Global status of the solver.
   omp_atomic_t<mip_status_t> solver_status_;
-  omp_atomic_t<bool> is_running{false};
+  omp_atomic_t<bool> is_running_{false};
 
   // Minimum number of node in the queue. When the queue size is less than
   // this variable, the nodes are added directly to the queue instead of
