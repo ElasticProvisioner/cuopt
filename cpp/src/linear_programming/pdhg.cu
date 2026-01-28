@@ -96,7 +96,8 @@ pdhg_solver_t<i_t, f_t>::pdhg_solver_t(
     batch_size_divisor_(climber_strategies_.size())
 {
   if (!new_bounds.empty()) {
-    cuopt_assert(new_bounds.size() == climber_strategies_.size(), "New bounds size must be equal to climber strategies size");
+    cuopt_assert(new_bounds.size() == climber_strategies_.size(),
+                 "New bounds size must be equal to climber strategies size");
     std::vector<i_t> idx(new_bounds.size());
     std::vector<f_t> lower(new_bounds.size());
     std::vector<f_t> upper(new_bounds.size());
@@ -729,7 +730,8 @@ struct refine_primal_projection_bulk_op {
     f_t y_aty = Aty[global_idx];
     f_t tau   = primal_step_size[climber_id];
 
-    reflected_primal[global_idx] = primal_reflected_projection_batch<f_t>{}(x, c, y_aty, {l, u}, tau);
+    reflected_primal[global_idx] =
+      primal_reflected_projection_batch<f_t>{}(x, c, y_aty, {l, u}, tau);
   }
 };
 
@@ -763,9 +765,12 @@ void pdhg_solver_t<i_t, f_t>::refine_initial_primal_projection()
   print("new_bounds_lower_", new_bounds_lower_);
   print("new_bounds_upper_", new_bounds_upper_);
 #endif
-  cuopt_assert(new_bounds_idx_.size() == climber_strategies_.size(), "New bounds index size must be equal to climber strategies size");
-  cuopt_assert(new_bounds_lower_.size() == climber_strategies_.size(), "New bounds lower size must be equal to climber strategies size");
-  cuopt_assert(new_bounds_upper_.size() == climber_strategies_.size(), "New bounds upper size must be equal to climber strategies size");
+  cuopt_assert(new_bounds_idx_.size() == climber_strategies_.size(),
+               "New bounds index size must be equal to climber strategies size");
+  cuopt_assert(new_bounds_lower_.size() == climber_strategies_.size(),
+               "New bounds lower size must be equal to climber strategies size");
+  cuopt_assert(new_bounds_upper_.size() == climber_strategies_.size(),
+               "New bounds upper size must be equal to climber strategies size");
   cub::DeviceFor::Bulk(climber_strategies_.size(),
                        refine_initial_primal_projection_bulk_op<i_t, f_t>{
                          make_span(new_bounds_idx_),
@@ -824,9 +829,12 @@ void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution_reflected(
         print("new_bounds_lower_", new_bounds_lower_);
         print("new_bounds_upper_", new_bounds_upper_);
 #endif
-        cuopt_assert(new_bounds_idx_.size() == climber_strategies_.size(), "New bounds index size must be equal to climber strategies size");
-        cuopt_assert(new_bounds_lower_.size() == climber_strategies_.size(), "New bounds lower size must be equal to climber strategies size");
-        cuopt_assert(new_bounds_upper_.size() == climber_strategies_.size(), "New bounds upper size must be equal to climber strategies size");
+        cuopt_assert(new_bounds_idx_.size() == climber_strategies_.size(),
+                     "New bounds index size must be equal to climber strategies size");
+        cuopt_assert(new_bounds_lower_.size() == climber_strategies_.size(),
+                     "New bounds lower size must be equal to climber strategies size");
+        cuopt_assert(new_bounds_upper_.size() == climber_strategies_.size(),
+                     "New bounds upper size must be equal to climber strategies size");
         cub::DeviceFor::Bulk(climber_strategies_.size(),
                              refine_primal_projection_major_bulk_op<i_t, f_t>{
                                make_span(new_bounds_idx_),
@@ -926,9 +934,12 @@ void pdhg_solver_t<i_t, f_t>::compute_next_primal_dual_solution_reflected(
         print("new_bounds_lower_", new_bounds_lower_);
         print("new_bounds_upper_", new_bounds_upper_);
 #endif
-        cuopt_assert(new_bounds_idx_.size() == climber_strategies_.size(), "New bounds index size must be equal to climber strategies size");
-        cuopt_assert(new_bounds_lower_.size() == climber_strategies_.size(), "New bounds lower size must be equal to climber strategies size");
-        cuopt_assert(new_bounds_upper_.size() == climber_strategies_.size(), "New bounds upper size must be equal to climber strategies size");
+        cuopt_assert(new_bounds_idx_.size() == climber_strategies_.size(),
+                     "New bounds index size must be equal to climber strategies size");
+        cuopt_assert(new_bounds_lower_.size() == climber_strategies_.size(),
+                     "New bounds lower size must be equal to climber strategies size");
+        cuopt_assert(new_bounds_upper_.size() == climber_strategies_.size(),
+                     "New bounds upper size must be equal to climber strategies size");
         cub::DeviceFor::Bulk(climber_strategies_.size(),
                              refine_primal_projection_bulk_op<i_t, f_t>{
                                make_span(new_bounds_idx_),

@@ -261,7 +261,8 @@ void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
     }
 
     const auto mps_model = simplex_problem_to_mps_data_model(original_problem);
-    const auto solutions = batch_pdlp_solve(original_problem.handle_ptr, mps_model, fractional, fraction_values);
+    const auto solutions =
+      batch_pdlp_solve(original_problem.handle_ptr, mps_model, fractional, fraction_values);
     std::chrono::steady_clock::time_point end_batch = std::chrono::steady_clock::now();
     std::chrono::duration<f_t> duration             = end_batch - start_batch;
 

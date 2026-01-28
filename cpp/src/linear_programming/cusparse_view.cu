@@ -238,16 +238,16 @@ void my_cusparsespmv_preprocess(cusparseHandle_t handle,
 template <typename T,
           typename std::enable_if_t<std::is_same_v<T, float> || std::is_same_v<T, double>>*>
 void my_cusparsespmm_preprocess(cusparseHandle_t handle,
-                                            cusparseOperation_t opA,
-                                            cusparseOperation_t opB,
-                                            const T* alpha,
-                                            const cusparseSpMatDescr_t matA,
-                                            const cusparseDnMatDescr_t matB,
-                                            const T* beta,
-                                            const cusparseDnMatDescr_t matC,
-                                            cusparseSpMMAlg_t alg,
-                                            void* externalBuffer,
-                                            cudaStream_t stream)
+                                cusparseOperation_t opA,
+                                cusparseOperation_t opB,
+                                const T* alpha,
+                                const cusparseSpMatDescr_t matA,
+                                const cusparseDnMatDescr_t matB,
+                                const T* beta,
+                                const cusparseDnMatDescr_t matC,
+                                cusparseSpMMAlg_t alg,
+                                void* externalBuffer,
+                                cudaStream_t stream)
 {
   auto constexpr float_type = []() constexpr {
     if constexpr (std::is_same_v<T, float>) {
@@ -960,29 +960,29 @@ template class cusparse_view_t<int, double>;
 #if CUDA_VER_12_4_UP
 #if MIP_INSTANTIATE_FLOAT
 template void my_cusparsespmm_preprocess<float>(cusparseHandle_t,
-                                                            cusparseOperation_t,
-                                                            cusparseOperation_t,
-                                                            const float*,
-                                                            const cusparseSpMatDescr_t,
-                                                            const cusparseDnMatDescr_t,
-                                                            const float*,
-                                                            const cusparseDnMatDescr_t,
-                                                            cusparseSpMMAlg_t,
-                                                            void*,
-                                                            cudaStream_t);
+                                                cusparseOperation_t,
+                                                cusparseOperation_t,
+                                                const float*,
+                                                const cusparseSpMatDescr_t,
+                                                const cusparseDnMatDescr_t,
+                                                const float*,
+                                                const cusparseDnMatDescr_t,
+                                                cusparseSpMMAlg_t,
+                                                void*,
+                                                cudaStream_t);
 #endif
 #if MIP_INSTANTIATE_DOUBLE
 template void my_cusparsespmm_preprocess<double>(cusparseHandle_t,
-                                                             cusparseOperation_t,
-                                                             cusparseOperation_t,
-                                                             const double*,
-                                                             const cusparseSpMatDescr_t,
-                                                             const cusparseDnMatDescr_t,
-                                                             const double*,
-                                                             const cusparseDnMatDescr_t,
-                                                             cusparseSpMMAlg_t,
-                                                             void*,
-                                                             cudaStream_t);
+                                                 cusparseOperation_t,
+                                                 cusparseOperation_t,
+                                                 const double*,
+                                                 const cusparseSpMatDescr_t,
+                                                 const cusparseDnMatDescr_t,
+                                                 const double*,
+                                                 const cusparseDnMatDescr_t,
+                                                 cusparseSpMMAlg_t,
+                                                 void*,
+                                                 cudaStream_t);
 #endif
 #endif
 

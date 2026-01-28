@@ -397,7 +397,8 @@ int optimal_batch_size_handler(const optimization_problem_t<i_t, f_t>& op_proble
       }
     } while (current_step < max_steps);
     // Testing one last time between the two
-    int middle_node = std::min(std::max(1, ((current_batch_size / 2) + current_batch_size) / 2), max_batch_size);
+    int middle_node =
+      std::min(std::max(1, ((current_batch_size / 2) + current_batch_size) / 2), max_batch_size);
 #ifdef BATCH_VERBOSE_MODE
     std::cout << "Testing one last time between the two at node: " << middle_node << std::endl;
 #endif

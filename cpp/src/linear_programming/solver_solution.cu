@@ -32,7 +32,7 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     error_status_(cuopt::logic_error("", cuopt::error_type_t::Success))
 {
   cuopt_assert(termination_stats_.size() == termination_status_.size(),
-                "Termination statistics and status vectors must have the same size");
+               "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>
@@ -45,7 +45,7 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     error_status_(error_status_)
 {
   cuopt_assert(termination_stats_.size() == termination_status_.size(),
-                "Termination statistics and status vectors must have the same size");
+               "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>
@@ -71,7 +71,7 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     error_status_(cuopt::logic_error("", cuopt::error_type_t::Success))
 {
   cuopt_assert(termination_stats_.size() == termination_status_.size(),
-                "Termination statistics and status vectors must have the same size");
+               "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>
@@ -95,7 +95,7 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     error_status_(cuopt::logic_error("", cuopt::error_type_t::Success))
 {
   cuopt_assert(termination_stats_.size() == termination_status_.size(),
-                "Termination statistics and status vectors must have the same size");
+               "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>
@@ -121,7 +121,7 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     error_status_(cuopt::logic_error("", cuopt::error_type_t::Success))
 {
   cuopt_assert(termination_stats_.size() == termination_status_.size(),
-                "Termination statistics and status vectors must have the same size");
+               "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>

@@ -201,16 +201,16 @@ template <
   typename T,
   typename std::enable_if_t<std::is_same_v<T, float> || std::is_same_v<T, double>>* = nullptr>
 void my_cusparsespmm_preprocess(cusparseHandle_t handle,
-                                            cusparseOperation_t opA,
-                                            cusparseOperation_t opB,
-                                            const T* alpha,
-                                            const cusparseSpMatDescr_t matA,
-                                            const cusparseDnMatDescr_t matB,
-                                            const T* beta,
-                                            const cusparseDnMatDescr_t matC,
-                                            cusparseSpMMAlg_t alg,
-                                            void* externalBuffer,
-                                            cudaStream_t stream);
+                                cusparseOperation_t opA,
+                                cusparseOperation_t opB,
+                                const T* alpha,
+                                const cusparseSpMatDescr_t matA,
+                                const cusparseDnMatDescr_t matB,
+                                const T* beta,
+                                const cusparseDnMatDescr_t matC,
+                                cusparseSpMMAlg_t alg,
+                                void* externalBuffer,
+                                cudaStream_t stream);
 #endif
 
 }  // namespace cuopt::linear_programming::detail

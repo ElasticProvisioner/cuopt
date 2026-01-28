@@ -1664,7 +1664,7 @@ void pdlp_solver_t<i_t, f_t>::resize_and_swap_all_context_loop(
 
   // PDHG SpMM preprocess
 #if CUDA_VER_12_4_UP
-my_cusparsespmm_preprocess(
+  my_cusparsespmm_preprocess(
     handle_ptr_->get_cusparse_handle(),
     CUSPARSE_OPERATION_NON_TRANSPOSE,
     CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -1689,45 +1689,45 @@ my_cusparsespmm_preprocess(
     pdhg_cusparse_view.buffer_non_transpose_batch_row_row_.data(),
     stream_view_);
 
-    // Adaptive step size strategy SpMM preprocess
-    my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
+  // Adaptive step size strategy SpMM preprocess
+  my_cusparsespmm_preprocess(handle_ptr_->get_cusparse_handle(),
+                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             CUSPARSE_OPERATION_NON_TRANSPOSE,
+                             reusable_device_scalar_value_1_.data(),
+                             pdhg_cusparse_view.A_T,
+                             pdhg_cusparse_view.batch_potential_next_dual_solution,
+                             reusable_device_scalar_value_0_.data(),
+                             pdhg_cusparse_view.batch_next_AtYs,
+                             CUSPARSE_SPMM_CSR_ALG3,
+                             (f_t*)pdhg_cusparse_view.buffer_transpose_batch.data(),
+                             stream_view_);
+
+  // Convergence information SpMM preprocess
+  my_cusparsespmm_preprocess(
+    handle_ptr_->get_cusparse_handle(),
     CUSPARSE_OPERATION_NON_TRANSPOSE,
     CUSPARSE_OPERATION_NON_TRANSPOSE,
     reusable_device_scalar_value_1_.data(),
-    pdhg_cusparse_view.A_T,
-    pdhg_cusparse_view.batch_potential_next_dual_solution,
+    current_op_problem_evaluation_cusparse_view_.A_T,
+    current_op_problem_evaluation_cusparse_view_.batch_dual_solutions,
     reusable_device_scalar_value_0_.data(),
-    pdhg_cusparse_view.batch_next_AtYs,
+    current_op_problem_evaluation_cusparse_view_.batch_tmp_primals,
     CUSPARSE_SPMM_CSR_ALG3,
-    (f_t*)pdhg_cusparse_view.buffer_transpose_batch.data(),
+    (f_t*)current_op_problem_evaluation_cusparse_view_.buffer_transpose_batch.data(),
     stream_view_);
-    
-    // Convergence information SpMM preprocess
-    my_cusparsespmm_preprocess(
-      handle_ptr_->get_cusparse_handle(),
-      CUSPARSE_OPERATION_NON_TRANSPOSE,
-      CUSPARSE_OPERATION_NON_TRANSPOSE,
-      reusable_device_scalar_value_1_.data(),
-      current_op_problem_evaluation_cusparse_view_.A_T,
-      current_op_problem_evaluation_cusparse_view_.batch_dual_solutions,
-      reusable_device_scalar_value_0_.data(),
-      current_op_problem_evaluation_cusparse_view_.batch_tmp_primals,
-      CUSPARSE_SPMM_CSR_ALG3,
-      (f_t*)current_op_problem_evaluation_cusparse_view_.buffer_transpose_batch.data(),
-      stream_view_);
-      
-      my_cusparsespmm_preprocess(
-        handle_ptr_->get_cusparse_handle(),
-        CUSPARSE_OPERATION_NON_TRANSPOSE,
-        CUSPARSE_OPERATION_NON_TRANSPOSE,
-        reusable_device_scalar_value_1_.data(),
-        current_op_problem_evaluation_cusparse_view_.A,
-        current_op_problem_evaluation_cusparse_view_.batch_primal_solutions,
-        reusable_device_scalar_value_0_.data(),
-        current_op_problem_evaluation_cusparse_view_.batch_tmp_duals,
-        CUSPARSE_SPMM_CSR_ALG3,
-        (f_t*)current_op_problem_evaluation_cusparse_view_.buffer_non_transpose_batch.data(),
-        stream_view_);
+
+  my_cusparsespmm_preprocess(
+    handle_ptr_->get_cusparse_handle(),
+    CUSPARSE_OPERATION_NON_TRANSPOSE,
+    CUSPARSE_OPERATION_NON_TRANSPOSE,
+    reusable_device_scalar_value_1_.data(),
+    current_op_problem_evaluation_cusparse_view_.A,
+    current_op_problem_evaluation_cusparse_view_.batch_primal_solutions,
+    reusable_device_scalar_value_0_.data(),
+    current_op_problem_evaluation_cusparse_view_.batch_tmp_duals,
+    CUSPARSE_SPMM_CSR_ALG3,
+    (f_t*)current_op_problem_evaluation_cusparse_view_.buffer_non_transpose_batch.data(),
+    stream_view_);
 #endif
 
   // Set PDHG graph to unitilized so that next call can start a new graph
