@@ -295,9 +295,9 @@ class optimization_problem_solution_t : public base_solution_t {
   rmm::device_uvector<f_t> reduced_cost_;
   pdlp_warm_start_data_t<i_t, f_t> pdlp_warm_start_data_;
 
-  std::vector<pdlp_termination_status_t> termination_status_;
+  std::vector<pdlp_termination_status_t> termination_status_{1};
 
-  std::vector<additional_termination_information_t> termination_stats_;
+  std::vector<additional_termination_information_t> termination_stats_{1};
 
   /** name of the objective (only a single objective is currently allowed) */
   std::string objective_name_;

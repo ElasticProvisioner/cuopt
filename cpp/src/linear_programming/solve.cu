@@ -1195,7 +1195,9 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
       raft::common::nvtx::range fun_scope("Check problem representation");
       // This is required as user might forget to set some fields
       problem_checking_t<i_t, f_t>::check_problem_representation(op_problem);
-      problem_checking_t<i_t, f_t>::check_initial_solution_representation(op_problem, settings);
+      // In batch PDLP for strong branching, the initial solutions will be by design out of bounds
+      if (settings.new_bounds.size() == 0)
+        problem_checking_t<i_t, f_t>::check_initial_solution_representation(op_problem, settings);
     }
 
     if (!settings_const.inside_mip) {

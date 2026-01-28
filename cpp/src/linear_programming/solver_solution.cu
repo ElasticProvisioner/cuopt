@@ -289,6 +289,7 @@ double optimization_problem_solution_t<i_t, f_t>::get_solve_time() const
 {
   // TODO later batch mode: shouldn't we have a different solve time per climber?
   // Currently the issue is that we would need one solve time per climber and one overall solve tim
+  cuopt_assert(termination_stats_.size() > 0, "Should never happen");
   return termination_stats_[0].solve_time;
 }
 
