@@ -31,6 +31,8 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     termination_status_{termination_status},
     error_status_(cuopt::logic_error("", cuopt::error_type_t::Success))
 {
+  cuopt_assert(termination_stats_.size() == termination_status_.size(),
+                "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>
@@ -42,6 +44,8 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     termination_status_{pdlp_termination_status_t::NoTermination},
     error_status_(error_status_)
 {
+  cuopt_assert(termination_stats_.size() == termination_status_.size(),
+                "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>
@@ -66,6 +70,8 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     termination_status_(std::move(termination_status)),
     error_status_(cuopt::logic_error("", cuopt::error_type_t::Success))
 {
+  cuopt_assert(termination_stats_.size() == termination_status_.size(),
+                "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>
@@ -88,6 +94,8 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     termination_status_(std::move(termination_status)),
     error_status_(cuopt::logic_error("", cuopt::error_type_t::Success))
 {
+  cuopt_assert(termination_stats_.size() == termination_status_.size(),
+                "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>
@@ -112,6 +120,8 @@ optimization_problem_solution_t<i_t, f_t>::optimization_problem_solution_t(
     termination_status_{termination_status},
     error_status_(cuopt::logic_error("", cuopt::error_type_t::Success))
 {
+  cuopt_assert(termination_stats_.size() == termination_status_.size(),
+                "Termination statistics and status vectors must have the same size");
 }
 
 template <typename i_t, typename f_t>
@@ -320,14 +330,14 @@ std::string optimization_problem_solution_t<i_t, f_t>::get_termination_status_st
 template <typename i_t, typename f_t>
 f_t optimization_problem_solution_t<i_t, f_t>::get_objective_value(i_t id) const
 {
-  cuopt_assert(id < termination_status_.size(), "id too big for batch size");
+  cuopt_assert(id < termination_stats_.size(), "id too big for batch size");
   return termination_stats_[id].primal_objective;
 }
 
 template <typename i_t, typename f_t>
 f_t optimization_problem_solution_t<i_t, f_t>::get_dual_objective_value(i_t id) const
 {
-  cuopt_assert(id < termination_status_.size(), "id too big for batch size");
+  cuopt_assert(id < termination_stats_.size(), "id too big for batch size");
   return termination_stats_[id].dual_objective;
 }
 
@@ -387,7 +397,7 @@ template <typename i_t, typename f_t>
 typename optimization_problem_solution_t<i_t, f_t>::additional_termination_information_t
 optimization_problem_solution_t<i_t, f_t>::get_additional_termination_information(i_t id) const
 {
-  cuopt_assert(id < termination_status_.size(), "id too big for batch size");
+  cuopt_assert(id < termination_stats_.size(), "id too big for batch size");
   return termination_stats_[id];
 }
 

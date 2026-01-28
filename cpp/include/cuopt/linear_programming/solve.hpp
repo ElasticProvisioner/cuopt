@@ -15,8 +15,6 @@
 #include <cuopt/linear_programming/solver_settings.hpp>
 #include <cuopt/linear_programming/utilities/internals.hpp>
 
-#include <dual_simplex/user_problem.hpp>
-
 #include <mps_parser/mps_data_model.hpp>
 #include <string>
 #include <vector>
@@ -101,19 +99,6 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
  * - method: will be set to PDLP
  * - pdlp_solver_mode: will be set to Stable3
  * - detect_infeasibility: will be set to false
- */
-template <typename i_t, typename f_t>
-optimization_problem_solution_t<i_t, f_t> batch_pdlp_solve(
-  const dual_simplex::user_problem_t<i_t, f_t>& user_problem,
-  const std::vector<i_t>& fractional,
-  const std::vector<f_t>& root_soln_x,
-  pdlp_solver_settings_t<i_t, f_t> const& settings = pdlp_solver_settings_t<i_t, f_t>{});
-
-/**
- * @brief Batch linear programming solve function.
- * @note See batch_pdlp_solve(const dual_simplex::user_problem_t<i_t, f_t>& user_problem, const
- * std::vector<i_t>& fractional, const std::vector<f_t>& root_soln_x, pdlp_solver_settings_t<i_t,
- * f_t> const& settings) for more details.
  */
 template <typename i_t, typename f_t>
 optimization_problem_solution_t<i_t, f_t> batch_pdlp_solve(

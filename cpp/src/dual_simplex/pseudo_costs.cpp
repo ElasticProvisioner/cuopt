@@ -138,6 +138,87 @@ void strong_branch_helper(i_t start,
 }  // namespace
 
 template <typename i_t, typename f_t>
+static cuopt::mps_parser::mps_data_model_t<i_t, f_t> simplex_problem_to_mps_data_model(
+  const dual_simplex::user_problem_t<i_t, f_t>& user_problem)
+{
+  cuopt::mps_parser::mps_data_model_t<i_t, f_t> mps_model;
+  int m = user_problem.num_rows;
+  int n = user_problem.num_cols;
+
+  // Convert CSC to CSR using built-in method
+  dual_simplex::csr_matrix_t<i_t, f_t> csr_A(m, n, 0);
+  user_problem.A.to_compressed_row(csr_A);
+
+  int nz = csr_A.row_start[m];
+
+  // Set CSR constraint matrix
+  mps_model.set_csr_constraint_matrix(
+    csr_A.x.data(), nz, csr_A.j.data(), nz, csr_A.row_start.data(), m + 1);
+
+  // Set objective coefficients
+  mps_model.set_objective_coefficients(user_problem.objective.data(), n);
+
+  // Set objective scaling and offset
+  mps_model.set_objective_scaling_factor(user_problem.obj_scale);
+  mps_model.set_objective_offset(user_problem.obj_constant);
+
+  // Set variable bounds
+  mps_model.set_variable_lower_bounds(user_problem.lower.data(), n);
+  mps_model.set_variable_upper_bounds(user_problem.upper.data(), n);
+
+  // Convert row sense and RHS to constraint bounds
+  std::vector<f_t> constraint_lower(m);
+  std::vector<f_t> constraint_upper(m);
+
+  for (i_t i = 0; i < m; ++i) {
+    if (user_problem.row_sense[i] == 'L') {
+      constraint_lower[i] = -std::numeric_limits<f_t>::infinity();
+      constraint_upper[i] = user_problem.rhs[i];
+    } else if (user_problem.row_sense[i] == 'G') {
+      constraint_lower[i] = user_problem.rhs[i];
+      constraint_upper[i] = std::numeric_limits<f_t>::infinity();
+    } else {
+      constraint_lower[i] = user_problem.rhs[i];
+      constraint_upper[i] = user_problem.rhs[i];
+    }
+  }
+
+  for (i_t k = 0; k < user_problem.num_range_rows; ++k) {
+    i_t i = user_problem.range_rows[k];
+    f_t r = user_problem.range_value[k];
+    f_t b = user_problem.rhs[i];
+    f_t h = -std::numeric_limits<f_t>::infinity();
+    f_t u = std::numeric_limits<f_t>::infinity();
+    if (user_problem.row_sense[i] == 'L') {
+      h = b - std::abs(r);
+      u = b;
+    } else if (user_problem.row_sense[i] == 'G') {
+      h = b;
+      u = b + std::abs(r);
+    } else if (user_problem.row_sense[i] == 'E') {
+      if (r > 0) {
+        h = b;
+        u = b + std::abs(r);
+      } else {
+        h = b - std::abs(r);
+        u = b;
+      }
+    }
+    constraint_lower[i] = h;
+    constraint_upper[i] = u;
+  }
+
+  mps_model.set_constraint_lower_bounds(constraint_lower.data(), m);
+  mps_model.set_constraint_upper_bounds(constraint_upper.data(), m);
+
+  // TODO verify
+  // Set maximize flag (obj_scale: 1.0 for min, -1.0 for max)
+  mps_model.set_maximize(user_problem.obj_scale < 0);
+
+  return mps_model;
+}
+
+template <typename i_t, typename f_t>
 void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
                       const lp_problem_t<i_t, f_t>& original_lp,
                       const simplex_solver_settings_t<i_t, f_t>& settings,
@@ -179,7 +260,8 @@ void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
       fraction_values.push_back(original_root_soln_x[j]);
     }
 
-    const auto solutions = batch_pdlp_solve(original_problem, fractional, fraction_values);
+    const auto mps_model = simplex_problem_to_mps_data_model(original_problem);
+    const auto solutions = batch_pdlp_solve(original_problem.handle_ptr, mps_model, fractional, fraction_values);
     std::chrono::steady_clock::time_point end_batch = std::chrono::steady_clock::now();
     std::chrono::duration<f_t> duration             = end_batch - start_batch;
 
