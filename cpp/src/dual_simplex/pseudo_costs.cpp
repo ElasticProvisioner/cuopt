@@ -296,7 +296,7 @@ void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
       // Let the optimal objective value of thie problem be obj_down
       f_t obj_down = (solutions.get_termination_status(k) == pdlp_termination_status_t::Optimal)
                        ? solutions.get_dual_objective_value(k)
-                       : root_obj;
+                       : std::numeric_limits<f_t>::quiet_NaN();
 
       // Branch up:
       // minimize c^T x
@@ -306,7 +306,7 @@ void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
       f_t obj_up = (solutions.get_termination_status(k + fractional.size()) ==
                     pdlp_termination_status_t::Optimal)
                      ? solutions.get_dual_objective_value(k + fractional.size())
-                     : root_obj;
+                     : std::numeric_limits<f_t>::quiet_NaN();
 
       pc.strong_branch_down[k] = obj_down - root_obj;
       pc.strong_branch_up[k]   = obj_up - root_obj;
