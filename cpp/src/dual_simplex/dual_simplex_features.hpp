@@ -206,7 +206,7 @@ struct bounds_strengthening_features_t {
 
   void log_single(i_t m_val, i_t n_val, i_t nnz_val) const
   {
-    CUOPT_LOG_DEBUG(
+    printf(
       "BOUNDS_STRENGTH_FEATURES: m=%d n=%d nnz=%d "
       "iterations=%d bounds_changed=%d nnz_processed=%zu "
       "max_row_len=%d avg_col_span=%.2f unique_cache_lines=%d cache_reuse=%.2f runtime=%.6f\n",
