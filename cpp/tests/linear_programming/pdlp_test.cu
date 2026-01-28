@@ -872,6 +872,28 @@ TEST(pdlp_class, warm_start)
   }
 }
 
+TEST(pdlp_class, warm_start_stable3_not_supported)
+{
+  const raft::handle_t handle{};
+
+  auto path                        = make_path_absolute("linear_programming/afiro_original.mps");
+  auto solver_settings             = pdlp_solver_settings_t<int, double>{};
+  solver_settings.pdlp_solver_mode = cuopt::linear_programming::pdlp_solver_mode_t::Stable3;
+  solver_settings.set_optimality_tolerance(1e-2);
+  solver_settings.detect_infeasibility = false;
+  solver_settings.method               = cuopt::linear_programming::method_t::PDLP;
+
+  cuopt::mps_parser::mps_data_model_t<int, double> mps_data_model =
+    cuopt::mps_parser::parse_mps<int, double>(path);
+  auto op_problem = cuopt::linear_programming::mps_data_model_to_optimization_problem<int, double>(
+    &handle, mps_data_model);
+  optimization_problem_solution_t<int, double> solution = solve_lp(op_problem, solver_settings);
+  EXPECT_EQ(solution.get_termination_status(), pdlp_termination_status_t::Optimal);
+  solver_settings.set_pdlp_warm_start_data(solution.get_pdlp_warm_start_data());
+  optimization_problem_solution_t<int, double> solution2 = solve_lp(op_problem, solver_settings);
+  EXPECT_EQ(solution2.get_termination_status(), pdlp_termination_status_t::NoTermination);
+}
+
 TEST(pdlp_class, dual_postsolve_size)
 {
   const raft::handle_t handle_{};

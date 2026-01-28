@@ -75,14 +75,14 @@ optimization_problem_solution_t<i_t, f_t> solve_lp(
 /**
  * @brief Batch linear programming solve function.
  * @note This function is used to solve a batch of linear programs.
- * The only difference accross climbers will be one variable bound change.
+ * The only difference across climbers is a single variable bound change.
  * Let j = fractional[k]. We want to solve the two trial branching problems
  * - Branch down:
  *   minimize c^T x
  *   subject to lb <= A*x <= ub
  *   x_j <= floor(root_soln[j])
  *   l <= x < u
- *   Let the optimal objective value of thie problem be obj_down
+ *   Let the optimal objective value of this problem be obj_down
  *   f_t obj_down = primal_solutions[k];
  * - Branch up:
  *   minimize c^T x

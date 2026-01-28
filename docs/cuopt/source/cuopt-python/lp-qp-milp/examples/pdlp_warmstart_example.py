@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION &
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION &
 # SPDX-License-Identifier: Apache-2.0
 # AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
@@ -53,10 +53,14 @@ Expected Output:
 """
 
 from cuopt.linear_programming.problem import Problem, CONTINUOUS, MAXIMIZE
-from cuopt.linear_programming.solver.solver_parameters import CUOPT_METHOD
+from cuopt.linear_programming.solver.solver_parameters import (
+    CUOPT_METHOD,
+    CUOPT_PDLP_SOLVER_MODE,
+)
 from cuopt.linear_programming.solver_settings import (
     SolverSettings,
     SolverMethod,
+    PDLPSolverMode,
 )
 
 
@@ -81,6 +85,7 @@ def main():
     # Configure solver settings
     settings = SolverSettings()
     settings.set_parameter(CUOPT_METHOD, SolverMethod.PDLP)
+    settings.set_parameter(CUOPT_PDLP_SOLVER_MODE, PDLPSolverMode.Stable2)
 
     # Solve the problem
     problem.solve(settings)

@@ -740,6 +740,11 @@ optimization_problem_solution_t<i_t, f_t> run_batch_pdlp(
       if (memory_estimate <= free_mem) { break; }
       memory_max_batch_size--;
     }
+    const size_t min_estimate =
+      batch_pdlp_memory_estimator(problem, memory_max_batch_size, max_batch_size);
+    cuopt_expects(min_estimate <= free_mem,
+                  error_type_t::OutOfMemoryError,
+                  "Insufficient GPU memory for batch PDLP (min batch size still too large)");
   }
 
   int optimal_batch_size = use_optimal_batch_size

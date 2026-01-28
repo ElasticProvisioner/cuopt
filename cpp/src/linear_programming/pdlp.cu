@@ -176,6 +176,9 @@ pdlp_solver_t<i_t, f_t>::pdlp_solver_t(problem_t<i_t, f_t>& op_problem,
   if (settings.get_pdlp_warm_start_data().last_restart_duality_gap_dual_solution_.size() != 0) {
     cuopt_expects(
       !batch_mode_, error_type_t::ValidationError, "Batch mode not supported for warm start");
+    cuopt_expects(settings.pdlp_solver_mode == pdlp_solver_mode_t::Stable2,
+                  error_type_t::ValidationError,
+                  "Only Stable2 mode supported for warm start");
     set_initial_primal_solution(settings.get_pdlp_warm_start_data().current_primal_solution_);
     set_initial_dual_solution(settings.get_pdlp_warm_start_data().current_dual_solution_);
     initial_step_size_     = settings.get_pdlp_warm_start_data().initial_step_size_;

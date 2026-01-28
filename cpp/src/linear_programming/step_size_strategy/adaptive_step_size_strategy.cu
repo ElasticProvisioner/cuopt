@@ -529,6 +529,12 @@ __global__ void compute_actual_stepsizes(
   const f_t step_size     = step_size_strategy_view.step_size[idx];
   const f_t primal_weight = step_size_strategy_view.primal_weight[idx];
 
+  cuopt_assert(!isnan(step_size), "step size can't be nan");
+  cuopt_assert(!isinf(step_size), "step size can't be inf");
+  cuopt_assert(!isnan(primal_weight), "primal weight can't be nan");
+  cuopt_assert(!isinf(primal_weight), "primal weight can't be inf");
+  cuopt_assert(primal_weight != f_t(0.0), "primal weight must be non-zero");
+
   primal_step_size[idx] = step_size / primal_weight;
   dual_step_size[idx]   = step_size * primal_weight;
 }
@@ -538,6 +544,16 @@ void adaptive_step_size_strategy_t<i_t, f_t>::get_primal_and_dual_stepsizes(
   rmm::device_uvector<f_t>& primal_step_size, rmm::device_uvector<f_t>& dual_step_size)
 {
   const auto [grid_size, block_size] = kernel_config_from_batch_size(climber_strategies_.size());
+  cuopt_assert(primal_step_size.size() == climber_strategies_.size(),
+               "primal step size must be the same size as the number of climber strategies");
+  cuopt_assert(dual_step_size.size() == climber_strategies_.size(),
+               "dual step size must be the same size as the number of climber strategies");
+  cuopt_assert(primal_weight_ != nullptr, "primal weight must be non-null");
+  cuopt_assert(primal_weight_->size() == climber_strategies_.size(),
+               "primal weight must be the same size as the number of climber strategies");
+  cuopt_assert(step_size_ != nullptr, "step size must be non-null");
+  cuopt_assert(step_size_->size() == climber_strategies_.size(),
+               "step size must be the same size as the number of climber strategies");
   compute_actual_stepsizes<i_t, f_t>
     <<<grid_size, block_size, 0, stream_view_>>>(this->view(),
                                                  make_span(primal_step_size),
