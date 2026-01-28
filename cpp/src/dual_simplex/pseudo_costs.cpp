@@ -227,40 +227,37 @@ void strong_branching(const lp_problem_t<i_t, f_t>& original_lp,
                       settings.num_threads,
                       fractional.size());
 
-#pragma omp parallel num_threads(settings.num_threads)
-  {
-    i_t n = std::min<i_t>(4 * settings.num_threads, fractional.size());
+  // Here we are creating more tasks than the number of threads
+  // to overcome any load unbalanced between the iterations
+  i_t n = std::min<i_t>(4 * settings.num_threads, fractional.size());
 
-    // Here we are creating more tasks than the number of threads
-    // such that they can be scheduled dynamically to the threads.
-#pragma omp for schedule(dynamic, 1)
-    for (i_t k = 0; k < n; k++) {
-      i_t start = std::floor(k * fractional.size() / n);
-      i_t end   = std::floor((k + 1) * fractional.size() / n);
+#pragma omp taskloop grainsize(1)
+  for (i_t k = 0; k < n; k++) {
+    i_t start = std::floor(k * fractional.size() / n);
+    i_t end   = std::floor((k + 1) * fractional.size() / n);
 
-      constexpr bool verbose = false;
-      if (verbose) {
-        settings.log.printf("Thread id %d task id %d start %d end %d. size %d\n",
-                            omp_get_thread_num(),
-                            k,
-                            start,
-                            end,
-                            end - start);
-      }
-
-      strong_branch_helper(start,
-                           end,
-                           start_time,
-                           original_lp,
-                           settings,
-                           var_types,
-                           fractional,
-                           root_obj,
-                           root_soln,
-                           root_vstatus,
-                           edge_norms,
-                           pc);
+    constexpr bool verbose = false;
+    if (verbose) {
+      settings.log.printf("Thread id %d task id %d start %d end %d. size %d\n",
+                          omp_get_thread_num(),
+                          k,
+                          start,
+                          end,
+                          end - start);
     }
+
+    strong_branch_helper(start,
+                         end,
+                         start_time,
+                         original_lp,
+                         settings,
+                         var_types,
+                         fractional,
+                         root_obj,
+                         root_soln,
+                         root_vstatus,
+                         edge_norms,
+                         pc);
   }
 
   pc.update_pseudo_costs_from_strong_branching(fractional, root_soln);

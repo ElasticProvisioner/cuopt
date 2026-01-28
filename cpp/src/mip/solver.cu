@@ -87,6 +87,8 @@ struct branch_and_bound_solution_helper_t {
 template <typename i_t, typename f_t>
 solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
 {
+  solution_t<i_t, f_t> sol(*context.problem_ptr);
+
   if (context.settings.get_mip_callbacks().size() > 0) {
     for (auto callback : context.settings.get_mip_callbacks()) {
       callback->template setup<f_t>(context.problem_ptr->original_problem_ptr->get_n_variables());
@@ -101,7 +103,6 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
 
   if (context.problem_ptr->empty) {
     CUOPT_LOG_INFO("Problem fully reduced in presolve");
-    solution_t<i_t, f_t> sol(*context.problem_ptr);
     sol.set_problem_fully_reduced();
     context.problem_ptr->post_process_solution(sol);
     return sol;
@@ -112,14 +113,12 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
   bool presolve_success = dm.run_presolve(timer_.remaining_time());
   if (!presolve_success) {
     CUOPT_LOG_INFO("Problem proven infeasible in presolve");
-    solution_t<i_t, f_t> sol(*context.problem_ptr);
     sol.set_problem_fully_reduced();
     context.problem_ptr->post_process_solution(sol);
     return sol;
   }
   if (context.problem_ptr->empty) {
     CUOPT_LOG_INFO("Problem full reduced in presolve");
-    solution_t<i_t, f_t> sol(*context.problem_ptr);
     sol.set_problem_fully_reduced();
     context.problem_ptr->post_process_solution(sol);
     return sol;
@@ -148,93 +147,102 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
   }
 
   namespace dual_simplex = cuopt::linear_programming::dual_simplex;
-  std::future<dual_simplex::mip_status_t> branch_and_bound_status_future;
+  dual_simplex::mip_status_t bb_status;
   dual_simplex::user_problem_t<i_t, f_t> branch_and_bound_problem(context.problem_ptr->handle_ptr);
   dual_simplex::simplex_solver_settings_t<i_t, f_t> branch_and_bound_settings;
   std::unique_ptr<dual_simplex::branch_and_bound_t<i_t, f_t>> branch_and_bound;
   branch_and_bound_solution_helper_t solution_helper(&dm, branch_and_bound_settings);
   dual_simplex::mip_solution_t<i_t, f_t> branch_and_bound_solution(1);
 
-  if (!context.settings.heuristics_only) {
-    // Convert the presolved problem to dual_simplex::user_problem_t
-    op_problem_.get_host_user_problem(branch_and_bound_problem);
-    // Resize the solution now that we know the number of columns/variables
-    branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
-
-    // Fill in the settings for branch and bound
-    branch_and_bound_settings.time_limit           = timer_.remaining_time();
-    branch_and_bound_settings.print_presolve_stats = false;
-    branch_and_bound_settings.absolute_mip_gap_tol = context.settings.tolerances.absolute_mip_gap;
-    branch_and_bound_settings.relative_mip_gap_tol = context.settings.tolerances.relative_mip_gap;
-    branch_and_bound_settings.integer_tol = context.settings.tolerances.integrality_tolerance;
-    branch_and_bound_settings.reliability_branching_settings.enable =
-      solver_settings_.reliability_branching;
-
-    if (context.settings.num_cpu_threads < 0) {
-      branch_and_bound_settings.num_threads = std::max(1, omp_get_max_threads() - 1);
-    } else {
-      branch_and_bound_settings.num_threads = std::max(1, context.settings.num_cpu_threads);
-    }
-
-    // Set the branch and bound -> primal heuristics callback
-    branch_and_bound_settings.solution_callback =
-      std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::solution_callback,
-                &solution_helper,
-                std::placeholders::_1,
-                std::placeholders::_2);
-    branch_and_bound_settings.heuristic_preemption_callback = std::bind(
-      &branch_and_bound_solution_helper_t<i_t, f_t>::preempt_heuristic_solver, &solution_helper);
-
-    branch_and_bound_settings.set_simplex_solution_callback =
-      std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::set_simplex_solution,
-                &solution_helper,
-                std::placeholders::_1,
-                std::placeholders::_2,
-                std::placeholders::_3);
-
-    branch_and_bound_settings.node_processed_callback =
-      std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::node_processed_callback,
-                &solution_helper,
-                std::placeholders::_1,
-                std::placeholders::_2);
-
-    // Create the branch and bound object
-    branch_and_bound = std::make_unique<dual_simplex::branch_and_bound_t<i_t, f_t>>(
-      branch_and_bound_problem, branch_and_bound_settings);
-    context.branch_and_bound_ptr = branch_and_bound.get();
-    branch_and_bound->set_concurrent_lp_root_solve(true);
-
-    // Set the primal heuristics -> branch and bound callback
-    context.problem_ptr->branch_and_bound_callback =
-      std::bind(&dual_simplex::branch_and_bound_t<i_t, f_t>::set_new_solution,
-                branch_and_bound.get(),
-                std::placeholders::_1);
-    context.problem_ptr->set_root_relaxation_solution_callback =
-      std::bind(&dual_simplex::branch_and_bound_t<i_t, f_t>::set_root_relaxation_solution,
-                branch_and_bound.get(),
-                std::placeholders::_1,
-                std::placeholders::_2,
-                std::placeholders::_3,
-                std::placeholders::_4,
-                std::placeholders::_5,
-                std::placeholders::_6);
-
-    // Fork a thread for branch and bound
-    // std::async and std::future allow us to get the return value of bb::solve()
-    // without having to manually manage the thread
-    // std::future.get() performs a join() operation to wait until the return status is available
-    branch_and_bound_status_future = std::async(std::launch::async,
-                                                &dual_simplex::branch_and_bound_t<i_t, f_t>::solve,
-                                                branch_and_bound.get(),
-                                                std::ref(branch_and_bound_solution),
-                                                dual_simplex::mip_solve_mode_t::BNB_PARALLEL);
+  i_t num_threads = 0;
+  if (context.settings.num_cpu_threads < 0) {
+    num_threads = omp_get_max_threads();
+  } else {
+    num_threads = std::max(1, context.settings.num_cpu_threads);
   }
 
-  // Start the primal heuristics
-  auto sol = dm.run_solver();
+#pragma omp parallel num_threads(num_threads)
+  {
+#pragma omp master
+    {
+      if (!context.settings.heuristics_only) {
+        // Convert the presolved problem to dual_simplex::user_problem_t
+        op_problem_.get_host_user_problem(branch_and_bound_problem);
+        // Resize the solution now that we know the number of columns/variables
+        branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
+
+        // Fill in the settings for branch and bound
+        branch_and_bound_settings.time_limit           = timer_.remaining_time();
+        branch_and_bound_settings.num_threads          = num_threads - 1;
+        branch_and_bound_settings.print_presolve_stats = false;
+        branch_and_bound_settings.absolute_mip_gap_tol =
+          context.settings.tolerances.absolute_mip_gap;
+        branch_and_bound_settings.relative_mip_gap_tol =
+          context.settings.tolerances.relative_mip_gap;
+        branch_and_bound_settings.integer_tol = context.settings.tolerances.integrality_tolerance;
+        branch_and_bound_settings.reliability_branching_settings.enable =
+          solver_settings_.reliability_branching;
+
+        // Set the branch and bound -> primal heuristics callback
+        branch_and_bound_settings.solution_callback =
+          std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::solution_callback,
+                    &solution_helper,
+                    std::placeholders::_1,
+                    std::placeholders::_2);
+        branch_and_bound_settings.heuristic_preemption_callback =
+          std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::preempt_heuristic_solver,
+                    &solution_helper);
+
+        branch_and_bound_settings.set_simplex_solution_callback =
+          std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::set_simplex_solution,
+                    &solution_helper,
+                    std::placeholders::_1,
+                    std::placeholders::_2,
+                    std::placeholders::_3);
+
+        branch_and_bound_settings.node_processed_callback =
+          std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::node_processed_callback,
+                    &solution_helper,
+                    std::placeholders::_1,
+                    std::placeholders::_2);
+
+        // Create the branch and bound object
+        branch_and_bound = std::make_unique<dual_simplex::branch_and_bound_t<i_t, f_t>>(
+          branch_and_bound_problem, branch_and_bound_settings);
+        context.branch_and_bound_ptr = branch_and_bound.get();
+        branch_and_bound->set_concurrent_lp_root_solve(true);
+
+        // Set the primal heuristics -> branch and bound callback
+        context.problem_ptr->branch_and_bound_callback =
+          std::bind(&dual_simplex::branch_and_bound_t<i_t, f_t>::set_new_solution,
+                    branch_and_bound.get(),
+                    std::placeholders::_1);
+        context.problem_ptr->set_root_relaxation_solution_callback =
+          std::bind(&dual_simplex::branch_and_bound_t<i_t, f_t>::set_root_relaxation_solution,
+                    branch_and_bound.get(),
+                    std::placeholders::_1,
+                    std::placeholders::_2,
+                    std::placeholders::_3,
+                    std::placeholders::_4,
+                    std::placeholders::_5,
+                    std::placeholders::_6);
+
+#pragma omp task
+        {
+          bb_status = branch_and_bound->solve(branch_and_bound_solution,
+                                              dual_simplex::mip_solve_mode_t::BNB_PARALLEL);
+        }
+      }
+
+#pragma omp task
+      {
+        // Start the primal heuristics
+        sol = dm.run_solver();
+      }
+    }
+  }
+
   if (!context.settings.heuristics_only) {
-    // Wait for the branch and bound to finish
-    auto bb_status = branch_and_bound_status_future.get();
     if (branch_and_bound_solution.lower_bound > -std::numeric_limits<f_t>::infinity()) {
       context.stats.solution_bound =
         context.problem_ptr->get_user_obj_from_solver_obj(branch_and_bound_solution.lower_bound);

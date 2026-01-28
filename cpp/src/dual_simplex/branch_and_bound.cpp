@@ -1483,12 +1483,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   }
 
   if (solve_mode == mip_solve_mode_t::BNB_PARALLEL) {
-#pragma omp parallel num_threads(settings_.num_threads)
-    {
-#pragma omp master
-      run_scheduler();
-    }
-
+    run_scheduler();
   } else {
     single_threaded_solve();
   }
