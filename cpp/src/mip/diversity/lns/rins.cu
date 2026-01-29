@@ -217,11 +217,12 @@ void rins_t<i_t, f_t>::run_rins(std::vector<f_t> lp_optimal_solution)
                           context.preempt_heuristic_solver_,
                           fj_settings_t{},
                           true);
+  auto fj_cpu_ptr = fj_cpu.get();
 
   fj_cpu->log_prefix = "[RINS] ";
 
 #pragma omp task
-  fj_ptr->cpu_solve(*fj_cpu, time_limit);
+  fj_ptr->cpu_solve(*fj_cpu_ptr, time_limit);
 
   f_t lower_bound = context.branch_and_bound_ptr ? context.branch_and_bound_ptr->get_lower_bound()
                                                  : -std::numeric_limits<f_t>::infinity();
