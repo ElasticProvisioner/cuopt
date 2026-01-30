@@ -245,8 +245,7 @@ branch_and_bound_t<i_t, f_t>::branch_and_bound_t(
     root_relax_soln_(1, 1),
     root_crossover_soln_(1, 1),
     pc_(1),
-    solver_status_(mip_status_t::UNSET),
-    bsp_debug_settings_(bsp_debug_settings_t::from_environment())
+    solver_status_(mip_status_t::UNSET)
 {
   exploration_stats_.start_time = tic();
   dualize_info_t<i_t, f_t> dualize_info;
@@ -1907,10 +1906,6 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
     }
   }
 
-  bsp_debug_logger_.set_settings(bsp_debug_settings_);
-  bsp_debug_logger_.set_num_workers(num_bfs_workers);
-  bsp_debug_logger_.set_horizon_step(bsp_horizon_step_);
-
   int actual_diving_workers = bsp_diving_workers_ ? (int)bsp_diving_workers_->size() : 0;
   settings_.log.printf(
     "BSP Mode: %d BFS workers + %d diving workers, horizon step = %.2f work "
@@ -1928,7 +1923,6 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   (*bsp_workers_)[0].track_node_assigned();
   (*bsp_workers_)[1 % num_bfs_workers].enqueue_node(search_tree_.root.get_up_child());
   (*bsp_workers_)[1 % num_bfs_workers].track_node_assigned();
-  BSP_DEBUG_FLUSH_ASSIGN_TRACE(bsp_debug_settings_, bsp_debug_logger_);
 
   bsp_scheduler_->set_sync_callback([this](double sync_target) -> bool {
     bsp_sync_callback(0);
@@ -2044,8 +2038,6 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
                          avg_wait,
                          max_producer_wait_time_);
   }
-
-  BSP_DEBUG_FINALIZE(bsp_debug_settings_, bsp_debug_logger_);
 }
 
 template <typename i_t, typename f_t>
@@ -2119,17 +2111,9 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 
   work_unit_context_.global_work_units_elapsed = horizon_end;
 
-  BSP_DEBUG_LOG_HORIZON_START(
-    bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_start, horizon_end);
-
   bb_event_batch_t<i_t, f_t> all_events = bsp_workers_->collect_and_sort_events();
 
-  BSP_DEBUG_LOG_SYNC_PHASE_START(
-    bsp_debug_settings_, bsp_debug_logger_, horizon_end, all_events.size());
-
   process_history_and_sync(all_events);
-
-  BSP_DEBUG_LOG_SYNC_PHASE_END(bsp_debug_settings_, bsp_debug_logger_, horizon_end);
 
   prune_worker_nodes_vs_incumbent();
 
@@ -2140,10 +2124,6 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
   assign_diving_nodes();
 
   balance_worker_loads();
-  BSP_DEBUG_FLUSH_ASSIGN_TRACE(bsp_debug_settings_, bsp_debug_logger_);
-
-  BSP_DEBUG_LOG_HORIZON_END(
-    bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_end);
 
   uint32_t state_hash = 0;
   {
@@ -2169,30 +2149,7 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 
     state_hash = detail::compute_hash(state_data);
     state_hash ^= pc_.compute_state_hash();
-    BSP_DEBUG_LOG_HORIZON_HASH(
-      bsp_debug_settings_, bsp_debug_logger_, bsp_horizon_number_, horizon_end, state_hash);
   }
-
-  BSP_DEBUG_EMIT_TREE_STATE(bsp_debug_settings_,
-                            bsp_debug_logger_,
-                            bsp_horizon_number_,
-                            search_tree_.root,
-                            upper_bound_.load());
-
-  std::vector<mip_node_t<i_t, f_t>*> heap_snapshot;
-  BSP_DEBUG_EMIT_STATE_JSON(bsp_debug_settings_,
-                            bsp_debug_logger_,
-                            bsp_horizon_number_,
-                            horizon_start,
-                            horizon_end,
-                            0,
-                            upper_bound_.load(),
-                            compute_bsp_lower_bound(),
-                            exploration_stats_.nodes_explored,
-                            exploration_stats_.nodes_unexplored,
-                            *bsp_workers_,
-                            heap_snapshot,
-                            all_events);
 
   bsp_current_horizon_ += bsp_horizon_step_;
 
@@ -2308,16 +2265,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   double work_units_at_start = worker.work_context.global_work_units_elapsed;
   double clock_at_start      = worker.clock;
 
-  double work_limit = worker.horizon_end - worker.clock;
-  BSP_DEBUG_LOG_SOLVE_START(bsp_debug_settings_,
-                            bsp_debug_logger_,
-                            worker.clock,
-                            worker.worker_id,
-                            node_ptr->node_id,
-                            node_ptr->origin_worker_id,
-                            work_limit,
-                            false);
-
   std::fill(worker.node_presolver->bounds_changed.begin(),
             worker.node_presolver->bounds_changed.end(),
             false);
@@ -2380,22 +2327,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   f_t lp_start_time                            = tic();
   std::vector<f_t> leaf_edge_norms             = edge_norms_;
 
-  // Debug: Log LP input for determinism analysis
-  if (bsp_debug_settings_.any_enabled()) {
-    uint64_t path_hash    = node_ptr->compute_path_hash();
-    uint64_t vstatus_hash = detail::compute_hash(leaf_vstatus);
-    uint64_t bounds_hash  = detail::compute_hash(worker.leaf_problem->lower) ^
-                           detail::compute_hash(worker.leaf_problem->upper);
-    BSP_DEBUG_LOG_LP_INPUT(bsp_debug_settings_,
-                           bsp_debug_logger_,
-                           worker.worker_id,
-                           node_ptr->node_id,
-                           path_hash,
-                           node_ptr->depth,
-                           vstatus_hash,
-                           bounds_hash);
-  }
-
   dual::status_t lp_status = dual_phase2_with_advanced_basis(2,
                                                              0,
                                                              worker.recompute_bounds_and_basis,
@@ -2423,24 +2354,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                                                                          leaf_vstatus,
                                                                          leaf_edge_norms);
     lp_status                 = convert_lp_status_to_dual_status(second_status);
-  }
-
-  if (bsp_debug_settings_.any_enabled()) {
-    uint64_t path_hash = node_ptr->compute_path_hash();
-    uint64_t sol_hash  = detail::compute_hash(leaf_solution.x);
-    f_t obj            = (lp_status == dual::status_t::OPTIMAL)
-                           ? compute_objective(*worker.leaf_problem, leaf_solution.x)
-                           : std::numeric_limits<f_t>::infinity();
-    uint64_t obj_hash  = detail::compute_hash(obj);
-    BSP_DEBUG_LOG_LP_OUTPUT(bsp_debug_settings_,
-                            bsp_debug_logger_,
-                            worker.worker_id,
-                            node_ptr->node_id,
-                            path_hash,
-                            static_cast<int>(lp_status),
-                            node_iter,
-                            obj_hash,
-                            sol_hash);
   }
 
   // Validate vstatus after LP solve - check for corruption during simplex
@@ -2480,17 +2393,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
     worker.track_node_processed();
     worker.recompute_bounds_and_basis = true;
 
-    BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
-                            bsp_debug_logger_,
-                            worker.clock,
-                            worker.worker_id,
-                            node_ptr->node_id,
-                            node_ptr->origin_worker_id,
-                            "INFEASIBLE",
-                            node_ptr->lower_bound);
-    BSP_DEBUG_LOG_INFEASIBLE(
-      bsp_debug_settings_, bsp_debug_logger_, worker.clock, worker.worker_id, node_ptr->node_id);
-
     search_tree.update(node_ptr, node_status_t::INFEASIBLE);
     return node_solve_info_t::NO_CHILDREN;
 
@@ -2501,21 +2403,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
     worker.track_node_pruned();
     worker.track_node_processed();
     worker.recompute_bounds_and_basis = true;
-
-    BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
-                            bsp_debug_logger_,
-                            worker.clock,
-                            worker.worker_id,
-                            node_ptr->node_id,
-                            node_ptr->origin_worker_id,
-                            "FATHOMED",
-                            node_ptr->lower_bound);
-    BSP_DEBUG_LOG_FATHOMED(bsp_debug_settings_,
-                           bsp_debug_logger_,
-                           worker.clock,
-                           worker.worker_id,
-                           node_ptr->node_id,
-                           node_ptr->lower_bound);
 
     search_tree.update(node_ptr, node_status_t::FATHOMED);
     return node_solve_info_t::NO_CHILDREN;
@@ -2564,21 +2451,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
       worker.track_node_processed();
       worker.recompute_bounds_and_basis = true;
 
-      BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
-                              bsp_debug_logger_,
-                              worker.clock,
-                              worker.worker_id,
-                              node_ptr->node_id,
-                              node_ptr->origin_worker_id,
-                              "INTEGER",
-                              leaf_objective);
-      BSP_DEBUG_LOG_INTEGER(bsp_debug_settings_,
-                            bsp_debug_logger_,
-                            worker.clock,
-                            worker.worker_id,
-                            node_ptr->node_id,
-                            leaf_objective);
-
       search_tree.update(node_ptr, node_status_t::INTEGER_FEASIBLE);
       return node_solve_info_t::NO_CHILDREN;
 
@@ -2605,23 +2477,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
       worker.track_node_branched();
       worker.track_node_processed();
 
-      BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
-                              bsp_debug_logger_,
-                              worker.clock,
-                              worker.worker_id,
-                              node_ptr->node_id,
-                              node_ptr->origin_worker_id,
-                              "BRANCH",
-                              leaf_objective);
-      BSP_DEBUG_LOG_BRANCHED(bsp_debug_settings_,
-                             bsp_debug_logger_,
-                             worker.clock,
-                             worker.worker_id,
-                             node_ptr->node_id,
-                             node_ptr->origin_worker_id,
-                             down_child_id,
-                             up_child_id);
-
       exploration_stats_.nodes_unexplored += 2;
 
       rounding_direction_t preferred =
@@ -2633,26 +2488,10 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                                                      : node_solve_info_t::UP_CHILD_FIRST;
 
     } else {
-      // Record event and debug logs BEFORE search_tree.update() which may delete the node
       worker.record_fathomed(node_ptr, leaf_objective);
       worker.track_node_pruned();
       worker.track_node_processed();
       worker.recompute_bounds_and_basis = true;
-
-      BSP_DEBUG_LOG_SOLVE_END(bsp_debug_settings_,
-                              bsp_debug_logger_,
-                              worker.clock,
-                              worker.worker_id,
-                              node_ptr->node_id,
-                              node_ptr->origin_worker_id,
-                              "FATHOMED",
-                              leaf_objective);
-      BSP_DEBUG_LOG_FATHOMED(bsp_debug_settings_,
-                             bsp_debug_logger_,
-                             worker.clock,
-                             worker.worker_id,
-                             node_ptr->node_id,
-                             leaf_objective);
 
       search_tree.update(node_ptr, node_status_t::FATHOMED);
       return node_solve_info_t::NO_CHILDREN;
@@ -2784,9 +2623,6 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
         hsol.wut,
         hsol.objective,
         bsp_current_horizon_);
-      // Debug: Log heuristic received
-      BSP_DEBUG_LOG_HEURISTIC_RECEIVED(
-        bsp_debug_settings_, bsp_debug_logger_, hsol.wut, hsol.objective);
 
       // Process heuristic solution at its correct work unit timestamp position
       f_t new_upper = std::numeric_limits<f_t>::infinity();
@@ -2795,10 +2631,6 @@ void branch_and_bound_t<i_t, f_t>::process_history_and_sync(
         upper_bound_ = hsol.objective;
         incumbent_.set_incumbent_solution(hsol.objective, hsol.solution);
         new_upper = hsol.objective;
-
-        // Debug: Log incumbent update
-        BSP_DEBUG_LOG_INCUMBENT_UPDATE(
-          bsp_debug_settings_, bsp_debug_logger_, hsol.wut, hsol.objective, "heuristic");
       }
 
       if (new_upper < std::numeric_limits<f_t>::infinity()) {
@@ -3004,15 +2836,6 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
     size_t worker_idx = worker_order[i % num_workers];
     (*bsp_workers_)[worker_idx].enqueue_node(all_nodes[i]);
     (*bsp_workers_)[worker_idx].track_node_assigned();
-
-    double wut = bsp_current_horizon_;
-    BSP_DEBUG_LOG_NODE_ASSIGNED(bsp_debug_settings_,
-                                bsp_debug_logger_,
-                                wut,
-                                static_cast<int>(worker_idx),
-                                all_nodes[i]->node_id,
-                                all_nodes[i]->origin_worker_id,
-                                all_nodes[i]->lower_bound);
   }
 }
 

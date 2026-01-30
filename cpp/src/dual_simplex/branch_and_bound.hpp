@@ -9,7 +9,6 @@
 
 #include <dual_simplex/bb_event.hpp>
 #include <dual_simplex/bb_worker_state.hpp>
-#include <dual_simplex/bsp_debug.hpp>
 #include <dual_simplex/diving_heuristics.hpp>
 #include <dual_simplex/dual_simplex_features.hpp>
 #include <dual_simplex/initial_basis.hpp>
@@ -381,10 +380,6 @@ class branch_and_bound_t {
   };
   omp_mutex_t mutex_heuristic_queue_;
   std::vector<queued_heuristic_solution_t> heuristic_solution_queue_;
-
-  // BSP debug logger (settings read from environment variables)
-  bsp_debug_settings_t bsp_debug_settings_;
-  bsp_debug_logger_t<i_t, f_t> bsp_debug_logger_;
 
   // ============================================================================
   // BSP Diving state
