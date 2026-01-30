@@ -85,6 +85,37 @@ TEST_F(DeterministicBBTest, reproducible_objective)
   }
 }
 
+TEST_F(DeterministicBBTest, reproducible_infeasibility)
+{
+  auto path    = make_path_absolute("/mip/stein9inf.mps");
+  auto problem = mps_parser::parse_mps<int, double>(path, false);
+  handle_.sync_stream();
+
+  mip_solver_settings_t<int, double> settings;
+  settings.time_limit       = 60.0;
+  settings.determinism_mode = CUOPT_MODE_DETERMINISTIC;
+  settings.num_cpu_threads  = 8;
+  settings.work_limit       = 100;  // High enough to fully explore
+
+  auto seed = std::random_device{}() & 0x7fffffff;
+  std::cout << "Tested with seed " << seed << "\n";
+  settings.seed = seed;
+
+  auto solution1 = solve_mip(&handle_, problem, settings);
+  auto status1   = solution1.get_termination_status();
+  EXPECT_EQ(status1, mip_termination_status_t::Infeasible)
+    << "First run should detect infeasibility";
+
+  for (int i = 2; i <= 5; ++i) {
+    auto solution = solve_mip(&handle_, problem, settings);
+    auto status   = solution.get_termination_status();
+
+    EXPECT_EQ(status1, status) << "Termination status differs on run " << i;
+    EXPECT_EQ(status, mip_termination_status_t::Infeasible)
+      << "Run " << i << " should detect infeasibility";
+  }
+}
+
 // Test determinism under high thread contention
 TEST_F(DeterministicBBTest, reproducible_high_contention)
 {

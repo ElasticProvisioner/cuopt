@@ -324,6 +324,7 @@ class branch_and_bound_t {
   void run_worker_loop(bb_worker_state_t<i_t, f_t>& worker, search_tree_t<i_t, f_t>& search_tree);
 
   // BSP sync callback - executed when all workers reach barrier
+  // Sets bsp_global_termination_status_ if termination is needed
   void bsp_sync_callback(int worker_id);
 
   // ============================================================================
@@ -351,7 +352,7 @@ class branch_and_bound_t {
   // unique_ptr as we only want to initialize these if we're in the determinism codepath
   std::unique_ptr<bb_worker_pool_t<i_t, f_t>> bsp_workers_;
   std::unique_ptr<cuopt::work_unit_scheduler_t> bsp_scheduler_;
-  std::atomic<bool> bsp_terminated_{false};
+  mip_status_t bsp_global_termination_status_{mip_status_t::UNSET};
   double bsp_horizon_step_{5.0};     // Work unit step per horizon (tunable)
   double bsp_current_horizon_{0.0};  // Current horizon target
   bool bsp_mode_enabled_{false};     // Whether BSP mode is active

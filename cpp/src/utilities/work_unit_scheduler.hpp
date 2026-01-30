@@ -16,66 +16,53 @@
  */
 #pragma once
 
-#include <atomic>
-#include <condition_variable>
 #include <functional>
-#include <mutex>
-#include <unordered_map>
 #include <vector>
 
 namespace cuopt {
 
 struct work_limit_context_t;
 
-enum class sync_result_t {
-  CONTINUE,  // Continue processing
-  STOPPED    // Scheduler has been stopped
-};
-
+// Simplified scheduler using OpenMP barriers for synchronization.
+// Termination is managed externally (e.g., by branch_and_bound_t::bsp_global_termination_status_).
+// Workers should check termination status after each sync point.
 class work_unit_scheduler_t {
  public:
   explicit work_unit_scheduler_t(double sync_interval = 5.0);
 
   void set_sync_interval(double interval);
-  double get_sync_interval() const;
+  double get_sync_interval() const { return sync_interval_; }
 
   void register_context(work_limit_context_t& ctx);
   void deregister_context(work_limit_context_t& ctx);
   void on_work_recorded(work_limit_context_t& ctx, double total_work);
 
-  // Sync callback support - callback is executed when all contexts reach sync point
-  // If callback returns true, scheduler stops and all workers exit cleanly
-  using sync_callback_t = std::function<bool(double sync_target)>;
+  // Sync callback - executed by one thread when all contexts reach sync point
+  // Callback should set external termination status if stopping is desired
+  using sync_callback_t = std::function<void(double sync_target)>;
   void set_sync_callback(sync_callback_t callback);
-  bool is_stopped() const;
-
-  // Stop the scheduler immediately and wake up all waiting workers
-  void stop();
 
   // Wait for next sync point (for idle workers with no work)
-  sync_result_t wait_for_next_sync(work_limit_context_t& ctx);
+  // After returning, caller should check external termination status
+  void wait_for_next_sync(work_limit_context_t& ctx);
+
+  // Get the current sync target (for work tracking)
+  double current_sync_target() const;
 
  public:
   bool verbose{false};
-  double sync_interval_;
 
  private:
-  double current_sync_target() const;
   void wait_at_sync_point(work_limit_context_t& ctx, double sync_target);
 
+  double sync_interval_;
   std::vector<std::reference_wrapper<work_limit_context_t>> contexts_;
-  std::unordered_map<work_limit_context_t*, double> last_sync_target_;
 
-  mutable std::mutex mutex_;
-  std::condition_variable cv_;
-  size_t contexts_at_barrier_{0};
-  double current_sync_target_{0};
   size_t barrier_generation_{0};
-  size_t exit_generation_{0};
+  double current_sync_target_{0};
 
   // Sync callback - executed when all contexts reach sync point
   sync_callback_t sync_callback_;
-  std::atomic<bool> stopped_{false};
 };
 
 // RAII helper for registering multiple contexts with automatic cleanup

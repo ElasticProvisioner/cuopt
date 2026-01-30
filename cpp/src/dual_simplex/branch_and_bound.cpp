@@ -1831,10 +1831,10 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   const int num_bfs_workers    = settings_.num_bfs_workers;
   const int num_diving_workers = settings_.diving_settings.num_diving_workers;
 
-  bsp_mode_enabled_    = true;
-  bsp_current_horizon_ = bsp_horizon_step_;
-  bsp_horizon_number_  = 0;
-  bsp_terminated_.store(false);
+  bsp_mode_enabled_              = true;
+  bsp_current_horizon_           = bsp_horizon_step_;
+  bsp_horizon_number_            = 0;
+  bsp_global_termination_status_ = mip_status_t::UNSET;
 
   bsp_workers_ = std::make_unique<bb_worker_pool_t<i_t, f_t>>(num_bfs_workers,
                                                               original_lp_,
@@ -1904,10 +1904,7 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   (*bsp_workers_)[1 % num_bfs_workers].enqueue_node(search_tree_.root.get_up_child());
   (*bsp_workers_)[1 % num_bfs_workers].track_node_assigned();
 
-  bsp_scheduler_->set_sync_callback([this](double sync_target) -> bool {
-    bsp_sync_callback(0);
-    return bsp_terminated_.load();
-  });
+  bsp_scheduler_->set_sync_callback([this](double) { bsp_sync_callback(0); });
 
   for (auto& worker : *bsp_workers_) {
     worker.set_snapshots(upper_bound_.load(),
@@ -2026,15 +2023,7 @@ void branch_and_bound_t<i_t, f_t>::run_worker_loop(bb_worker_state_t<i_t, f_t>& 
 {
   raft::common::nvtx::range scope("BB::worker_loop");
 
-  while (!bsp_terminated_.load() && !bsp_scheduler_->is_stopped() &&
-         solver_status_ == mip_status_t::UNSET) {
-    if (toc(exploration_stats_.start_time) > settings_.time_limit) {
-      solver_status_ = mip_status_t::TIME_LIMIT;
-      bsp_terminated_.store(true);
-      bsp_scheduler_->stop();
-      break;
-    }
-
+  while (bsp_global_termination_status_ == mip_status_t::UNSET) {
     if (worker.has_work()) {
       mip_node_t<i_t, f_t>* node = worker.dequeue_node();
       if (node == nullptr) { continue; }
@@ -2066,10 +2055,9 @@ void branch_and_bound_t<i_t, f_t>::run_worker_loop(bb_worker_state_t<i_t, f_t>& 
     }
 
     // No work - advance to sync point to participate in barrier
-    f_t nowork_start            = tic();
-    cuopt::sync_result_t result = bsp_scheduler_->wait_for_next_sync(worker.work_context);
+    f_t nowork_start = tic();
+    bsp_scheduler_->wait_for_next_sync(worker.work_context);
     worker.total_nowork_time += toc(nowork_start);
-    if (result == cuopt::sync_result_t::STOPPED) { break; }
   }
 }
 
@@ -2165,27 +2153,28 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
   f_t abs_gap     = upper_bound - lower_bound;
   f_t rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
 
-  bool should_terminate = false;
-
   if (abs_gap <= settings_.absolute_mip_gap_tol || rel_gap <= settings_.relative_mip_gap_tol) {
-    should_terminate = true;
+    bsp_global_termination_status_ = mip_status_t::OPTIMAL;
   }
 
-  bool diving_has_work = bsp_diving_workers_ && bsp_diving_workers_->any_has_work();
-  if (!bsp_workers_->any_has_work() && !diving_has_work) { should_terminate = true; }
+  if (!bsp_workers_->any_has_work()) {
+    // Tree exhausted - check if we found a solution
+    if (upper_bound == std::numeric_limits<f_t>::infinity()) {
+      printf("OI!\n");
+      bsp_global_termination_status_ = mip_status_t::INFEASIBLE;
+    } else {
+      bsp_global_termination_status_ = mip_status_t::OPTIMAL;
+    }
+  }
 
   if (toc(exploration_stats_.start_time) > settings_.time_limit) {
-    solver_status_   = mip_status_t::TIME_LIMIT;
-    should_terminate = true;
+    bsp_global_termination_status_ = mip_status_t::TIME_LIMIT;
   }
 
   // Stop early if next horizon exceeds work limit
   if (bsp_current_horizon_ > settings_.work_limit) {
-    solver_status_   = mip_status_t::WORK_LIMIT;
-    should_terminate = true;
+    bsp_global_termination_status_ = mip_status_t::WORK_LIMIT;
   }
-
-  if (should_terminate) { bsp_terminated_.store(true); }
 
   f_t obj              = compute_user_objective(original_lp_, upper_bound);
   f_t user_lower       = compute_user_objective(original_lp_, lower_bound);
@@ -3032,16 +3021,7 @@ void branch_and_bound_t<i_t, f_t>::run_diving_worker_loop(
 {
   raft::common::nvtx::range scope("BB::diving_worker_loop");
 
-  while (!bsp_terminated_.load() && !bsp_scheduler_->is_stopped() &&
-         solver_status_ == mip_status_t::UNSET) {
-    // Check time limit directly - don't wait for sync if time is up
-    if (toc(exploration_stats_.start_time) > settings_.time_limit) {
-      solver_status_ = mip_status_t::TIME_LIMIT;
-      bsp_terminated_.store(true);
-      bsp_scheduler_->stop();  // Wake up workers waiting at barrier
-      break;
-    }
-
+  while (bsp_global_termination_status_ == mip_status_t::UNSET) {
     // Process dives from queue until empty or horizon exhausted
     auto node_opt = worker.dequeue_dive_node();
     if (node_opt.has_value()) {
@@ -3050,10 +3030,10 @@ void branch_and_bound_t<i_t, f_t>::run_diving_worker_loop(
     }
 
     // Queue empty - wait for next sync point where we'll be assigned new nodes
-    f_t nowork_start            = tic();
-    cuopt::sync_result_t result = bsp_scheduler_->wait_for_next_sync(worker.work_context);
+    f_t nowork_start = tic();
+    bsp_scheduler_->wait_for_next_sync(worker.work_context);
     worker.total_nowork_time += toc(nowork_start);
-    if (result == cuopt::sync_result_t::STOPPED) { break; }
+    // Termination status is checked in loop condition
   }
 }
 
@@ -3083,20 +3063,12 @@ void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_state_t<i_t, 
   worker.lp_iters_this_dive         = 0;
   worker.recompute_bounds_and_basis = true;
 
-  while (!stack.empty() && solver_status_ == mip_status_t::UNSET && !bsp_terminated_.load() &&
+  while (!stack.empty() && bsp_global_termination_status_ == mip_status_t::UNSET &&
          nodes_this_dive < max_nodes_per_dive) {
-    // Check time limit directly
-    if (toc(exploration_stats_.start_time) > settings_.time_limit) {
-      solver_status_ = mip_status_t::TIME_LIMIT;
-      bsp_terminated_.store(true);
-      bsp_scheduler_->stop();  // Wake up workers waiting at barrier
-      break;
-    }
-
-    // Check horizon budget
+    // Check horizon budget - sync if exhausted
     if (worker.work_context.global_work_units_elapsed >= worker.horizon_end) {
       bsp_scheduler_->wait_for_next_sync(worker.work_context);
-      if (bsp_terminated_.load()) break;
+      if (bsp_global_termination_status_ != mip_status_t::UNSET) break;
     }
 
     mip_node_t<i_t, f_t>* node_ptr = stack.front();
