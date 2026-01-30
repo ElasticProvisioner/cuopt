@@ -1567,17 +1567,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
   }
 
   assert(root_vstatus_.size() == original_lp_.num_cols);
-
-  {
-    const i_t expected_basic_count = original_lp_.num_rows;
-    i_t actual_basic_count         = 0;
-    for (const auto& status : root_vstatus_) {
-      if (status == variable_status_t::BASIC) { actual_basic_count++; }
-    }
-    assert(actual_basic_count == expected_basic_count &&
-           "root_vstatus_ BASIC count mismatch - LP solver returned invalid basis");
-  }
-
   set_uninitialized_steepest_edge_norms<i_t, f_t>(edge_norms_);
 
   root_objective_ = compute_objective(original_lp_, root_relax_soln_.x);
@@ -1661,27 +1650,10 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
                       original_lp_,
                       log);
 
-  {
-    uint32_t lp_hash = detail::compute_hash(original_lp_.objective);
-    lp_hash ^= detail::compute_hash(original_lp_.A.x.underlying());
-    settings_.log.debug("lp A.x hash: %08x\n", detail::compute_hash(original_lp_.A.x.underlying()));
-    lp_hash ^= detail::compute_hash(original_lp_.A.i.underlying());
-    settings_.log.debug("lp A.j hash: %08x\n", detail::compute_hash(original_lp_.A.i.underlying()));
-    lp_hash ^= detail::compute_hash(original_lp_.A.col_start.underlying());
-    settings_.log.debug("lp A.col_start hash: %08x\n",
-                        detail::compute_hash(original_lp_.A.col_start.underlying()));
-    lp_hash ^= detail::compute_hash(original_lp_.rhs);
-    settings_.log.debug("lp rhs hash: %08x\n", detail::compute_hash(original_lp_.rhs));
-    lp_hash ^= detail::compute_hash(original_lp_.lower);
-    settings_.log.debug("lp lower hash: %08x\n", detail::compute_hash(original_lp_.lower));
-    lp_hash ^= detail::compute_hash(original_lp_.upper);
-    settings_.log.printf(
-      "Exploring the B&B tree using %d threads (best-first = %d, diving = %d) [LP hash: %08x]\n\n",
-      settings_.num_threads,
-      settings_.num_bfs_workers,
-      settings_.num_threads - settings_.num_bfs_workers,
-      lp_hash);
-  }
+  settings_.log.printf("Exploring the B&B tree using %d threads (best-first = %d, diving = %d)\n\n",
+                       settings_.num_threads,
+                       settings_.num_bfs_workers,
+                       settings_.num_threads - settings_.num_bfs_workers);
 
   exploration_stats_.nodes_explored       = 0;
   exploration_stats_.nodes_unexplored     = 2;
@@ -1749,11 +1721,6 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     // Non-BSP mode: use node_queue or fall back to root
     lower_bound = node_queue_.best_first_queue_size() > 0 ? node_queue_.get_lower_bound()
                                                           : search_tree_.root.lower_bound;
-    // If queue is empty and we have an incumbent, the tree is fully explored
-    if (node_queue_.best_first_queue_size() == 0 && exploration_stats_.nodes_unexplored == 0 &&
-        incumbent_.has_incumbent) {
-      lower_bound = upper_bound_.load();
-    }
   }
   set_final_solution(solution, lower_bound);
   return solver_status_;
@@ -1845,8 +1812,6 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
 
   if (num_diving_workers > 0) {
     std::vector<bnb_worker_type_t> diving_types;
-    diving_types.reserve(4);
-
     if (settings_.diving_settings.pseudocost_diving != 0) {
       diving_types.push_back(bnb_worker_type_t::PSEUDOCOST_DIVING);
     }
@@ -1874,7 +1839,6 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   }
 
   bsp_scheduler_ = std::make_unique<work_unit_scheduler_t>(bsp_horizon_step_);
-  // bsp_scheduler_->verbose = true;
 
   scoped_context_registrations_t context_registrations(*bsp_scheduler_);
   for (auto& worker : *bsp_workers_) {
@@ -2160,7 +2124,6 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
   if (!bsp_workers_->any_has_work()) {
     // Tree exhausted - check if we found a solution
     if (upper_bound == std::numeric_limits<f_t>::infinity()) {
-      printf("OI!\n");
       bsp_global_termination_status_ = mip_status_t::INFEASIBLE;
     } else {
       bsp_global_termination_status_ = mip_status_t::OPTIMAL;
@@ -2188,8 +2151,8 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
     }
   }
 
-  settings_.log.printf("S%-4d %8d   %8lu    %+13.6e    %+10.6e    %s %8.2f  [%08x]%s%s\n",
-                       bsp_horizon_number_,
+  settings_.log.printf("W%-4g %8d   %8lu    %+13.6e    %+10.6e    %s %8.2f  [%08x]%s%s\n",
+                       bsp_horizon_number_ * bsp_horizon_step_,
                        exploration_stats_.nodes_explored,
                        exploration_stats_.nodes_unexplored,
                        obj,
@@ -2208,28 +2171,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                                                                double current_horizon)
 {
   raft::common::nvtx::range scope("BB::solve_node_bsp");
-
-  {
-    const i_t expected_basic_count = original_lp_.num_rows;
-    i_t actual_basic_count         = 0;
-    for (const auto& status : node_ptr->vstatus) {
-      if (status == variable_status_t::BASIC) { actual_basic_count++; }
-    }
-    if (actual_basic_count != expected_basic_count) {
-      settings_.log.printf(
-        "ERROR: Node %d (worker %d, seq %d) vstatus has %d BASIC entries, expected %d (num_rows)\n",
-        node_ptr->node_id,
-        node_ptr->origin_worker_id,
-        node_ptr->creation_seq,
-        actual_basic_count,
-        expected_basic_count);
-      settings_.log.printf("       vstatus.size() = %zu, num_cols = %d\n",
-                           node_ptr->vstatus.size(),
-                           original_lp_.num_cols);
-      assert(actual_basic_count == expected_basic_count &&
-             "vstatus BASIC count mismatch - this indicates vstatus corruption");
-    }
-  }
 
   double work_units_at_start = worker.work_context.global_work_units_elapsed;
   double clock_at_start      = worker.clock;
@@ -2269,7 +2210,7 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
   f_t bs_actual_time = toc(bs_start_time);
 
   if (settings_.deterministic) {
-    // TEMP;
+    // TEMP APPROXIMATION;
     worker.work_context.record_work(worker.node_presolver.last_nnz_processed / 1e8);
   }
 #endif
@@ -2320,26 +2261,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t
                                                                          leaf_vstatus,
                                                                          leaf_edge_norms);
     lp_status                 = convert_lp_status_to_dual_status(second_status);
-  }
-
-  // Validate vstatus after LP solve - check for corruption during simplex
-  {
-    const i_t expected_basic_count = original_lp_.num_rows;
-    i_t actual_basic_count         = 0;
-    for (const auto& status : leaf_vstatus) {
-      if (status == variable_status_t::BASIC) { actual_basic_count++; }
-    }
-    if (actual_basic_count != expected_basic_count) {
-      settings_.log.printf(
-        "ERROR: After LP solve, node %d vstatus has %d BASIC entries, expected %d\n",
-        node_ptr->node_id,
-        actual_basic_count,
-        expected_basic_count);
-      settings_.log.printf("       lp_status = %d, recompute_basis = %d\n",
-                           static_cast<int>(lp_status),
-                           worker.recompute_bounds_and_basis ? 1 : 0);
-      assert(actual_basic_count == expected_basic_count && "vstatus corrupted during LP solve");
-    }
   }
 
   double work_performed = worker.work_context.global_work_units_elapsed - work_units_at_start;
