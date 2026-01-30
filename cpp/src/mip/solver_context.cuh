@@ -11,11 +11,7 @@
 #include <mip/problem/problem.cuh>
 #include <mip/relaxed_lp/lp_state.cuh>
 
-#include <utilities/models/cpufj_predictor/header.h>
-#include <utilities/models/fj_predictor/header.h>
-#include <utilities/models/pdlp_predictor/header.h>
 #include <utilities/work_limit_timer.hpp>
-#include <utilities/work_unit_predictor.hpp>
 
 #pragma once
 
@@ -26,12 +22,6 @@ class branch_and_bound_t;
 }
 
 namespace cuopt::linear_programming::detail {
-
-struct mip_solver_work_unit_predictors_t {
-  work_unit_predictor_t<fj_predictor, gpu_work_unit_scaler_t> fj_predictor{};
-  work_unit_predictor_t<cpufj_predictor, cpu_work_unit_scaler_t> cpufj_predictor{};
-  work_unit_predictor_t<pdlp_predictor, gpu_work_unit_scaler_t> pdlp_predictor{};
-};
 
 // Aggregate structure containing the global context of the solving process for convenience:
 // The current problem, user settings, raft handle and statistics objects
@@ -59,7 +49,6 @@ struct mip_solver_context_t {
   const mip_solver_settings_t<i_t, f_t> settings;
   pdlp_initial_scaling_strategy_t<i_t, f_t>& scaling;
   solver_stats_t<i_t, f_t> stats;
-  mip_solver_work_unit_predictors_t work_unit_predictors;
   // Work limit context for tracking work units in deterministic mode (shared across all timers in
   // GPU heuristic loop)
   work_limit_context_t gpu_heur_loop{"GPUHeur"};

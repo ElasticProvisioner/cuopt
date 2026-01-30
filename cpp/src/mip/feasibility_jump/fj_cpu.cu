@@ -28,10 +28,10 @@
 
 // Define CPUFJ_NVTX_RANGES to enable detailed NVTX profiling ranges
 #ifdef CPUFJ_NVTX_RANGES
-#define CPUFJ_NVTX_RANGE(name)  raft::common::nvtx::range NVTX_UNIQUE_NAME(nvtx_scope_)(name)
-#define NVTX_UNIQUE_NAME(base)  NVTX_CONCAT(base, __LINE__)
-#define NVTX_CONCAT(a, b)       NVTX_CONCAT_INNER(a, b)
-#define NVTX_CONCAT_INNER(a, b) a##b
+#define CPUFJ_NVTX_RANGE(name)        raft::common::nvtx::range CPUFJ_NVTX_UNIQUE_NAME(nvtx_scope_)(name)
+#define CPUFJ_NVTX_UNIQUE_NAME(base)  CPUFJ_NVTX_CONCAT(base, __LINE__)
+#define CPUFJ_NVTX_CONCAT(a, b)       CPUFJ_NVTX_CONCAT_INNER(a, b)
+#define CPUFJ_NVTX_CONCAT_INNER(a, b) a##b
 #else
 #define CPUFJ_NVTX_RANGE(name) ((void)0)
 #endif
@@ -1536,43 +1536,13 @@ bool fj_t<i_t, f_t>::cpu_solve(fj_cpu_climber_t<i_t, f_t>& fj_cpu, f_t in_time_l
     }
 #endif
 
-    // Collect and print PAPI metrics and regression features every 1000 iterations
     if (fj_cpu.iterations % 100 == 0 && fj_cpu.iterations > 0) {
-      auto now              = std::chrono::high_resolution_clock::now();
-      double time_window_ms = std::chrono::duration_cast<std::chrono::duration<double>>(
-                                now - fj_cpu.last_feature_log_time)
-                                .count() *
-                              1000.0;
-      double total_time_ms =
-        std::chrono::duration_cast<std::chrono::duration<double>>(now - loop_start).count() *
-        1000.0;
-
       // Collect memory statistics
       auto [loads, stores] = fj_cpu.memory_manifold.collect();
 
-      // Log all features including memory statistics
-      // log_regression_features(fj_cpu, time_window_ms, total_time_ms, loads, stores);
+      double biased_work = (loads + stores) * fj_cpu.work_unit_bias / 1e10;
+      fj_cpu.work_units_elapsed += biased_work;
 
-      fj_cpu.last_feature_log_time = now;
-
-      std::map<std::string, float> features_map;
-      features_map["n_vars"]       = (float)fj_cpu.h_reverse_offsets.size() - 1;
-      features_map["n_cstrs"]      = (float)fj_cpu.h_offsets.size() - 1;
-      features_map["total_nnz"]    = (float)fj_cpu.h_reverse_offsets.back();
-      features_map["mem_total_mb"] = (float)(loads + stores) / 1e6;
-      float time_prediction =
-        std::max(
-          (f_t)0.0,
-          (f_t)ceil(context.work_unit_predictors.cpufj_predictor.predict_scalar(features_map))) /
-        1000.0;
-
-      // Record work units with bias applied (bias < 1.0 makes CPUFJ appear faster)
-      double biased_work = time_prediction * fj_cpu.work_unit_bias;
-      double new_work_units =
-        fj_cpu.work_units_elapsed.load(std::memory_order_relaxed) + biased_work;
-      fj_cpu.work_units_elapsed.store(new_work_units, std::memory_order_release);
-
-      // Notify producer_sync if registered
       if (fj_cpu.producer_sync != nullptr) { fj_cpu.producer_sync->notify_progress(); }
 
       CUOPT_LOG_TRACE("CPUFJ work units: %f incumbent %g",

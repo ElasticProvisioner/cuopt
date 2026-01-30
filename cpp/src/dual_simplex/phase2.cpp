@@ -17,11 +17,9 @@
 #include <dual_simplex/sparse_matrix.hpp>
 #include <dual_simplex/tic_toc.hpp>
 
-#include <utilities/models/dualsimplex_predictor/header.h>
 #include <utilities/scope_guard.hpp>
 #include <utilities/timing_utils.hpp>
 #include <utilities/work_limit_timer.hpp>
-#include <utilities/work_unit_predictor.hpp>
 
 #include <utilities/version_info.hpp>
 
@@ -2563,53 +2561,6 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
   f_t interval_start_time   = toc(start_time);
   i_t last_feature_log_iter = iter;
 
-  // Helper to compute scaled work units for a given number of iterations
-  thread_local cuopt::work_unit_predictor_t<dualsimplex_predictor, cpu_work_unit_scaler_t>
-    work_predictor{};
-  auto predict_work_units = [&](i_t num_iters) -> f_t {
-    PHASE2_NVTX_RANGE("DualSimplex::predict_work_units");
-    std::map<std::string, float> features_map;
-    features_map["m"]           = static_cast<float>(features.num_rows);
-    features_map["n"]           = static_cast<float>(features.num_cols);
-    features_map["nnz"]         = static_cast<float>(features.num_nonzeros);
-    features_map["density"]     = static_cast<float>(features.matrix_density);
-    features_map["avg_nnz_col"] = static_cast<float>(features.avg_nnz_per_col);
-    features_map["avg_nnz_row"] = static_cast<float>(features.avg_nnz_per_row);
-    features_map["bounded"]     = static_cast<float>(features.num_bounded_vars);
-    features_map["free"]        = static_cast<float>(features.num_free_vars);
-    features_map["refact_freq"] = static_cast<float>(features.refactor_frequency);
-    features_map["num_refacts"] = static_cast<float>(features.num_refactors);
-    features_map["num_updates"] = static_cast<float>(features.num_basis_updates);
-    features_map["sparse_dz"]   = static_cast<float>(features.sparse_delta_z_count);
-    features_map["dense_dz"]    = static_cast<float>(features.dense_delta_z_count);
-    features_map["bound_flips"] = static_cast<float>(features.total_bound_flips);
-    features_map["num_infeas"]  = static_cast<float>(features.num_infeasibilities);
-    features_map["dy_nz_pct"]   = static_cast<float>(features.delta_y_nz_percentage);
-    features_map["byte_loads"]  = static_cast<float>(features.byte_loads);
-    features_map["byte_stores"] = static_cast<float>(features.byte_stores);
-
-    f_t base_prediction   = std::max((f_t)0.0, (f_t)work_predictor.predict_scalar(features_map));
-    f_t scaled_prediction = base_prediction * static_cast<f_t>(num_iters) / FEATURE_LOG_INTERVAL;
-
-    // const char* worker_name = work_unit_context ? work_unit_context->name.c_str() : "unknown";
-    // CUOPT_LOG_DEBUG("PREDICT_WORK [%s]: iters=%d refacts=%d updates=%d sparse_dz=%d dense_dz=%d "
-    //                     "bound_flips=%d infeas=%d dy_nz=%.6f loads=%zu stores=%zu -> pred=%.9f",
-    //                     worker_name,
-    //                     num_iters,
-    //                     features.num_refactors,
-    //                     features.num_basis_updates,
-    //                     features.sparse_delta_z_count,
-    //                     features.dense_delta_z_count,
-    //                     features.total_bound_flips,
-    //                     features.num_infeasibilities,
-    //                     features.delta_y_nz_percentage,
-    //                     features.byte_loads,
-    //                     features.byte_stores,
-    //                     scaled_prediction);
-
-    return scaled_prediction;
-  };
-
   cuopt::scope_guard work_unit_guard([&]() {
     i_t remaining_iters = iter - last_feature_log_iter;
     if (remaining_iters <= 0) return;
@@ -2633,30 +2584,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
     features.log_features(settings);
 
     if (work_unit_context) {
-      f_t prediction = predict_work_units(remaining_iters);
-
-#ifdef CUOPT_DEBUG_WORK_PREDICTION
-      f_t actual_time         = features.interval_runtime;
-      f_t ratio               = (prediction > 0.0) ? (actual_time / prediction) : 0.0;
-      const char* worker_name = work_unit_context->name.c_str();
-      printf(
-        "[WORK_PRED_DS] %s: actual=%.6fs predicted=%.6fwu ratio=%.3f (iters=%d refacts=%d "
-        "updates=%d sparse_dz=%d dense_dz=%d flips=%d infeas=%d dy_nz=%.2f%%)\n",
-        worker_name,
-        actual_time,
-        prediction,
-        ratio,
-        remaining_iters,
-        features.num_refactors,
-        features.num_basis_updates,
-        features.sparse_delta_z_count,
-        features.dense_delta_z_count,
-        features.total_bound_flips,
-        features.num_infeasibilities,
-        features.delta_y_nz_percentage * 100.0);
-#endif
-
-      // work_unit_context->record_work(prediction);
+      // TEMP;
       work_unit_context->record_work((total_loads + total_stores) / 1e8);
     }
   });
@@ -3295,15 +3223,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
       features.log_features(settings);
 
       if (work_unit_context) {
-        f_t prediction = predict_work_units(iters_elapsed);
-        // printf("DualSimplex determ: %d iters, predicted %.4f, actual %.4f, error %.4f\n",
-        //        iters_elapsed,
-        //        prediction,
-        //        features.interval_runtime,
-        //        prediction - features.interval_runtime);
-        // printf("Current iter %d\n", iter);
-
-        // work_unit_context->record_work(prediction);
+        // TEMP;
         work_unit_context->record_work((total_loads + total_stores) / 1e8);
       }
 

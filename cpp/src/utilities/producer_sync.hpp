@@ -32,7 +32,8 @@ namespace cuopt {
  * target work unit threshold before proceeding.
  *
  * Key invariant: Producers must not fall behind the consumer's horizon. The consumer
- * waits at sync points until all producers have caught up.
+ * waits at sync points until all producers have caught up. The producers are biased
+ * to ensure they remain likely ahead of the consumer.
  */
 class producer_sync_t {
  public:

@@ -26,7 +26,6 @@
 #include <utilities/omp_helpers.hpp>
 #include <utilities/producer_sync.hpp>
 #include <utilities/work_limit_timer.hpp>
-#include <utilities/work_unit_predictor.hpp>
 #include <utilities/work_unit_scheduler.hpp>
 
 #include <omp.h>
