@@ -1,6 +1,6 @@
 /* clang-format off */
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /* clang-format on */
@@ -598,6 +598,7 @@ template <typename i_t, typename f_t>
 void csr_matrix_t<i_t, f_t>::insert_row(const std::vector<i_t>& vars,
                                         const std::vector<f_t>& coeffs)
 {
+  assert(vars.size() == coeffs.size());
   // insert the row into the matrix
   this->row_start.push_back(this->row_start.back() + vars.size());
   this->m++;

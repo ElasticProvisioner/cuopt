@@ -19,6 +19,7 @@
 
 #include "clique_table.cuh"
 
+#include <algorithm>
 #include <dual_simplex/sparse_matrix.hpp>
 #include <mip/mip_constants.hpp>
 #include <mip/utils.cuh>
@@ -39,7 +40,8 @@ void find_cliques_from_constraint(const knapsack_constraint_t<i_t, f_t>& kc,
   i_t k = size - 1;
   // find the first clique, which is the largest
   // FIXME: do binary search
-  while (k >= 0) {
+  // require k >= 1 so kc.entries[k-1] is always valid
+  while (k >= 1) {
     if (kc.entries[k].val + kc.entries[k - 1].val <= kc.rhs) { break; }
     clique.push_back(kc.entries[k].col);
     k--;
@@ -140,9 +142,9 @@ void fill_knapsack_constraints(const dual_simplex::user_problem_t<i_t, f_t>& pro
       continue;
     }
     bool all_binary = true;
-    // check if all variables are binary
+    // check if all variables are binary (any non-continuous with bounds [0,1])
     for (i_t j = constraint_range.first; j < constraint_range.second; j++) {
-      if (problem.var_types[A.j[j]] != dual_simplex::variable_type_t::INTEGER ||
+      if (problem.var_types[A.j[j]] == dual_simplex::variable_type_t::CONTINUOUS ||
           problem.lower[A.j[j]] != 0 || problem.upper[A.j[j]] != 1) {
         all_binary = false;
         break;
@@ -293,9 +295,26 @@ i_t clique_table_t<i_t, f_t>::get_degree_of_var(i_t var_idx)
 template <typename i_t, typename f_t>
 bool clique_table_t<i_t, f_t>::check_adjacency(i_t var_idx1, i_t var_idx2)
 {
-  return var_clique_map_first[var_idx1].count(var_idx2) > 0 ||
-         var_clique_map_addtl[var_idx1].count(var_idx2) > 0 ||
-         adj_list_small_cliques[var_idx1].count(var_idx2) > 0;
+  // Check first cliques: var_clique_map_first stores clique indices
+  for (const auto& clique_idx : var_clique_map_first[var_idx1]) {
+    const auto& clique = first[clique_idx];
+    if (std::binary_search(clique.begin(), clique.end(), var_idx2)) { return true; }
+  }
+
+  // Check additional cliques: var_clique_map_addtl stores indices into addtl_cliques
+  for (const auto& addtl_idx : var_clique_map_addtl[var_idx1]) {
+    const auto& addtl  = addtl_cliques[addtl_idx];
+    const auto& clique = first[addtl.clique_idx];
+    // addtl clique is: vertex_idx + first[clique_idx][start_pos_on_clique:]
+    if (addtl.vertex_idx == var_idx2) { return true; }
+    if (addtl.start_pos_on_clique < static_cast<i_t>(clique.size())) {
+      if (std::binary_search(clique.begin() + addtl.start_pos_on_clique, clique.end(), var_idx2)) {
+        return true;
+      }
+    }
+  }
+
+  return adj_list_small_cliques[var_idx1].count(var_idx2) > 0;
 }
 
 // this function should only be called within extend clique
@@ -316,7 +335,7 @@ void insert_clique_into_problem(const std::vector<i_t>& clique,
     if (var_idx >= problem.num_cols) {
       coeff   = -1.;
       var_idx = var_idx - problem.num_cols;
-      rhs_offset -= coeff;
+      rhs_offset--;
     }
     new_vars.push_back(var_idx);
     new_coeffs.push_back(coeff);
@@ -487,6 +506,8 @@ void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
     problem.row_sense.begin(), problem.row_sense.end(), [&removal_marker, &n](char) mutable {
       return removal_marker[n++];
     });
+  // Compute count before erase invalidates the iterator
+  size_t n_of_removed_constraints = std::distance(new_end, problem.row_sense.end());
   problem.row_sense.erase(new_end, problem.row_sense.end());
   n = 0;
   // Remove problem.rhs entries for which removal_marker is true, using remove_if
