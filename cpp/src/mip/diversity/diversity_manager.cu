@@ -311,6 +311,10 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
                   context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC ? "deterministic"
                                                                                 : "opportunistic");
 
+  // to automatically compute the solving time on scope exit
+  auto timer_raii_guard =
+    cuopt::scope_guard([&]() { stats.total_solve_time = timer.elapsed_time(); });
+
   // Debug: Allow disabling GPU heuristics to test B&B tree determinism in isolation
   const char* disable_heuristics_env = std::getenv("CUOPT_DISABLE_GPU_HEURISTICS");
   if (context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC) {
@@ -349,9 +353,6 @@ solution_t<i_t, f_t> diversity_manager_t<i_t, f_t>::run_solver()
   const f_t time_limit = timer.remaining_time();
   const f_t lp_time_limit =
     std::min(diversity_config.max_time_on_lp, time_limit * diversity_config.time_ratio_on_init_lp);
-  // to automatically compute the solving time on scope exit
-  auto timer_raii_guard =
-    cuopt::scope_guard([&]() { stats.total_solve_time = timer.elapsed_time(); });
   // after every change to the problem, we should resize all the relevant vars
   // we need to encapsulate that to prevent repetitions
   recombine_stats.reset();

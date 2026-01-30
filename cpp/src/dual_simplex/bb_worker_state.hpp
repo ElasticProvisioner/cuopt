@@ -223,7 +223,11 @@ struct bb_worker_state_t {
                                                 solution);
   }
 
-  void enqueue_node(mip_node_t<i_t, f_t>* node) { plunge_stack.push_front(node); }
+  void enqueue_node(mip_node_t<i_t, f_t>* node)
+  {
+    plunge_stack.push_front(node);
+    ++total_nodes_assigned;
+  }
 
   // Enqueue children with plunging: move any existing sibling to backlog, push both children
   mip_node_t<i_t, f_t>* enqueue_children_for_plunge(mip_node_t<i_t, f_t>* down_child,
@@ -298,41 +302,43 @@ struct bb_worker_state_t {
                                                      node->lower_bound,
                                                      branch_var,
                                                      branch_val));
+    ++nodes_processed_this_horizon;
+    ++total_nodes_processed;
+    ++total_nodes_branched;
   }
 
   void record_integer_solution(mip_node_t<i_t, f_t>* node, f_t objective)
   {
     record_event(
       bb_event_t<i_t, f_t>::make_integer_solution(clock, worker_id, node->node_id, 0, objective));
+    ++nodes_processed_this_horizon;
+    ++total_nodes_processed;
+    ++total_integer_solutions;
   }
 
   void record_fathomed(mip_node_t<i_t, f_t>* node, f_t lower_bound)
   {
     record_event(
       bb_event_t<i_t, f_t>::make_fathomed(clock, worker_id, node->node_id, 0, lower_bound));
+    ++nodes_processed_this_horizon;
+    ++total_nodes_processed;
+    ++total_nodes_pruned;
   }
 
   void record_infeasible(mip_node_t<i_t, f_t>* node)
   {
     record_event(bb_event_t<i_t, f_t>::make_infeasible(clock, worker_id, node->node_id, 0));
+    ++nodes_processed_this_horizon;
+    ++total_nodes_processed;
+    ++total_nodes_infeasible;
   }
 
   void record_numerical(mip_node_t<i_t, f_t>* node)
   {
     record_event(bb_event_t<i_t, f_t>::make_numerical(clock, worker_id, node->node_id, 0));
-  }
-
-  void track_node_processed()
-  {
     ++nodes_processed_this_horizon;
     ++total_nodes_processed;
   }
-
-  void track_node_branched() { ++total_nodes_branched; }
-  void track_node_pruned() { ++total_nodes_pruned; }
-  void track_node_infeasible() { ++total_nodes_infeasible; }
-  void track_integer_solution() { ++total_integer_solutions; }
-  void track_node_assigned() { ++total_nodes_assigned; }
 };
 
 // Per-worker state for BSP diving (operates on detached node copies)

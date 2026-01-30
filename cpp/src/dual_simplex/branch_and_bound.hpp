@@ -81,6 +81,11 @@ struct bnb_stats_t {
 };
 
 template <typename i_t, typename f_t>
+struct opportunistic_tree_update_policy_t;
+template <typename i_t, typename f_t>
+struct bsp_tree_update_policy_t;
+
+template <typename i_t, typename f_t>
 class branch_and_bound_t {
  public:
   branch_and_bound_t(const user_problem_t<i_t, f_t>& user_problem,
@@ -346,6 +351,9 @@ class branch_and_bound_t {
 
   // Collect and merge diving solutions at sync
   void collect_diving_solutions();
+
+  friend struct opportunistic_tree_update_policy_t<i_t, f_t>;
+  friend struct bsp_tree_update_policy_t<i_t, f_t>;
 
  private:
   // BSP state
