@@ -1218,15 +1218,17 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
 
   // Root node path
   lp_status_t root_status;
-  std::future<lp_status_t> root_status_future;
-  root_status_future = std::async(std::launch::async,
-                                  &solve_linear_program_advanced<i_t, f_t>,
-                                  std::ref(original_lp_),
-                                  exploration_stats_.start_time,
-                                  std::ref(lp_settings),
-                                  std::ref(root_relax_soln_),
-                                  std::ref(root_vstatus_),
-                                  std::ref(edge_norms_));
+
+#pragma omp task
+  {
+    root_status = solve_linear_program_advanced<i_t, f_t>(original_lp_,
+                                                          exploration_stats_.start_time,
+                                                          lp_settings,
+                                                          root_relax_soln_,
+                                                          root_vstatus_,
+                                                          edge_norms_);
+  }
+
   // Wait for the root relaxation solution to be sent by the diversity manager or dual simplex
   // to finish
   while (!root_crossover_solution_set_.load(std::memory_order_acquire) &&
@@ -1269,7 +1271,7 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
     // Check if crossover was stopped by dual simplex
     if (crossover_status == crossover_status_t::OPTIMAL) {
       set_root_concurrent_halt(1);  // Stop dual simplex
-      root_status = root_status_future.get();
+#pragma omp taskwait
 
       // Override the root relaxation solution with the crossover solution
       root_relax_soln_ = root_crossover_soln_;
@@ -1280,13 +1282,13 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
       solver_name      = "Barrier/PDLP and Crossover";
 
     } else {
-      root_status    = root_status_future.get();
+#pragma omp taskwait
       user_objective = root_relax_soln_.user_objective;
       iter           = root_relax_soln_.iterations;
       solver_name    = "Dual Simplex";
     }
   } else {
-    root_status    = root_status_future.get();
+#pragma omp taskwait
     user_objective = root_relax_soln_.user_objective;
     iter           = root_relax_soln_.iterations;
     solver_name    = "Dual Simplex";
