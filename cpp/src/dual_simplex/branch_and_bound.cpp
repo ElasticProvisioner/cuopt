@@ -1138,6 +1138,7 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
     if (!launched_any_task) { std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
   }
 
+#pragma omp taskwait
   is_running_ = false;
 }
 

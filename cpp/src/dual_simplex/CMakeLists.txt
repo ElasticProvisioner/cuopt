@@ -13,7 +13,6 @@ set(DUAL_SIMPLEX_SRC_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/crossover.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/folding.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/initial_basis.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/mip_node.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/phase1.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/phase2.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/presolve.cpp
