@@ -281,6 +281,7 @@ std::unordered_set<i_t> clique_table_t<i_t, f_t>::get_adj_set_of_var(i_t var_idx
   for (const auto& adj_vertex : adj_list_small_cliques[var_idx]) {
     adj_set.insert(adj_vertex);
   }
+  adj_set.erase(var_idx);
   return adj_set;
 }
 
@@ -295,10 +296,13 @@ i_t clique_table_t<i_t, f_t>::get_degree_of_var(i_t var_idx)
 template <typename i_t, typename f_t>
 bool clique_table_t<i_t, f_t>::check_adjacency(i_t var_idx1, i_t var_idx2)
 {
+  if (adj_list_small_cliques[var_idx1].count(var_idx2) > 0) { return true; }
   // Check first cliques: var_clique_map_first stores clique indices
   for (const auto& clique_idx : var_clique_map_first[var_idx1]) {
     const auto& clique = first[clique_idx];
-    if (std::binary_search(clique.begin(), clique.end(), var_idx2)) { return true; }
+    // TODO: we can also keep a set of the clique if the memory allows, instead of doing linear
+    // search
+    if (std::find(clique.begin(), clique.end(), var_idx2) != clique.end()) { return true; }
   }
 
   // Check additional cliques: var_clique_map_addtl stores indices into addtl_cliques
@@ -308,13 +312,14 @@ bool clique_table_t<i_t, f_t>::check_adjacency(i_t var_idx1, i_t var_idx2)
     // addtl clique is: vertex_idx + first[clique_idx][start_pos_on_clique:]
     if (addtl.vertex_idx == var_idx2) { return true; }
     if (addtl.start_pos_on_clique < static_cast<i_t>(clique.size())) {
-      if (std::binary_search(clique.begin() + addtl.start_pos_on_clique, clique.end(), var_idx2)) {
+      if (std::find(clique.begin() + addtl.start_pos_on_clique, clique.end(), var_idx2) !=
+          clique.end()) {
         return true;
       }
     }
   }
 
-  return adj_list_small_cliques[var_idx1].count(var_idx2) > 0;
+  return false;
 }
 
 // this function should only be called within extend clique
@@ -366,8 +371,12 @@ bool extend_clique(const std::vector<i_t>& clique,
   }
   std::vector<i_t> extension_candidates;
   auto smallest_degree_adj_set = clique_table.get_adj_set_of_var(smallest_degree_var);
-  extension_candidates.insert(
-    extension_candidates.end(), smallest_degree_adj_set.begin(), smallest_degree_adj_set.end());
+  std::unordered_set<i_t> clique_members(clique.begin(), clique.end());
+  for (const auto& candidate : smallest_degree_adj_set) {
+    if (clique_members.find(candidate) == clique_members.end()) {
+      extension_candidates.push_back(candidate);
+    }
+  }
   std::sort(extension_candidates.begin(), extension_candidates.end(), [&](i_t a, i_t b) {
     return clique_table.get_degree_of_var(a) > clique_table.get_degree_of_var(b);
   });
@@ -516,7 +525,6 @@ void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
       return removal_marker[n++];
     });
   problem.rhs.erase(new_end_rhs, problem.rhs.end());
-  size_t n_of_removed_constraints = std::distance(new_end, problem.row_sense.end());
   CUOPT_LOG_DEBUG("Number of removed constraints by clique covering: %d", n_of_removed_constraints);
   cuopt_assert(problem.rhs.size() == problem.row_sense.size(), "rhs and row sense size mismatch");
   cuopt_assert(problem.A.m == problem.rhs.size(), "matrix and num rows mismatch after removal");
