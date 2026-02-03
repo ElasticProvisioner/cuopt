@@ -297,6 +297,10 @@ i_t clique_table_t<i_t, f_t>::get_degree_of_var(i_t var_idx)
 template <typename i_t, typename f_t>
 bool clique_table_t<i_t, f_t>::check_adjacency(i_t var_idx1, i_t var_idx2)
 {
+  // if passed same variable
+  if (var_idx1 == var_idx2) { return false; }
+  // in case they are complements of each other
+  if (var_idx1 % n_variables == var_idx2 % n_variables) { return true; }
   if (adj_list_small_cliques[var_idx1].count(var_idx2) > 0) { return true; }
   // Check first cliques: var_clique_map_first stores clique indices
   for (const auto& clique_idx : var_clique_map_first[var_idx1]) {
@@ -396,6 +400,29 @@ bool extend_clique(const std::vector<i_t>& clique,
   }
   // if we found a larger cliqe, insert it into the formulation
   if (new_clique.size() > clique.size()) {
+    // Before inserting the new clique, check if a variable and its complement are both present
+    // Assuming complement of variable x is x + n_variables (as typical in these encodings)
+    bool has_var_and_complement = false;
+    for (size_t i = 0; i < new_clique.size(); ++i) {
+      i_t var        = new_clique[i];
+      i_t complement = -1;
+      // determine complement only if var is in the range of variables
+      if (var < clique_table.n_variables) {
+        complement = var + clique_table.n_variables;
+      } else if (var < 2 * clique_table.n_variables) {
+        complement = var - clique_table.n_variables;
+      }
+      // check if complement exists in the clique
+      if (complement != -1 &&
+          std::find(new_clique.begin(), new_clique.end(), complement) != new_clique.end()) {
+        has_var_and_complement = true;
+        break;
+      }
+    }
+    if (has_var_and_complement) {
+      CUOPT_LOG_DEBUG("Not adding clique: contains variable and its complement in the same clique");
+      exit(0);
+    }
     clique_table.first.push_back(new_clique);
     CUOPT_LOG_DEBUG("Extended clique: %lu from %lu", new_clique.size(), clique.size());
     // insert the new clique into the problem as a new constraint

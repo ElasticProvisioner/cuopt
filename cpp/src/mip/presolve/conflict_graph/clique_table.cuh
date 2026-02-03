@@ -62,7 +62,8 @@ struct clique_table_t {
       var_clique_map_first(n_vertices),
       var_clique_map_addtl(n_vertices),
       adj_list_small_cliques(n_vertices),
-      var_degrees(n_vertices, -1)
+      var_degrees(n_vertices, -1),
+      n_variables(n_vertices / 2)
   {
   }
 
@@ -84,7 +85,8 @@ struct clique_table_t {
   std::unordered_map<i_t, std::unordered_set<i_t>> adj_list_small_cliques;
   // degrees of each vertex
   std::vector<i_t> var_degrees;
-
+  // number of variables in the original problem
+  const i_t n_variables;
   const i_t min_clique_size;
   const i_t max_clique_size_for_extension;
   typename mip_solver_settings_t<i_t, f_t>::tolerances_t tolerances;
