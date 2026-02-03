@@ -2263,7 +2263,6 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bsp_bfs_worker_t<
   }
 
   double remaining_time = settings_.time_limit - toc(exploration_stats_.start_time);
-  if (remaining_time <= 0) { return node_solve_info_t::TIME_LIMIT; }
 
   // Bounds strengthening
   simplex_solver_settings_t<i_t, f_t> lp_settings = settings_;
