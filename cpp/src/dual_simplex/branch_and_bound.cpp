@@ -1354,7 +1354,7 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
       root_status      = lp_status_t::OPTIMAL;
       user_objective   = root_crossover_soln_.user_objective;
       iter             = root_crossover_soln_.iterations;
-      solver_name      = "Barrier/PDLP and Crossover";
+      solver_name      = root_relax_solved_by == lp_solver_type_t::Barrier ? "Barrier" : "PDLP";
 
     } else {
       root_status    = root_status_future.get();
@@ -1371,13 +1371,13 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
 
   settings_.log.printf("\n");
   if (root_status == lp_status_t::OPTIMAL) {
-    settings_.log.printf("Root relaxation solution found in %d iterations and %.2fs by %s\n",
+    settings_.log.printf("Root relaxation solution found in %d iterations and %.2fs with %s\n",
                          iter,
                          toc(start_time),
                          solver_name.c_str());
     settings_.log.printf("Root relaxation objective %+.8e\n", user_objective);
   } else {
-    settings_.log.printf("Root relaxation returned status: %s\n",
+    settings_.log.printf("Root relaxation returned: %s\n",
                          lp_status_to_string(root_status).c_str());
   }
 

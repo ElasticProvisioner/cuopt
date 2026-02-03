@@ -1211,10 +1211,10 @@ DONE:
 
 cuopt_int_t test_write_problem(const char* input_filename, const char* output_filename)
 {
-  cuOptOptimizationProblem problem = NULL;
+  cuOptOptimizationProblem problem      = NULL;
   cuOptOptimizationProblem problem_read = NULL;
-  cuOptSolverSettings settings = NULL;
-  cuOptSolution solution = NULL;
+  cuOptSolverSettings settings          = NULL;
+  cuOptSolution solution                = NULL;
   cuopt_int_t status;
   cuopt_int_t termination_status;
   cuopt_float_t objective_value;
@@ -1274,7 +1274,7 @@ cuopt_int_t test_write_problem(const char* input_filename, const char* output_fi
 
   printf("Termination status: %d, Objective: %f\n", termination_status, objective_value);
 
-  if (termination_status != CUOPT_TERIMINATION_STATUS_OPTIMAL) {
+  if (termination_status != CUOPT_TERMINATION_STATUS_OPTIMAL) {
     printf("Expected optimal status\n");
     status = -1;
     goto DONE;

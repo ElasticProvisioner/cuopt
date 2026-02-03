@@ -974,7 +974,8 @@ TEST(pdlp_class, run_empty_matrix_dual_simplex)
   optimization_problem_solution_t<int, double> solution =
     solve_lp(&handle_, op_problem, solver_settings);
   EXPECT_EQ((int)solution.get_termination_status(), CUOPT_TERMINATION_STATUS_OPTIMAL);
-  EXPECT_FALSE(solution.get_additional_termination_information().solved_by);
+  EXPECT_EQ(solution.get_additional_termination_information().solved_by,
+            lp_solver_type_t::DualSimplex);
 }
 
 TEST(pdlp_class, test_max)
@@ -1067,7 +1068,7 @@ TEST(pdlp_class, simple_batch_afiro)
 
   // All should be optimal with the right objective
   for (size_t i = 0; i < batch_size; ++i) {
-    EXPECT_EQ((int)solution.get_termination_status(i), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+    EXPECT_EQ((int)solution.get_termination_status(i), CUOPT_TERMINATION_STATUS_OPTIMAL);
     EXPECT_FALSE(is_incorrect_objective(
       afiro_primal_objective, solution.get_additional_termination_information(i).primal_objective));
   }
@@ -1158,10 +1159,10 @@ TEST(pdlp_class, simple_batch_different_bounds)
 
   // Both should be optimal
   // Climber #0 should have same objective as ref and #1 as the usual
-  EXPECT_EQ((int)solution2.get_termination_status(0), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+  EXPECT_EQ((int)solution2.get_termination_status(0), CUOPT_TERMINATION_STATUS_OPTIMAL);
   EXPECT_FALSE(is_incorrect_objective(
     new_primal, solution2.get_additional_termination_information(0).primal_objective));
-  EXPECT_EQ((int)solution2.get_termination_status(1), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+  EXPECT_EQ((int)solution2.get_termination_status(1), CUOPT_TERMINATION_STATUS_OPTIMAL);
   EXPECT_FALSE(is_incorrect_objective(
     afiro_primal_objective, solution2.get_additional_termination_information(1).primal_objective));
 
@@ -1230,7 +1231,7 @@ TEST(pdlp_class, more_complex_batch_different_bounds)
 
   // All should be optimal
   for (size_t i = 0; i < batch_size; ++i)
-    EXPECT_EQ((int)solution3.get_termination_status(i), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+    EXPECT_EQ((int)solution3.get_termination_status(i), CUOPT_TERMINATION_STATUS_OPTIMAL);
 
   // Climber #0 #2 #4 should have the same primal objective which is the unmodified one
   EXPECT_FALSE(is_incorrect_objective(
@@ -1459,7 +1460,7 @@ TEST(pdlp_class, big_batch_afiro)
 
   // All should be optimal with
   for (size_t i = 0; i < batch_size; ++i) {
-    EXPECT_EQ((int)solution.get_termination_status(i), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+    EXPECT_EQ((int)solution.get_termination_status(i), CUOPT_TERMINATION_STATUS_OPTIMAL);
     EXPECT_FALSE(is_incorrect_objective(
       afiro_primal_objective, solution.get_additional_termination_information(i).primal_objective));
   }
@@ -1542,8 +1543,8 @@ TEST(pdlp_class, DISABLED_simple_batch_optimal_and_infeasible)
     solve_lp(&handle_, op_problem, solver_settings);
 
   // First should be primal infeasible and the second optimal with the correct
-  EXPECT_EQ((int)solution.get_termination_status(0), CUOPT_TERIMINATION_STATUS_INFEASIBLE);
-  EXPECT_EQ((int)solution.get_termination_status(1), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+  EXPECT_EQ((int)solution.get_termination_status(0), CUOPT_TERMINATION_STATUS_INFEASIBLE);
+  EXPECT_EQ((int)solution.get_termination_status(1), CUOPT_TERMINATION_STATUS_OPTIMAL);
   EXPECT_FALSE(is_incorrect_objective(
     afiro_primal_objective, solution.get_additional_termination_information(1).primal_objective));
 }
@@ -1579,13 +1580,13 @@ TEST(pdlp_class, DISABLED_larger_batch_optimal_and_infeasible)
     solve_lp(&handle_, op_problem, solver_settings);
 
   // #1 and #3 should be infeasible
-  EXPECT_EQ((int)solution.get_termination_status(1), CUOPT_TERIMINATION_STATUS_INFEASIBLE);
-  EXPECT_EQ((int)solution.get_termination_status(3), CUOPT_TERIMINATION_STATUS_INFEASIBLE);
+  EXPECT_EQ((int)solution.get_termination_status(1), CUOPT_TERMINATION_STATUS_INFEASIBLE);
+  EXPECT_EQ((int)solution.get_termination_status(3), CUOPT_TERMINATION_STATUS_INFEASIBLE);
 
   // Rest should be feasible with the correct primal objective
-  EXPECT_EQ((int)solution.get_termination_status(0), CUOPT_TERIMINATION_STATUS_OPTIMAL);
-  EXPECT_EQ((int)solution.get_termination_status(2), CUOPT_TERIMINATION_STATUS_OPTIMAL);
-  EXPECT_EQ((int)solution.get_termination_status(4), CUOPT_TERIMINATION_STATUS_OPTIMAL);
+  EXPECT_EQ((int)solution.get_termination_status(0), CUOPT_TERMINATION_STATUS_OPTIMAL);
+  EXPECT_EQ((int)solution.get_termination_status(2), CUOPT_TERMINATION_STATUS_OPTIMAL);
+  EXPECT_EQ((int)solution.get_termination_status(4), CUOPT_TERMINATION_STATUS_OPTIMAL);
 
   EXPECT_FALSE(is_incorrect_objective(
     afiro_primal_objective, solution.get_additional_termination_information(0).primal_objective));

@@ -279,7 +279,7 @@ void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
     }
 
     settings.log.printf(
-      "Batch PDLP strong branching took %.2f seconds. Solved %d/%d with max %d iterations\n",
+      "Strong branching took %.2f seconds with Batch PDLP. Solved %d/%d with max %d iterations\n",
       duration.count(),
       amount_done,
       fractional.size() * 2,
@@ -351,7 +351,7 @@ void strong_branching(const user_problem_t<i_t, f_t>& original_problem,
     }
     std::chrono::steady_clock::time_point end_timea = std::chrono::steady_clock::now();
     std::chrono::duration<f_t> duration             = end_timea - start_timea;
-    settings.log.printf("Dual Simplex Strong branching took %.2f seconds\n", duration.count());
+    settings.log.printf("Strong branching took %.2f seconds with Dual Simplex\n", duration.count());
   }
 
   pc.update_pseudo_costs_from_strong_branching(fractional, root_soln);
