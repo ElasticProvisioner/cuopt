@@ -30,16 +30,6 @@ namespace cuopt::linear_programming::dual_simplex {
 
 // Indicate the search and variable selection algorithms used by each thread
 // in B&B (See [1]).
-//
-// [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
-// Berlin, 2007. doi: 10.14279/depositonce-1634.
-enum class bnb_worker_type_t {
-  BEST_FIRST         = 0,  // Best-First + Plunging.
-  PSEUDOCOST_DIVING  = 1,  // Pseudocost diving (9.2.5)
-  LINE_SEARCH_DIVING = 2,  // Line search diving (9.2.4)
-  GUIDED_DIVING = 3,  // Guided diving (9.2.3). If no incumbent is found yet, use pseudocost diving.
-  COEFFICIENT_DIVING = 4  // Coefficient diving (9.2.1)
-};
 
 // Comparator for backlog heap: best-first by lower_bound with deterministic BSP identity tie-break
 // Returns true if 'a' has lower priority than 'b' (for max-heap behavior in std::push_heap)
@@ -120,6 +110,7 @@ struct bb_worker_state_t {
   lp_problem_t<i_t, f_t> leaf_problem;
   basis_update_mpf_t<i_t, f_t> basis_factors;
   bounds_strengthening_t<i_t, f_t> node_presolver;
+  std::vector<bool> bounds_changed;
   std::vector<i_t> basic_list;
   std::vector<i_t> nonbasic_list;
   work_limit_context_t work_context;
@@ -158,7 +149,8 @@ struct bb_worker_state_t {
       work_context("BB_Worker_" + std::to_string(id)),
       leaf_problem(original_lp),
       basis_factors(original_lp.num_rows, refactor_frequency),
-      node_presolver(original_lp, Arow, std::vector<char>{}, var_types)
+      node_presolver(original_lp, Arow, std::vector<char>{}, var_types),
+      bounds_changed(original_lp.num_cols, false)
   {
     const i_t m = leaf_problem.num_rows;
     basic_list.resize(m);
@@ -355,6 +347,7 @@ struct bsp_diving_worker_state_t {
   lp_problem_t<i_t, f_t> leaf_problem;
   basis_update_mpf_t<i_t, f_t> basis_factors;
   bounds_strengthening_t<i_t, f_t> node_presolver;
+  std::vector<bool> bounds_changed;
   std::vector<i_t> basic_list;
   std::vector<i_t> nonbasic_list;
   bool recompute_bounds_and_basis{true};
@@ -396,7 +389,8 @@ struct bsp_diving_worker_state_t {
       work_context("Diving_Worker_" + std::to_string(id)),
       leaf_problem(original_lp),
       basis_factors(original_lp.num_rows, refactor_frequency),
-      node_presolver(original_lp, Arow, std::vector<char>{}, var_types)
+      node_presolver(original_lp, Arow, std::vector<char>{}, var_types),
+      bounds_changed(original_lp.num_cols, false)
   {
     const i_t m = leaf_problem.num_rows;
     basic_list.resize(m);

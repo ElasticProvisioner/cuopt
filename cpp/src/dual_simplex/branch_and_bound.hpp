@@ -9,6 +9,7 @@
 
 #include <dual_simplex/bb_event.hpp>
 #include <dual_simplex/bb_worker_state.hpp>
+#include <dual_simplex/bnb_worker.hpp>
 #include <dual_simplex/diving_heuristics.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/mip_node.hpp>
@@ -41,6 +42,11 @@ enum class mip_status_t {
   WORK_LIMIT = 7,  // The solver reached a deterministic work limit
 };
 
+enum class mip_solve_mode_t {
+  BNB_PARALLEL        = 0,  // Parallel B&B (default)
+  BNB_SINGLE_THREADED = 1,  // Single threaded B&B for SubMIP and RINS
+};
+
 enum class mip_exploration_status_t {
   UNSET      = 0,  // The status is not set
   TIME_LIMIT = 1,  // The solver reached a time limit
@@ -66,19 +72,6 @@ class bounds_strengthening_t;
 
 template <typename i_t, typename f_t>
 void upper_bound_callback(f_t upper_bound);
-
-template <typename i_t, typename f_t>
-struct bnb_stats_t {
-  f_t start_time                        = 0.0;
-  omp_atomic_t<f_t> total_lp_solve_time = 0.0;
-  omp_atomic_t<i_t> nodes_explored      = 0;
-  omp_atomic_t<i_t> nodes_unexplored    = 0;
-  omp_atomic_t<f_t> total_lp_iters      = 0;
-
-  // This should only be used by the main thread
-  omp_atomic_t<f_t> last_log             = 0.0;
-  omp_atomic_t<i_t> nodes_since_last_log = 0;
-};
 
 template <typename i_t, typename f_t>
 struct opportunistic_tree_update_policy_t;
@@ -136,7 +129,7 @@ class branch_and_bound_t {
   lp_status_t solve_root_relaxation(simplex_solver_settings_t<i_t, f_t> const& lp_settings);
 
   // The main entry routine. Returns the solver status and populates solution with the incumbent.
-  mip_status_t solve(mip_solution_t<i_t, f_t>& solution);
+  mip_status_t solve(mip_solution_t<i_t, f_t>& solution, mip_solve_mode_t solve_mode);
 
   work_limit_context_t& get_work_unit_context() { return work_unit_context_; }
 
@@ -163,9 +156,6 @@ class branch_and_bound_t {
   // Here we assume that the constraints are in the form `Ax = b, l <= x <= u`.
   std::vector<i_t> var_up_locks_;
   std::vector<i_t> var_down_locks_;
-
-  // Local lower bounds for each thread
-  std::vector<omp_atomic_t<f_t>> local_lower_bounds_;
 
   // Mutex for upper bound
   omp_mutex_t mutex_upper_;
@@ -204,14 +194,21 @@ class branch_and_bound_t {
   // Search tree
   search_tree_t<i_t, f_t> search_tree_;
 
-  // Count the number of subtrees that are currently being explored.
-  omp_atomic_t<i_t> active_subtrees_;
+  // Count the number of workers per type that either are being executed or
+  // are waiting to be executed.
+  std::array<omp_atomic_t<i_t>, bnb_num_worker_types> active_workers_per_type_;
+
+  // Worker pool
+  bnb_worker_pool_t<i_t, f_t> worker_pool_;
 
   // Global status of the solver.
   omp_atomic_t<mip_status_t> solver_status_;
-  omp_atomic_t<bool> is_running{false};
+  omp_atomic_t<bool> is_running_{false};
 
-  omp_atomic_t<bool> should_report_;
+  // Minimum number of node in the queue. When the queue size is less than
+  // this variable, the nodes are added directly to the queue instead of
+  // the local stack. This also determines the end of the ramp-up phase.
+  i_t min_node_queue_size_;
 
   // In case, a best-first thread encounters a numerical issue when solving a node,
   // its blocks the progression of the lower bound.
@@ -233,72 +230,43 @@ class branch_and_bound_t {
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
 
-  // Ramp-up phase of the solver, where we greedily expand the tree until
-  // there is enough unexplored nodes. This is done recursively using OpenMP tasks.
-  void exploration_ramp_up(mip_node_t<i_t, f_t>* node, i_t initial_heap_size);
-
   // We use best-first to pick the `start_node` and then perform a depth-first search
   // from this node (i.e., a plunge). It can only backtrack to a sibling node.
   // Unexplored nodes in the subtree are inserted back into the global heap.
-  void plunge_from(i_t task_id,
-                   mip_node_t<i_t, f_t>* start_node,
-                   lp_problem_t<i_t, f_t>& leaf_problem,
-                   bounds_strengthening_t<i_t, f_t>& node_presolver,
-                   basis_update_mpf_t<i_t, f_t>& basis_update,
-                   std::vector<i_t>& basic_list,
-                   std::vector<i_t>& nonbasic_list);
-
-  // Each "main" thread pops a node from the global heap and then performs a plunge
-  // (i.e., a shallow dive) into the subtree determined by the node.
-  void best_first_thread(i_t task_id);
+  void plunge_with(bnb_worker_data_t<i_t, f_t>* worker_data, mip_solve_mode_t mode);
 
   // Perform a deep dive in the subtree determined by the `start_node` in order
   // to find integer feasible solutions.
-  void dive_from(mip_node_t<i_t, f_t>& start_node,
-                 const std::vector<f_t>& start_lower,
-                 const std::vector<f_t>& start_upper,
-                 lp_problem_t<i_t, f_t>& leaf_problem,
-                 bounds_strengthening_t<i_t, f_t>& node_presolver,
-                 basis_update_mpf_t<i_t, f_t>& basis_update,
-                 std::vector<i_t>& basic_list,
-                 std::vector<i_t>& nonbasic_list,
-                 bnb_worker_type_t diving_type);
+  void dive_with(bnb_worker_data_t<i_t, f_t>* worker_data);
 
-  // Each diving thread pops the first node from the dive queue and then performs
-  // a deep dive into the subtree determined by the node.
-  void diving_thread(bnb_worker_type_t diving_type);
+  // Run the scheduler (aka the master) whose will schedule and manage
+  // all the other workers.
+  void run_scheduler();
+
+  // Run the branch-and-bound algorithm in single threaded mode.
+  // This disable all diving heuristics.
+  void single_threaded_solve();
 
   // Solve the LP relaxation of a leaf node
   dual::status_t solve_node_lp(mip_node_t<i_t, f_t>* node_ptr,
-                               lp_problem_t<i_t, f_t>& leaf_problem,
-                               lp_solution_t<i_t, f_t>& leaf_solution,
-                               basis_update_mpf_t<i_t, f_t>& basis_factors,
-                               std::vector<i_t>& basic_list,
-                               std::vector<i_t>& nonbasic_list,
-                               bounds_strengthening_t<i_t, f_t>& node_presolver,
-                               bnb_worker_type_t thread_type,
-                               bool recompute_bounds_and_basis,
-                               const std::vector<f_t>& root_lower,
-                               const std::vector<f_t>& root_upper,
+                               bnb_worker_data_t<i_t, f_t>* worker_data,
                                bnb_stats_t<i_t, f_t>& stats,
                                logger_t& log);
 
   // Update the tree based on the LP relaxation. Returns the status
   // of the node and, if appropriated, the preferred rounding direction
   // when visiting the children.
-  std::pair<node_status_t, rounding_direction_t> update_tree(mip_node_t<i_t, f_t>* node_ptr,
-                                                             search_tree_t<i_t, f_t>& search_tree,
-                                                             lp_problem_t<i_t, f_t>& leaf_problem,
-                                                             lp_solution_t<i_t, f_t>& leaf_solution,
-                                                             bnb_worker_type_t thread_type,
-                                                             dual::status_t lp_status,
-                                                             logger_t& log);
+  std::pair<node_status_t, rounding_direction_t> update_tree(
+    mip_node_t<i_t, f_t>* node_ptr,
+    search_tree_t<i_t, f_t>& search_tree,
+    bnb_worker_data_t<i_t, f_t>* worker_data,
+    dual::status_t lp_status,
+    logger_t& log);
 
   // Selects the variable to branch on.
   branch_variable_t<i_t> variable_selection(mip_node_t<i_t, f_t>* node_ptr,
                                             const std::vector<i_t>& fractional,
-                                            const std::vector<f_t>& solution,
-                                            bnb_worker_type_t type);
+                                            bnb_worker_data_t<i_t, f_t>* worker_data);
 
   // ============================================================================
   // BSP (Bulk Synchronous Parallel) methods for deterministic parallel B&B

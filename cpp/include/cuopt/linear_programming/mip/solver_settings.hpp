@@ -86,6 +86,9 @@ class mip_solver_settings_t {
   i_t num_gpus         = 1;
   i_t mip_batch_pdlp_strong_branching = 0;
   bool log_to_console                 = true;
+
+  bool reliability_branching = true;
+
   std::string log_file;
   std::string sol_file;
   std::string user_problem_file;

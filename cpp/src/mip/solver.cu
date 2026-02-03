@@ -174,6 +174,8 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     branch_and_bound_settings.absolute_mip_gap_tol = context.settings.tolerances.absolute_mip_gap;
     branch_and_bound_settings.relative_mip_gap_tol = context.settings.tolerances.relative_mip_gap;
     branch_and_bound_settings.integer_tol = context.settings.tolerances.integrality_tolerance;
+    branch_and_bound_settings.reliability_branching_settings.enable =
+      solver_settings_.reliability_branching;
     branch_and_bound_settings.deterministic =
       context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC;
 
@@ -184,16 +186,15 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     }
 
     if (context.settings.num_cpu_threads < 0) {
-      branch_and_bound_settings.num_threads = omp_get_max_threads() - 1;
+      branch_and_bound_settings.num_threads = std::max(1, omp_get_max_threads() - 1);
     } else {
       branch_and_bound_settings.num_threads = std::max(1, context.settings.num_cpu_threads);
     }
 
-    i_t num_threads                           = branch_and_bound_settings.num_threads;
-    i_t num_bfs_workers                       = std::max(1, num_threads / 4);
-    i_t num_diving_workers                    = std::max(1, num_threads - num_bfs_workers);
-    branch_and_bound_settings.num_bfs_workers = num_bfs_workers;
-    branch_and_bound_settings.diving_settings.num_diving_workers = num_diving_workers;
+    dual_simplex::mip_solve_mode_t solve_mode =
+      branch_and_bound_settings.num_threads > 1
+        ? dual_simplex::mip_solve_mode_t::BNB_PARALLEL
+        : dual_simplex::mip_solve_mode_t::BNB_SINGLE_THREADED;
     branch_and_bound_settings.mip_batch_pdlp_strong_branching =
       context.settings.mip_batch_pdlp_strong_branching;
 
@@ -264,7 +265,8 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     branch_and_bound_status_future = std::async(std::launch::async,
                                                 &dual_simplex::branch_and_bound_t<i_t, f_t>::solve,
                                                 branch_and_bound.get(),
-                                                std::ref(branch_and_bound_solution));
+                                                std::ref(branch_and_bound_solution),
+                                                solve_mode);
   }
 
   // Start the primal heuristics

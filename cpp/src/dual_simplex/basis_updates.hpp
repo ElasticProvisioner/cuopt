@@ -223,6 +223,9 @@ class basis_update_mpf_t {
     reset_stats();
   }
 
+  basis_update_mpf_t(const basis_update_mpf_t& other)            = default;
+  basis_update_mpf_t& operator=(const basis_update_mpf_t& other) = default;
+
   void print_stats() const
   {
     i_t total_L_transpose_calls = total_sparse_L_transpose_ + total_dense_L_transpose_;

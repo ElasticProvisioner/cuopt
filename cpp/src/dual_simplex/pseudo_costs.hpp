@@ -7,11 +7,14 @@
 
 #pragma once
 
+#include <dual_simplex/basis_updates.hpp>
+#include <dual_simplex/bnb_worker.hpp>
 #include <dual_simplex/logger.hpp>
 #include <dual_simplex/mip_node.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
 #include <dual_simplex/types.hpp>
 #include <utilities/omp_helpers.hpp>
+#include <utilities/pcg.hpp>
 
 #include <omp.h>
 #include <cmath>
@@ -105,7 +108,8 @@ class pseudo_costs_t {
     : pseudo_cost_sum_down(num_variables),
       pseudo_cost_sum_up(num_variables),
       pseudo_cost_num_down(num_variables),
-      pseudo_cost_num_up(num_variables)
+      pseudo_cost_num_up(num_variables),
+      pseudo_cost_mutex(num_variables)
   {
   }
 
@@ -117,12 +121,13 @@ class pseudo_costs_t {
     pseudo_cost_sum_up.assign(num_variables, 0);
     pseudo_cost_num_down.assign(num_variables, 0);
     pseudo_cost_num_up.assign(num_variables, 0);
+    pseudo_cost_mutex.resize(num_variables);
   }
 
   void initialized(i_t& num_initialized_down,
                    i_t& num_initialized_up,
                    f_t& pseudo_cost_down_avg,
-                   f_t& pseudo_cost_up_avg) const;
+                   f_t& pseudo_cost_up_avg);
 
   f_t obj_estimate(const std::vector<i_t>& fractional,
                    const std::vector<f_t>& solution,
@@ -132,6 +137,16 @@ class pseudo_costs_t {
   i_t variable_selection(const std::vector<i_t>& fractional,
                          const std::vector<f_t>& solution,
                          logger_t& log);
+
+  i_t reliable_variable_selection(mip_node_t<i_t, f_t>* node_ptr,
+                                  const std::vector<i_t>& fractional,
+                                  const std::vector<f_t>& solution,
+                                  const simplex_solver_settings_t<i_t, f_t>& settings,
+                                  const std::vector<variable_type_t>& var_types,
+                                  bnb_worker_data_t<i_t, f_t>* worker_data,
+                                  const bnb_stats_t<i_t, f_t>& bnb_stats,
+                                  f_t upper_bound,
+                                  logger_t& log);
 
   void update_pseudo_costs_from_strong_branching(const std::vector<i_t>& fractional,
                                                  const std::vector<f_t>& root_soln);
@@ -153,9 +168,9 @@ class pseudo_costs_t {
   std::vector<i_t> pseudo_cost_num_down;
   std::vector<f_t> strong_branch_down;
   std::vector<f_t> strong_branch_up;
-
-  omp_mutex_t mutex;
+  std::vector<omp_mutex_t> pseudo_cost_mutex;
   omp_atomic_t<i_t> num_strong_branches_completed = 0;
+  omp_atomic_t<int64_t> sb_total_lp_iter          = 0;
 };
 
 template <typename i_t, typename f_t>

@@ -147,6 +147,7 @@ int run_single_file(std::string file_path,
                     int num_cpu_threads,
                     bool write_log_file,
                     bool log_to_console,
+                    bool reliability_branching,
                     double time_limit,
                     double work_limit,
                     bool deterministic)
@@ -199,6 +200,8 @@ int run_single_file(std::string file_path,
     }
   }
 
+  CUOPT_LOG_INFO("Reliability branching: %d\n", reliability_branching);
+
   settings.time_limit       = time_limit;
   settings.work_limit       = work_limit;
   settings.heuristics_only  = heuristics_only;
@@ -208,6 +211,7 @@ int run_single_file(std::string file_path,
   settings.tolerances.relative_tolerance = 1e-12;
   settings.tolerances.absolute_tolerance = 1e-6;
   settings.presolve                      = true;
+  settings.reliability_branching         = reliability_branching;
   settings.seed                          = 42;
   cuopt::linear_programming::benchmark_info_t benchmark_info;
   settings.benchmark_info_ptr = &benchmark_info;
@@ -261,6 +265,7 @@ void run_single_file_mp(std::string file_path,
                         int num_cpu_threads,
                         bool write_log_file,
                         bool log_to_console,
+                        bool reliability_branching,
                         double time_limit,
                         double work_limit,
                         bool deterministic)
@@ -278,6 +283,7 @@ void run_single_file_mp(std::string file_path,
                                   num_cpu_threads,
                                   write_log_file,
                                   log_to_console,
+                                  reliability_branching,
                                   time_limit,
                                   work_limit,
                                   deterministic);
@@ -368,6 +374,10 @@ int main(int argc, char* argv[])
     .help("track allocations (t/f)")
     .default_value(std::string("f"));
 
+  program.add_argument("--reliability-branching")
+    .help("enable reliability branching (t/f)")
+    .default_value(std::string("t"));
+
   program.add_argument("-d", "--determinism")
     .help("enable deterministic mode")
     .default_value(false)
@@ -396,13 +406,14 @@ int main(int argc, char* argv[])
   std::string result_file;
   int batch_num = -1;
 
-  bool heuristics_only   = program.get<std::string>("--heuristics-only")[0] == 't';
-  int num_cpu_threads    = program.get<int>("--num-cpu-threads");
-  bool write_log_file    = program.get<std::string>("--write-log-file")[0] == 't';
-  bool log_to_console    = program.get<std::string>("--log-to-console")[0] == 't';
-  double memory_limit    = program.get<double>("--memory-limit");
-  bool track_allocations = program.get<std::string>("--track-allocations")[0] == 't';
-  bool deterministic     = program.get<bool>("--determinism");
+  bool heuristics_only       = program.get<std::string>("--heuristics-only")[0] == 't';
+  int num_cpu_threads        = program.get<int>("--num-cpu-threads");
+  bool write_log_file        = program.get<std::string>("--write-log-file")[0] == 't';
+  bool log_to_console        = program.get<std::string>("--log-to-console")[0] == 't';
+  double memory_limit        = program.get<double>("--memory-limit");
+  bool track_allocations     = program.get<std::string>("--track-allocations")[0] == 't';
+  bool reliability_branching = program.get<std::string>("--reliability-branching")[0] == 't';
+  bool deterministic         = program.get<bool>("--determinism");
 
   if (num_cpu_threads < 0) { num_cpu_threads = omp_get_max_threads() / n_gpus; }
 
@@ -490,6 +501,7 @@ int main(int argc, char* argv[])
                                num_cpu_threads,
                                write_log_file,
                                log_to_console,
+                               reliability_branching,
                                time_limit,
                                work_limit,
                                deterministic);
@@ -532,6 +544,7 @@ int main(int argc, char* argv[])
                     num_cpu_threads,
                     write_log_file,
                     log_to_console,
+                    reliability_branching,
                     time_limit,
                     work_limit,
                     deterministic);

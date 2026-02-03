@@ -22,9 +22,9 @@ class bounds_strengthening_t {
 
   bool bounds_strengthening(std::vector<f_t>& lower_bounds,
                             std::vector<f_t>& upper_bounds,
+                            const std::vector<bool>& bounds_changed,
                             const simplex_solver_settings_t<i_t, f_t>& settings);
 
-  std::vector<bool> bounds_changed;
   size_t last_nnz_processed{0};
 
  private:
