@@ -455,19 +455,11 @@ void pseudo_costs_t<i_t, f_t>::initialized(i_t& num_initialized_down,
                                            f_t& pseudo_cost_up_avg)
 {
   // Count initialized variables while computing averages
-  num_initialized_down = 0;
-  num_initialized_up   = 0;
-  const i_t n          = pseudo_cost_sum_down.size();
-  for (i_t j = 0; j < n; j++) {
-    if (pseudo_cost_num_down[j] > 0) { num_initialized_down++; }
-    if (pseudo_cost_num_up[j] > 0) { num_initialized_up++; }
-  }
-
-  auto avgs            = compute_pseudo_cost_averages(pseudo_cost_sum_down.data(),
-                                           pseudo_cost_sum_up.data(),
-                                           pseudo_cost_num_down.data(),
-                                           pseudo_cost_num_up.data(),
-                                           n);
+  auto avgs            = compute_pseudo_cost_averages((const f_t*)pseudo_cost_sum_down.data(),
+                                           (const f_t*)pseudo_cost_sum_up.data(),
+                                           (const i_t*)pseudo_cost_num_down.data(),
+                                           (const i_t*)pseudo_cost_num_up.data(),
+                                           (i_t)pseudo_cost_sum_down.size());
   pseudo_cost_down_avg = avgs.down_avg;
   pseudo_cost_up_avg   = avgs.up_avg;
 }

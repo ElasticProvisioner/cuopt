@@ -33,8 +33,6 @@ struct pseudo_cost_averages_t {
   f_t up_avg;
 };
 
-// Compute average pseudo-costs from arrays
-// Works with either pseudo_costs_t members or snapshot arrays
 template <typename i_t, typename f_t>
 pseudo_cost_averages_t<f_t> compute_pseudo_cost_averages(
   const f_t* pc_sum_down, const f_t* pc_sum_up, const i_t* pc_num_down, const i_t* pc_num_up, i_t n)

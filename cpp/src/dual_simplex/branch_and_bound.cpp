@@ -1944,10 +1944,10 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
 
   for (auto& worker : *bsp_workers_) {
     worker.set_snapshots(upper_bound_.load(),
-                         pc_.pseudo_cost_sum_up,
-                         pc_.pseudo_cost_sum_down,
-                         pc_.pseudo_cost_num_up,
-                         pc_.pseudo_cost_num_down,
+                         (const f_t*)pc_.pseudo_cost_sum_up.data(),
+                         (const f_t*)pc_.pseudo_cost_sum_down.data(),
+                         (const i_t*)pc_.pseudo_cost_num_up.data(),
+                         (const i_t*)pc_.pseudo_cost_num_down.data(),
                          incumbent_snapshot,
                          exploration_stats_.total_lp_iters.load(),
                          0.0,
@@ -1957,10 +1957,10 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   if (bsp_diving_workers_) {
     for (auto& worker : *bsp_diving_workers_) {
       worker.set_snapshots(upper_bound_.load(),
-                           pc_.pseudo_cost_sum_up,
-                           pc_.pseudo_cost_sum_down,
-                           pc_.pseudo_cost_num_up,
-                           pc_.pseudo_cost_num_down,
+                           (const f_t*)pc_.pseudo_cost_sum_up.data(),
+                           (const f_t*)pc_.pseudo_cost_sum_down.data(),
+                           (const i_t*)pc_.pseudo_cost_num_up.data(),
+                           (const i_t*)pc_.pseudo_cost_num_down.data(),
                            incumbent_snapshot,
                            exploration_stats_.total_lp_iters.load(),
                            0.0,
@@ -2160,10 +2160,10 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 
   for (auto& worker : *bsp_workers_) {
     worker.set_snapshots(upper_bound_.load(),
-                         pc_.pseudo_cost_sum_up,
-                         pc_.pseudo_cost_sum_down,
-                         pc_.pseudo_cost_num_up,
-                         pc_.pseudo_cost_num_down,
+                         (const f_t*)pc_.pseudo_cost_sum_up.data(),
+                         (const f_t*)pc_.pseudo_cost_sum_down.data(),
+                         (const i_t*)pc_.pseudo_cost_num_up.data(),
+                         (const i_t*)pc_.pseudo_cost_num_down.data(),
                          incumbent_snapshot,
                          exploration_stats_.total_lp_iters.load(),
                          horizon_end,
@@ -2173,10 +2173,10 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
   if (bsp_diving_workers_) {
     for (auto& worker : *bsp_diving_workers_) {
       worker.set_snapshots(upper_bound_.load(),
-                           pc_.pseudo_cost_sum_up,
-                           pc_.pseudo_cost_sum_down,
-                           pc_.pseudo_cost_num_up,
-                           pc_.pseudo_cost_num_down,
+                           (const f_t*)pc_.pseudo_cost_sum_up.data(),
+                           (const f_t*)pc_.pseudo_cost_sum_down.data(),
+                           (const i_t*)pc_.pseudo_cost_num_up.data(),
+                           (const i_t*)pc_.pseudo_cost_num_down.data(),
                            incumbent_snapshot,
                            exploration_stats_.total_lp_iters.load(),
                            horizon_end,
