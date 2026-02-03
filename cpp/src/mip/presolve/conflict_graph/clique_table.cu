@@ -385,11 +385,17 @@ bool extend_clique(const std::vector<i_t>& clique,
   std::sort(extension_candidates.begin(), extension_candidates.end(), [&](i_t a, i_t b) {
     return clique_table.get_degree_of_var(a) > clique_table.get_degree_of_var(b);
   });
-  auto new_clique = clique;
+  auto new_clique               = clique;
+  i_t n_of_complement_conflicts = 0;
+  i_t complement_conflict_var   = -1;
   for (size_t idx = 0; idx < extension_candidates.size(); idx++) {
     i_t var_idx = extension_candidates[idx];
     bool add    = true;
     for (size_t i = 0; i < new_clique.size(); i++) {
+      if (var_idx % clique_table.n_variables == new_clique[i] % clique_table.n_variables) {
+        n_of_complement_conflicts++;
+        complement_conflict_var = var_idx % clique_table.n_variables;
+      }
       // check if the tested variable conflicts with all vars in the new clique
       if (!clique_table.check_adjacency(var_idx, new_clique[i])) {
         add = false;
@@ -400,33 +406,30 @@ bool extend_clique(const std::vector<i_t>& clique,
   }
   // if we found a larger cliqe, insert it into the formulation
   if (new_clique.size() > clique.size()) {
-    // Before inserting the new clique, check if a variable and its complement are both present
-    // Assuming complement of variable x is x + n_variables (as typical in these encodings)
-    bool has_var_and_complement = false;
-    for (size_t i = 0; i < new_clique.size(); ++i) {
-      i_t var        = new_clique[i];
-      i_t complement = -1;
-      // determine complement only if var is in the range of variables
-      if (var < clique_table.n_variables) {
-        complement = var + clique_table.n_variables;
-      } else if (var < 2 * clique_table.n_variables) {
-        complement = var - clique_table.n_variables;
+    if (n_of_complement_conflicts > 0) {
+      CUOPT_LOG_DEBUG("Found %d complement conflicts on var %d",
+                      n_of_complement_conflicts,
+                      complement_conflict_var);
+      cuopt_assert(n_of_complement_conflicts == 1, "There can only be one complement conflict");
+      // fix all other variables other than complementing var
+      for (size_t i = 0; i < new_clique.size(); i++) {
+        if (new_clique[i] % clique_table.n_variables != complement_conflict_var) {
+          if (new_clique[i] >= problem.num_cols) {
+            problem.lower[new_clique[i] - problem.num_cols] = 1;
+            problem.upper[new_clique[i] - problem.num_cols] = 1;
+          } else {
+            problem.lower[new_clique[i]] = 0;
+            problem.upper[new_clique[i]] = 0;
+          }
+        }
       }
-      // check if complement exists in the clique
-      if (complement != -1 &&
-          std::find(new_clique.begin(), new_clique.end(), complement) != new_clique.end()) {
-        has_var_and_complement = true;
-        break;
-      }
+      return false;
+    } else {
+      clique_table.first.push_back(new_clique);
+      CUOPT_LOG_DEBUG("Extended clique: %lu from %lu", new_clique.size(), clique.size());
+      // insert the new clique into the problem as a new constraint
+      insert_clique_into_problem(new_clique, problem, A);
     }
-    if (has_var_and_complement) {
-      CUOPT_LOG_DEBUG("Not adding clique: contains variable and its complement in the same clique");
-      exit(0);
-    }
-    clique_table.first.push_back(new_clique);
-    CUOPT_LOG_DEBUG("Extended clique: %lu from %lu", new_clique.size(), clique.size());
-    // insert the new clique into the problem as a new constraint
-    insert_clique_into_problem(new_clique, problem, A);
   }
   return new_clique.size() > clique.size();
 }
