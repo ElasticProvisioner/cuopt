@@ -8,8 +8,8 @@
 #pragma once
 
 #include <dual_simplex/bb_event.hpp>
-#include <dual_simplex/bb_worker_state.hpp>
 #include <dual_simplex/bnb_worker.hpp>
+#include <dual_simplex/deterministic_workers.hpp>
 #include <dual_simplex/diving_heuristics.hpp>
 #include <dual_simplex/initial_basis.hpp>
 #include <dual_simplex/mip_node.hpp>
@@ -285,7 +285,7 @@ class branch_and_bound_t {
   void balance_worker_loads();
 
   // BSP-specific node solving that records events
-  node_solve_info_t solve_node_bsp(bb_worker_state_t<i_t, f_t>& worker,
+  node_solve_info_t solve_node_bsp(bsp_bfs_worker_t<i_t, f_t>& worker,
                                    mip_node_t<i_t, f_t>* node_ptr,
                                    search_tree_t<i_t, f_t>& search_tree,
                                    double current_horizon);
@@ -294,7 +294,7 @@ class branch_and_bound_t {
   f_t compute_bsp_lower_bound();
 
   // BSP worker loop - runs continuously until scheduler signals stop
-  void run_worker_loop(bb_worker_state_t<i_t, f_t>& worker, search_tree_t<i_t, f_t>& search_tree);
+  void run_worker_loop(bsp_bfs_worker_t<i_t, f_t>& worker, search_tree_t<i_t, f_t>& search_tree);
 
   // BSP sync callback - executed when all workers reach barrier
   // Sets bsp_global_termination_status_ if termination is needed
@@ -305,11 +305,10 @@ class branch_and_bound_t {
   // ============================================================================
 
   // Run diving worker loop
-  void run_diving_worker_loop(bsp_diving_worker_state_t<i_t, f_t>& worker);
+  void run_diving_worker_loop(bsp_diving_worker_t<i_t, f_t>& worker);
 
   // Perform a deterministic dive from the given starting node
-  void dive_from_bsp(bsp_diving_worker_state_t<i_t, f_t>& worker,
-                     mip_node_t<i_t, f_t> starting_node);
+  void dive_from_bsp(bsp_diving_worker_t<i_t, f_t>& worker, mip_node_t<i_t, f_t> starting_node);
 
   // Populate diving heap from BFS worker backlogs at sync
   void populate_diving_heap();

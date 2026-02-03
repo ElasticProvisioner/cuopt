@@ -742,7 +742,7 @@ struct opportunistic_tree_update_policy_t {
 template <typename i_t, typename f_t>
 struct bsp_tree_update_policy_t {
   branch_and_bound_t<i_t, f_t>& bnb;
-  bb_worker_state_t<i_t, f_t>& worker;
+  bsp_bfs_worker_t<i_t, f_t>& worker;
 
   f_t upper_bound() const { return worker.local_upper_bound; }
 
@@ -1886,12 +1886,8 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   bsp_horizon_number_            = 0;
   bsp_global_termination_status_ = mip_status_t::UNSET;
 
-  bsp_workers_ = std::make_unique<bb_worker_pool_t<i_t, f_t>>(num_bfs_workers,
-                                                              original_lp_,
-                                                              Arow,
-                                                              var_types_,
-                                                              settings_.refactor_frequency,
-                                                              settings_.deterministic);
+  bsp_workers_ = std::make_unique<bb_worker_pool_t<i_t, f_t>>(
+    num_bfs_workers, original_lp_, Arow, var_types_, settings_);
 
   if (num_diving_workers > 0) {
     // Extract diving types from worker_types (skip BEST_FIRST at index 0)
@@ -1908,8 +1904,8 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
                                                              original_lp_,
                                                              Arow,
                                                              var_types_,
-                                                             settings_.refactor_frequency,
-                                                             settings_.deterministic);
+                                                             settings_,
+                                                             &root_relax_soln_.x);
     }
   }
 
@@ -1943,29 +1939,30 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
 
   bsp_scheduler_->set_sync_callback([this](double) { bsp_sync_callback(0); });
 
+  std::vector<f_t> incumbent_snapshot;
+  if (incumbent_.has_incumbent) { incumbent_snapshot = incumbent_.x; }
+
   for (auto& worker : *bsp_workers_) {
     worker.set_snapshots(upper_bound_.load(),
                          pc_.pseudo_cost_sum_up,
                          pc_.pseudo_cost_sum_down,
                          pc_.pseudo_cost_num_up,
                          pc_.pseudo_cost_num_down,
+                         incumbent_snapshot,
+                         exploration_stats_.total_lp_iters.load(),
                          0.0,
                          bsp_horizon_step_);
   }
 
   if (bsp_diving_workers_) {
-    std::vector<f_t> incumbent_snapshot;
-    if (incumbent_.has_incumbent) { incumbent_snapshot = incumbent_.x; }
-
     for (auto& worker : *bsp_diving_workers_) {
       worker.set_snapshots(upper_bound_.load(),
-                           exploration_stats_.total_lp_iters.load(),
                            pc_.pseudo_cost_sum_up,
                            pc_.pseudo_cost_sum_down,
                            pc_.pseudo_cost_num_up,
                            pc_.pseudo_cost_num_down,
                            incumbent_snapshot,
-                           &root_relax_soln_.x,
+                           exploration_stats_.total_lp_iters.load(),
                            0.0,
                            bsp_horizon_step_);
     }
@@ -2056,7 +2053,7 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::run_worker_loop(bb_worker_state_t<i_t, f_t>& worker,
+void branch_and_bound_t<i_t, f_t>::run_worker_loop(bsp_bfs_worker_t<i_t, f_t>& worker,
                                                    search_tree_t<i_t, f_t>& search_tree)
 {
   raft::common::nvtx::range scope("BB::worker_loop");
@@ -2158,28 +2155,30 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 
   bsp_current_horizon_ += bsp_horizon_step_;
 
+  std::vector<f_t> incumbent_snapshot;
+  if (incumbent_.has_incumbent) { incumbent_snapshot = incumbent_.x; }
+
   for (auto& worker : *bsp_workers_) {
     worker.set_snapshots(upper_bound_.load(),
                          pc_.pseudo_cost_sum_up,
                          pc_.pseudo_cost_sum_down,
                          pc_.pseudo_cost_num_up,
                          pc_.pseudo_cost_num_down,
+                         incumbent_snapshot,
+                         exploration_stats_.total_lp_iters.load(),
                          horizon_end,
                          bsp_current_horizon_);
   }
 
   if (bsp_diving_workers_) {
-    std::vector<f_t> incumbent_snapshot;
-    if (incumbent_.has_incumbent) { incumbent_snapshot = incumbent_.x; }
     for (auto& worker : *bsp_diving_workers_) {
       worker.set_snapshots(upper_bound_.load(),
-                           exploration_stats_.total_lp_iters.load(),
                            pc_.pseudo_cost_sum_up,
                            pc_.pseudo_cost_sum_down,
                            pc_.pseudo_cost_num_up,
                            pc_.pseudo_cost_num_down,
                            incumbent_snapshot,
-                           &root_relax_soln_.x,
+                           exploration_stats_.total_lp_iters.load(),
                            horizon_end,
                            bsp_current_horizon_);
     }
@@ -2241,7 +2240,7 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 }
 
 template <typename i_t, typename f_t>
-node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bb_worker_state_t<i_t, f_t>& worker,
+node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bsp_bfs_worker_t<i_t, f_t>& worker,
                                                                mip_node_t<i_t, f_t>* node_ptr,
                                                                search_tree_t<i_t, f_t>& search_tree,
                                                                double current_horizon)
@@ -2897,8 +2896,7 @@ void branch_and_bound_t<i_t, f_t>::collect_diving_solutions()
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::run_diving_worker_loop(
-  bsp_diving_worker_state_t<i_t, f_t>& worker)
+void branch_and_bound_t<i_t, f_t>::run_diving_worker_loop(bsp_diving_worker_t<i_t, f_t>& worker)
 {
   raft::common::nvtx::range scope("BB::diving_worker_loop");
 
@@ -2919,7 +2917,7 @@ void branch_and_bound_t<i_t, f_t>::run_diving_worker_loop(
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_state_t<i_t, f_t>& worker,
+void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_t<i_t, f_t>& worker,
                                                  mip_node_t<i_t, f_t> starting_node)
 {
   raft::common::nvtx::range scope("BB::dive_from_bsp");
