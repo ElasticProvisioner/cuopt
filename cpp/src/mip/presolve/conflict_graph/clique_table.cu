@@ -21,10 +21,12 @@
 
 #include <algorithm>
 #include <dual_simplex/sparse_matrix.hpp>
+#include <limits>
 #include <mip/mip_constants.hpp>
 #include <mip/utils.cuh>
 #include <utilities/logger.hpp>
 #include <utilities/macros.cuh>
+#include <utilities/timer.hpp>
 
 namespace cuopt::linear_programming::detail {
 
@@ -645,14 +647,26 @@ template <typename i_t, typename f_t>
 void find_initial_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
                           typename mip_solver_settings_t<i_t, f_t>::tolerances_t tolerances)
 {
+  cuopt::timer_t timer(std::numeric_limits<double>::infinity());
+  double t_fill   = 0.;
+  double t_coeff  = 0.;
+  double t_sort   = 0.;
+  double t_find   = 0.;
+  double t_small  = 0.;
+  double t_maps   = 0.;
+  double t_extend = 0.;
+  double t_remove = 0.;
   std::vector<knapsack_constraint_t<i_t, f_t>> knapsack_constraints;
   std::unordered_set<i_t> set_packing_constraints;
   dual_simplex::csr_matrix_t<i_t, f_t> A(problem.num_rows, problem.num_cols, 0);
   problem.A.to_compressed_row(A);
   fill_knapsack_constraints(problem, knapsack_constraints, A);
+  t_fill = timer.elapsed_time();
   make_coeff_positive_knapsack_constraint(
     problem, knapsack_constraints, set_packing_constraints, tolerances);
+  t_coeff = timer.elapsed_time();
   sort_csr_by_constraint_coefficients(knapsack_constraints);
+  t_sort = timer.elapsed_time();
   // print_knapsack_constraints(knapsack_constraints);
   // TODO think about getting min_clique_size according to some problem property
   clique_config_t clique_config;
@@ -663,16 +677,33 @@ void find_initial_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
   for (const auto& knapsack_constraint : knapsack_constraints) {
     find_cliques_from_constraint(knapsack_constraint, clique_table);
   }
+  t_find = timer.elapsed_time();
   CUOPT_LOG_DEBUG("Number of cliques: %d, additional cliques: %d",
                   clique_table.first.size(),
                   clique_table.addtl_cliques.size());
   // print_clique_table(clique_table);
   // remove small cliques and add them to adj_list
   remove_small_cliques(clique_table);
+  t_small = timer.elapsed_time();
   // fill var clique maps
   fill_var_clique_maps(clique_table);
+  t_maps                 = timer.elapsed_time();
   i_t n_extended_cliques = extend_cliques(knapsack_constraints, clique_table, problem, A);
+  t_extend               = timer.elapsed_time();
   remove_dominated_cliques(problem, A, clique_table, set_packing_constraints, n_extended_cliques);
+  t_remove = timer.elapsed_time();
+  CUOPT_LOG_DEBUG(
+    "Clique table timing (s): fill=%.6f coeff=%.6f sort=%.6f find=%.6f small=%.6f maps=%.6f "
+    "extend=%.6f remove=%.6f total=%.6f",
+    t_fill,
+    t_coeff - t_fill,
+    t_sort - t_coeff,
+    t_find - t_sort,
+    t_small - t_find,
+    t_maps - t_small,
+    t_extend - t_maps,
+    t_remove - t_extend,
+    t_remove);
   // exit(0);
 }
 
