@@ -686,7 +686,7 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
 template <typename i_t, typename f_t>
 struct opportunistic_tree_update_policy_t {
   branch_and_bound_t<i_t, f_t>& bnb;
-  bnb_worker_type_t thread_type;
+  bnb_worker_data_t<i_t, f_t>* worker_data;
   logger_t& log;
 
   f_t upper_bound() const { return bnb.upper_bound_.load(); }
@@ -698,19 +698,30 @@ struct opportunistic_tree_update_policy_t {
 
   void handle_integer_solution(mip_node_t<i_t, f_t>* node, f_t obj, const std::vector<f_t>& x)
   {
-    bnb.add_feasible_solution(obj, x, node->depth, thread_type);
+    bnb.add_feasible_solution(obj, x, node->depth, worker_data->worker_type);
   }
 
   branch_variable_t<i_t> select_branch_variable(mip_node_t<i_t, f_t>* node,
                                                 const std::vector<i_t>& fractional,
-                                                const std::vector<f_t>& x)
+                                                const std::vector<f_t>&)
   {
-    return bnb.variable_selection(node, fractional, x, thread_type);
+    return bnb.variable_selection(node, fractional, worker_data);
+  }
+
+  void update_objective_estimate(mip_node_t<i_t, f_t>* node,
+                                 const std::vector<i_t>& fractional,
+                                 const std::vector<f_t>& x)
+  {
+    if (worker_data->worker_type == bnb_worker_type_t::BEST_FIRST) {
+      logger_t pc_log;
+      pc_log.log               = false;
+      node->objective_estimate = bnb.pc_.obj_estimate(fractional, x, node->lower_bound, pc_log);
+    }
   }
 
   void on_numerical_issue(mip_node_t<i_t, f_t>* node)
   {
-    if (thread_type == bnb_worker_type_t::BEST_FIRST) {
+    if (worker_data->worker_type == bnb_worker_type_t::BEST_FIRST) {
       fetch_min(bnb.lower_bound_ceiling_, node->lower_bound);
       log.printf("LP returned numerical issue on node %d. Best bound set to %+10.6e.\n",
                  node->node_id,
@@ -728,7 +739,7 @@ struct opportunistic_tree_update_policy_t {
 
   void on_optimal_callback(const std::vector<f_t>& x, f_t objective)
   {
-    if (thread_type == bnb_worker_type_t::BEST_FIRST &&
+    if (worker_data->worker_type == bnb_worker_type_t::BEST_FIRST &&
         bnb.settings_.node_processed_callback != nullptr) {
       std::vector<f_t> original_x;
       uncrush_primal_solution(bnb.original_problem_, bnb.original_lp_, x, original_x);
@@ -774,6 +785,15 @@ struct bsp_tree_update_policy_t {
     i_t var  = worker.variable_selection_from_snapshot(fractional, x);
     auto dir = martin_criteria(x[var], bnb.root_relax_soln_.x[var]);
     return {var, dir};
+  }
+
+  void update_objective_estimate(mip_node_t<i_t, f_t>* node,
+                                 const std::vector<i_t>& fractional,
+                                 const std::vector<f_t>& x)
+  {
+    logger_t log;
+    log.log                  = false;
+    node->objective_estimate = bnb.pc_.obj_estimate(fractional, x, node->lower_bound, log);
   }
 
   void on_node_completed(mip_node_t<i_t, f_t>* node, node_status_t status, rounding_direction_t dir)
@@ -862,11 +882,14 @@ std::pair<node_status_t, rounding_direction_t> update_tree_impl(
         policy.select_branch_variable(node_ptr, leaf_fractional, leaf_solution.x);
       round_dir = dir;
 
+      assert(node_ptr->vstatus.size() == leaf_problem.num_cols);
+      assert(branch_var >= 0);
+      assert(dir != rounding_direction_t::NONE);
+
+      policy.update_objective_estimate(node_ptr, leaf_fractional, leaf_solution.x);
+
       logger_t log;
       log.log = false;
-      node_ptr->objective_estimate =
-        pc.obj_estimate(leaf_fractional, leaf_solution.x, node_ptr->lower_bound, log);
-
       search_tree.branch(
         node_ptr, branch_var, leaf_solution.x[branch_var], node_ptr->vstatus, leaf_problem, log);
       search_tree.update(node_ptr, node_status_t::HAS_CHILDREN);
@@ -990,106 +1013,6 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(mip_node_t<i_t, f_t>*
 
   return lp_status;
 }
-template <typename i_t, typename f_t>
-std::pair<node_status_t, rounding_direction_t> branch_and_bound_t<i_t, f_t>::update_tree(
-  mip_node_t<i_t, f_t>* node_ptr,
-  search_tree_t<i_t, f_t>& search_tree,
-  bnb_worker_data_t<i_t, f_t>* worker_data,
-  dual::status_t lp_status,
-  logger_t& log)
-{
-  const f_t abs_fathom_tol                     = settings_.absolute_mip_gap_tol / 10;
-  std::vector<variable_status_t>& leaf_vstatus = node_ptr->vstatus;
-  lp_problem_t<i_t, f_t>& leaf_problem         = worker_data->leaf_problem;
-  lp_solution_t<i_t, f_t>& leaf_solution       = worker_data->leaf_solution;
-
-  if (lp_status == dual::status_t::DUAL_UNBOUNDED) {
-    // Node was infeasible. Do not branch
-    node_ptr->lower_bound = inf;
-    search_tree.graphviz_node(log, node_ptr, "infeasible", 0.0);
-    search_tree.update(node_ptr, node_status_t::INFEASIBLE);
-    return {node_status_t::INFEASIBLE, rounding_direction_t::NONE};
-
-  } else if (lp_status == dual::status_t::CUTOFF) {
-    // Node was cut off. Do not branch
-    node_ptr->lower_bound = upper_bound_;
-    f_t leaf_objective    = compute_objective(leaf_problem, leaf_solution.x);
-    search_tree.graphviz_node(log, node_ptr, "cut off", leaf_objective);
-    search_tree.update(node_ptr, node_status_t::FATHOMED);
-    return {node_status_t::FATHOMED, rounding_direction_t::NONE};
-
-  } else if (lp_status == dual::status_t::OPTIMAL) {
-    // LP was feasible
-    std::vector<i_t> leaf_fractional;
-    i_t leaf_num_fractional =
-      fractional_variables(settings_, leaf_solution.x, var_types_, leaf_fractional);
-
-    f_t leaf_objective    = compute_objective(leaf_problem, leaf_solution.x);
-    node_ptr->lower_bound = leaf_objective;
-    search_tree.graphviz_node(log, node_ptr, "lower bound", leaf_objective);
-    pc_.update_pseudo_costs(node_ptr, leaf_objective);
-
-    if (worker_data->worker_type == bnb_worker_type_t::BEST_FIRST) {
-      if (settings_.node_processed_callback != nullptr) {
-        std::vector<f_t> original_x;
-        uncrush_primal_solution(original_problem_, original_lp_, leaf_solution.x, original_x);
-        settings_.node_processed_callback(original_x, leaf_objective);
-      }
-    }
-
-    if (leaf_num_fractional == 0) {
-      // Found a integer feasible solution
-      add_feasible_solution(
-        leaf_objective, leaf_solution.x, node_ptr->depth, worker_data->worker_type);
-      search_tree.graphviz_node(log, node_ptr, "integer feasible", leaf_objective);
-      search_tree.update(node_ptr, node_status_t::INTEGER_FEASIBLE);
-      return {node_status_t::INTEGER_FEASIBLE, rounding_direction_t::NONE};
-
-    } else if (leaf_objective <= upper_bound_ + abs_fathom_tol) {
-      // Choose fractional variable to branch on
-      auto [branch_var, round_dir] = variable_selection(node_ptr, leaf_fractional, worker_data);
-
-      assert(leaf_vstatus.size() == leaf_problem.num_cols);
-      assert(branch_var >= 0);
-      assert(round_dir != rounding_direction_t::NONE);
-
-      // Note that the exploration thread is the only one that can insert new nodes into the heap,
-      // and thus, we only need to calculate the objective estimate here (it is used for
-      // sorting the nodes for diving).
-      if (worker_data->worker_type == bnb_worker_type_t::BEST_FIRST) {
-        logger_t pc_log;
-        pc_log.log = false;
-        node_ptr->objective_estimate =
-          pc_.obj_estimate(leaf_fractional, leaf_solution.x, node_ptr->lower_bound, pc_log);
-      }
-
-      search_tree.branch(
-        node_ptr, branch_var, leaf_solution.x[branch_var], leaf_vstatus, leaf_problem, log);
-      search_tree.update(node_ptr, node_status_t::HAS_CHILDREN);
-      return {node_status_t::HAS_CHILDREN, round_dir};
-
-    } else {
-      search_tree.graphviz_node(log, node_ptr, "fathomed", leaf_objective);
-      search_tree.update(node_ptr, node_status_t::FATHOMED);
-      return {node_status_t::FATHOMED, rounding_direction_t::NONE};
-    }
-  } else {
-    if (worker_data->worker_type == bnb_worker_type_t::BEST_FIRST) {
-      fetch_min(lower_bound_ceiling_, node_ptr->lower_bound);
-      log.printf(
-        "LP returned status %d on node %d. This indicates a numerical issue. The best bound is set "
-        "to "
-        "%+10.6e.\n",
-        lp_status,
-        node_ptr->node_id,
-        compute_user_objective(original_lp_, lower_bound_ceiling_.load()));
-    }
-
-    search_tree.graphviz_node(log, node_ptr, "numerical", 0.0);
-    search_tree.update(node_ptr, node_status_t::NUMERICAL);
-    return {node_status_t::NUMERICAL, rounding_direction_t::NONE};
-  }
-}
 
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::plunge_with(bnb_worker_data_t<i_t, f_t>* worker_data,
@@ -1149,8 +1072,16 @@ void branch_and_bound_t<i_t, f_t>::plunge_with(bnb_worker_data_t<i_t, f_t>* work
     ++exploration_stats_.nodes_explored;
     --exploration_stats_.nodes_unexplored;
 
-    auto [node_status, round_dir] =
-      update_tree(node_ptr, search_tree_, worker_data, lp_status, settings_.log);
+    opportunistic_tree_update_policy_t<i_t, f_t> policy{*this, worker_data, settings_.log};
+    auto [node_status, round_dir] = update_tree_impl(node_ptr,
+                                                     search_tree_,
+                                                     worker_data->leaf_problem,
+                                                     worker_data->leaf_solution,
+                                                     var_types_,
+                                                     settings_,
+                                                     pc_,
+                                                     lp_status,
+                                                     policy);
 
     worker_data->recompute_basis  = node_status != node_status_t::HAS_CHILDREN;
     worker_data->recompute_bounds = node_status != node_status_t::HAS_CHILDREN;
@@ -1247,7 +1178,16 @@ void branch_and_bound_t<i_t, f_t>::dive_with(bnb_worker_data_t<i_t, f_t>* worker
 
     ++dive_stats.nodes_explored;
 
-    auto [node_status, round_dir] = update_tree(node_ptr, dive_tree, worker_data, lp_status, log);
+    opportunistic_tree_update_policy_t<i_t, f_t> policy{*this, worker_data, log};
+    auto [node_status, round_dir] = update_tree_impl(node_ptr,
+                                                     dive_tree,
+                                                     worker_data->leaf_problem,
+                                                     worker_data->leaf_solution,
+                                                     var_types_,
+                                                     settings_,
+                                                     pc_,
+                                                     lp_status,
+                                                     policy);
 
     worker_data->recompute_basis  = node_status != node_status_t::HAS_CHILDREN;
     worker_data->recompute_bounds = node_status != node_status_t::HAS_CHILDREN;

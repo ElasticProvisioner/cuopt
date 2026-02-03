@@ -253,16 +253,6 @@ class branch_and_bound_t {
                                bnb_stats_t<i_t, f_t>& stats,
                                logger_t& log);
 
-  // Update the tree based on the LP relaxation. Returns the status
-  // of the node and, if appropriated, the preferred rounding direction
-  // when visiting the children.
-  std::pair<node_status_t, rounding_direction_t> update_tree(
-    mip_node_t<i_t, f_t>* node_ptr,
-    search_tree_t<i_t, f_t>& search_tree,
-    bnb_worker_data_t<i_t, f_t>* worker_data,
-    dual::status_t lp_status,
-    logger_t& log);
-
   // Selects the variable to branch on.
   branch_variable_t<i_t> variable_selection(mip_node_t<i_t, f_t>* node_ptr,
                                             const std::vector<i_t>& fractional,
