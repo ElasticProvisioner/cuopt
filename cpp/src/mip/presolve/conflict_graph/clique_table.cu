@@ -41,10 +41,11 @@ void find_cliques_from_constraint(const knapsack_constraint_t<i_t, f_t>& kc,
   // find the first clique, which is the largest
   // FIXME: do binary search
   // require k >= 1 so kc.entries[k-1] is always valid
-  while (k >= 1) {
-    if (kc.entries[k].val + kc.entries[k - 1].val <= kc.rhs) { break; }
-    clique.push_back(kc.entries[k].col);
+  while (k >= 1 && kc.entries[k].val + kc.entries[k - 1].val > kc.rhs) {
     k--;
+  }
+  for (i_t idx = k; idx < size; idx++) {
+    clique.push_back(kc.entries[idx].col);
   }
   clique_table.first.push_back(clique);
   const i_t original_clique_start_idx = k;
@@ -204,7 +205,7 @@ void remove_small_cliques(clique_table_t<i_t, f_t>& clique_table)
   // if a clique is small, we remove it from the cliques and add it to adjlist
   for (size_t clique_idx = 0; clique_idx < clique_table.first.size(); clique_idx++) {
     const auto& clique = clique_table.first[clique_idx];
-    if (clique.size() < (size_t)clique_table.min_clique_size) {
+    if (clique.size() <= (size_t)clique_table.min_clique_size) {
       for (size_t i = 0; i < clique.size(); i++) {
         for (size_t j = 0; j < clique.size(); j++) {
           if (i == j) { continue; }
@@ -481,11 +482,8 @@ void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
       if (set_packing_constraints.count(cstr_idx) == 0) { continue; }
       auto range = A.get_constraint_range(cstr_idx);
       std::set<i_t> curr_cstr_vars;
-      bool negate = false;
-      if (problem.row_sense[cstr_idx] == 'E') {
-        // equality constraints are not considered
-        continue;
-      }
+      bool negate              = false;
+      bool is_set_partitioning = problem.row_sense[cstr_idx] == 'E';
       if (problem.row_sense[cstr_idx] == 'G') { negate = true; }
       for (i_t j = range.first; j < range.second; j++) {
         i_t var_idx = A.j[j];
@@ -499,7 +497,21 @@ void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
                                               curr_cstr_vars.end());
       if (constraint_covered) {
         CUOPT_LOG_TRACE("Constraint %d is covered by clique %d", cstr_idx, clique_idx);
-        removal_marker[cstr_idx] = true;
+        if (is_set_partitioning) {
+          for (auto var_idx : curr_clique_vars) {
+            if (curr_cstr_vars.count(var_idx) != 0) { continue; }
+            if (var_idx >= problem.num_cols) {
+              i_t orig_idx            = var_idx - problem.num_cols;
+              problem.lower[orig_idx] = 1;
+              problem.upper[orig_idx] = 1;
+            } else {
+              problem.lower[var_idx] = 0;
+              problem.upper[var_idx] = 0;
+            }
+          }
+        } else {
+          removal_marker[cstr_idx] = true;
+        }
       }
     }
   }
