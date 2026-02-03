@@ -1219,7 +1219,9 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
   // Root node path
   lp_status_t root_status;
 
-#pragma omp task
+  // Note that we need to explicitly declared `root_status` as a shared variable here since
+  // it is local to the thread that are executing the enclosing task.
+#pragma omp task shared(root_status)
   {
     root_status = solve_linear_program_advanced<i_t, f_t>(original_lp_,
                                                           exploration_stats_.start_time,
@@ -1302,7 +1304,7 @@ lp_status_t branch_and_bound_t<i_t, f_t>::solve_root_relaxation(
                          solver_name.c_str());
     settings_.log.printf("Root relaxation objective %+.8e\n", user_objective);
   } else {
-    settings_.log.printf("Root relaxation returned status: %s\n",
+    settings_.log.printf("Root relaxation returned: %s\n",
                          lp_status_to_string(root_status).c_str());
   }
 
