@@ -500,56 +500,137 @@ void remove_dominated_cliques(dual_simplex::user_problem_t<i_t, f_t>& problem,
   i_t extended_clique_start_idx = clique_table.first.size() - n_extended_cliques;
   CUOPT_LOG_DEBUG("Number of extended cliques: %d", n_extended_cliques);
   std::vector<i_t> removal_marker(problem.row_sense.size(), false);
-  for (i_t i = 0; i < n_extended_cliques; i++) {
-    i_t clique_idx = extended_clique_start_idx + i;
-    std::set<i_t> curr_clique_vars;
-    const auto& curr_clique = clique_table.first[clique_idx];
-    // check all original set packing constraints. if a set packing constraint is covered remove it.
-    // if it is a set partitioning constraint. keep the set partitioning and fix extensions to zero.
-    for (auto var_idx : curr_clique) {
-      curr_clique_vars.insert(var_idx);
+  std::vector<std::vector<i_t>> cstr_vars(problem.row_sense.size());
+  std::vector<bool> is_set_partitioning(problem.row_sense.size(), false);
+  CUOPT_LOG_DEBUG("Building constraint variable lists");
+  for (const auto cstr_idx : set_packing_constraints) {
+    if (cstr_idx < 0 || cstr_idx >= static_cast<i_t>(problem.row_sense.size())) {
+      CUOPT_LOG_ERROR(
+        "Invalid set packing constraint idx: %d (rows=%zu)", cstr_idx, problem.row_sense.size());
+      continue;
     }
-    for (size_t cstr_idx = 0; cstr_idx < problem.row_sense.size(); cstr_idx++) {
-      // only process set packing constraints
-      if (set_packing_constraints.count(cstr_idx) == 0) { continue; }
-      auto range = A.get_constraint_range(cstr_idx);
-      std::set<i_t> curr_cstr_vars;
-      bool negate              = false;
-      bool is_set_partitioning = problem.row_sense[cstr_idx] == 'E';
-      if (problem.row_sense[cstr_idx] == 'G') { negate = true; }
-      for (i_t j = range.first; j < range.second; j++) {
-        i_t var_idx = A.j[j];
-        f_t coeff   = A.x[j];
-        if (coeff < 0 != negate) { var_idx = var_idx + problem.num_cols; }
-        curr_cstr_vars.insert(var_idx);
+    auto range = A.get_constraint_range(cstr_idx);
+    if (range.first < 0 || range.second < 0 || range.first > range.second ||
+        range.second > A.nz_max) {
+      CUOPT_LOG_ERROR("Invalid range for constraint %d: [%d, %d) nnz=%d",
+                      cstr_idx,
+                      range.first,
+                      range.second,
+                      A.nz_max);
+      continue;
+    }
+    bool negate                   = problem.row_sense[cstr_idx] == 'G';
+    is_set_partitioning[cstr_idx] = problem.row_sense[cstr_idx] == 'E';
+    auto& vars                    = cstr_vars[cstr_idx];
+    vars.reserve(range.second - range.first);
+    for (i_t j = range.first; j < range.second; j++) {
+      i_t var_idx = A.j[j];
+      f_t coeff   = A.x[j];
+      if (coeff < 0 != negate) { var_idx = var_idx + problem.num_cols; }
+      vars.push_back(var_idx);
+    }
+    std::sort(vars.begin(), vars.end());
+    vars.erase(std::unique(vars.begin(), vars.end()), vars.end());
+  }
+  CUOPT_LOG_DEBUG("Constraint variable lists built: %zu", set_packing_constraints.size());
+  constexpr size_t dominance_window = 1000;
+  struct clique_sig_t {
+    i_t cstr_idx;
+    i_t size;
+    long long signature;
+  };
+  std::vector<clique_sig_t> sp_sigs;
+  sp_sigs.reserve(set_packing_constraints.size());
+  CUOPT_LOG_DEBUG("Building set packing signatures");
+  for (const auto cstr_idx : set_packing_constraints) {
+    const auto& vars = cstr_vars[cstr_idx];
+    if (vars.empty()) { continue; }
+    long long signature = 0;
+    for (auto v : vars) {
+      signature += static_cast<long long>(v);
+    }
+    sp_sigs.push_back({cstr_idx, static_cast<i_t>(vars.size()), signature});
+  }
+  CUOPT_LOG_DEBUG("Sorting signatures: %zu", sp_sigs.size());
+  std::sort(sp_sigs.begin(), sp_sigs.end(), [](const auto& a, const auto& b) {
+    if (a.signature != b.signature) { return a.signature < b.signature; }
+    return a.size < b.size;
+  });
+  auto is_subset = [](const std::vector<i_t>& a, const std::vector<i_t>& b) {
+    size_t i = 0;
+    size_t j = 0;
+    while (i < a.size() && j < b.size()) {
+      if (a[i] == b[j]) {
+        i++;
+        j++;
+      } else if (a[i] > b[j]) {
+        j++;
+      } else {
+        return false;
       }
-      bool constraint_covered = std::includes(curr_clique_vars.begin(),
-                                              curr_clique_vars.end(),
-                                              curr_cstr_vars.begin(),
-                                              curr_cstr_vars.end());
-      if (constraint_covered) {
-        CUOPT_LOG_TRACE("Constraint %d is covered by clique %d", cstr_idx, clique_idx);
-        if (is_set_partitioning) {
-          for (auto var_idx : curr_clique_vars) {
-            if (curr_cstr_vars.count(var_idx) != 0) { continue; }
-            if (var_idx >= problem.num_cols) {
-              i_t orig_idx            = var_idx - problem.num_cols;
-              problem.lower[orig_idx] = 1;
-              problem.upper[orig_idx] = 1;
-            } else {
-              problem.lower[var_idx] = 0;
-              problem.upper[var_idx] = 0;
-            }
-          }
-        } else {
-          removal_marker[cstr_idx] = true;
-        }
+    }
+    return i == a.size();
+  };
+  auto fix_difference = [&](const std::vector<i_t>& superset, const std::vector<i_t>& subset) {
+    for (auto var_idx : superset) {
+      if (std::binary_search(subset.begin(), subset.end(), var_idx)) { continue; }
+      if (var_idx >= problem.num_cols) {
+        i_t orig_idx            = var_idx - problem.num_cols;
+        problem.lower[orig_idx] = 1;
+        problem.upper[orig_idx] = 1;
+      } else {
+        problem.lower[var_idx] = 0;
+        problem.upper[var_idx] = 0;
       }
+    }
+  };
+  auto find_window_start = [&](long long signature) {
+    auto it = std::lower_bound(
+      sp_sigs.begin(), sp_sigs.end(), signature, [](const auto& a, long long value) {
+        return a.signature < value;
+      });
+    return static_cast<size_t>(std::distance(sp_sigs.begin(), it));
+  };
+  CUOPT_LOG_DEBUG("Scanning extended cliques for dominance");
+  for (i_t i = 0; i < n_extended_cliques; i++) {
+    i_t clique_idx          = extended_clique_start_idx + i;
+    const auto& curr_clique = clique_table.first[clique_idx];
+    if (curr_clique.empty()) { continue; }
+    std::vector<i_t> curr_clique_vars(curr_clique.begin(), curr_clique.end());
+    std::sort(curr_clique_vars.begin(), curr_clique_vars.end());
+    curr_clique_vars.erase(std::unique(curr_clique_vars.begin(), curr_clique_vars.end()),
+                           curr_clique_vars.end());
+    long long signature = 0;
+    for (auto v : curr_clique_vars) {
+      signature += static_cast<long long>(v);
+    }
+    size_t start = find_window_start(signature);
+    size_t end   = std::min(sp_sigs.size(), start + dominance_window);
+    for (size_t idx = start; idx < end; idx++) {
+      const auto& sp = sp_sigs[idx];
+      if (removal_marker[sp.cstr_idx]) { continue; }
+      const auto& vars_sp = cstr_vars[sp.cstr_idx];
+      if (vars_sp.size() > curr_clique_vars.size()) { continue; }
+      if (!is_subset(vars_sp, curr_clique_vars)) { continue; }
+      if (is_set_partitioning[sp.cstr_idx]) {
+        CUOPT_LOG_DEBUG("Fixing difference between clique %d and set packing constraint %d",
+                        clique_idx,
+                        sp.cstr_idx);
+        fix_difference(curr_clique_vars, vars_sp);
+      } else {
+        removal_marker[sp.cstr_idx] = true;
+      }
+    }
+    if ((i % 128) == 0) {
+      CUOPT_LOG_DEBUG("Processed extended clique %d/%d", i + 1, n_extended_cliques);
     }
   }
+  CUOPT_LOG_DEBUG("Dominance scan complete");
   // TODO if more row removal is needed somewher else(e.g another presolve), standardize this
   dual_simplex::csr_matrix_t<i_t, f_t> A_removed(0, 0, 0);
+  CUOPT_LOG_DEBUG("Removing dominated rows");
   A.remove_rows(removal_marker, A_removed);
+  CUOPT_LOG_DEBUG("Rows removed, updating problem");
   A_removed.to_compressed_col(problem.A);
   problem.num_rows = A_removed.m;
   cuopt_assert(problem.rhs.size() == problem.row_sense.size(), "rhs and row sense size mismatch");
