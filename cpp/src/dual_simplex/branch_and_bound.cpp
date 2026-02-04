@@ -37,7 +37,7 @@
 #include <unordered_map>
 #include <vector>
 
-// #define BSP_DISABLE_BOUNDS_STRENGTHENING
+// #define DETERMINISM_DISABLE_BOUNDS_STRENGTHENING
 
 namespace cuopt::linear_programming::dual_simplex {
 
@@ -357,7 +357,7 @@ template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::queue_external_solution_deterministic(
   const std::vector<f_t>& solution, double work_unit_ts)
 {
-  // In BSP mode, queue the solution to be processed at the correct work unit timestamp
+  // In deterministic mode, queue the solution to be processed at the correct work unit timestamp
   // This ensures deterministic ordering of solution events
 
   if (solution.size() != original_problem_.num_cols) {
@@ -751,9 +751,9 @@ struct opportunistic_tree_update_policy_t {
 };
 
 template <typename i_t, typename f_t>
-struct bsp_tree_update_policy_t {
+struct determinism_tree_update_policy_t {
   branch_and_bound_t<i_t, f_t>& bnb;
-  bsp_bfs_worker_t<i_t, f_t>& worker;
+  determinism_bfs_worker_t<i_t, f_t>& worker;
 
   f_t upper_bound() const { return worker.local_upper_bound; }
 
@@ -1712,9 +1712,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     calculate_variable_locks(original_lp_, var_up_locks_, var_down_locks_);
   }
 
-  // Choose between BSP coordinator (deterministic) and scheduler-based exploration
   if (settings_.deterministic) {
-    run_bsp_coordinator(Arow_);
+    run_determinism_coordinator(Arow_);
   } else if (solve_mode == mip_solve_mode_t::BNB_PARALLEL) {
 #pragma omp parallel num_threads(settings_.num_threads)
     {
@@ -1727,8 +1726,8 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 
   // Compute final lower bound
   f_t lower_bound;
-  if (bsp_mode_enabled_) {
-    lower_bound = compute_bsp_lower_bound();
+  if (determinism_mode_enabled_) {
+    lower_bound = compute_lower_bound_deterministic();
     if (lower_bound == std::numeric_limits<f_t>::infinity() && incumbent_.has_incumbent) {
       lower_bound = upper_bound_.load();
     }
@@ -1741,11 +1740,11 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
 }
 
 // ============================================================================
-// BSP (Bulk Synchronous Parallel) Deterministic implementation
+//  Deterministic implementation
 // ============================================================================
 
-// The BSP model is based on letting independent workers execute during virtual time intervals,
-// and exchange data during serialized interval sync points.
+// The deterministic BSP model is based on letting independent workers execute during virtual time
+// intervals, and exchange data during serialized interval sync points.
 /*
 
 Work Units:   0                              0.5                              1.0
@@ -1803,11 +1802,11 @@ Legend:  ▓▓▓ = actively working    ░░░ = waiting at barrier    [hash
 */
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f_t>& Arow)
+void branch_and_bound_t<i_t, f_t>::run_determinism_coordinator(const csr_matrix_t<i_t, f_t>& Arow)
 {
-  raft::common::nvtx::range scope("BB::bsp_coordinator");
+  raft::common::nvtx::range scope("BB::determinism_coordinator");
 
-  bsp_horizon_step_ = 0.50;
+  determinism_horizon_step_ = 0.50;
 
   // Compute worker counts using the same formula as reliability-branching scheduler
   const i_t num_workers                       = 2 * settings_.num_threads;
@@ -1821,12 +1820,12 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
     num_diving_workers += max_num_workers[worker_types[i]];
   }
 
-  bsp_mode_enabled_              = true;
-  bsp_current_horizon_           = bsp_horizon_step_;
-  bsp_horizon_number_            = 0;
-  bsp_global_termination_status_ = mip_status_t::UNSET;
+  determinism_mode_enabled_              = true;
+  determinism_current_horizon_           = determinism_horizon_step_;
+  determinism_horizon_number_            = 0;
+  determinism_global_termination_status_ = mip_status_t::UNSET;
 
-  bsp_workers_ = std::make_unique<bsp_bfs_worker_pool_t<i_t, f_t>>(
+  determinism_workers_ = std::make_unique<determinism_bfs_worker_pool_t<i_t, f_t>>(
     num_bfs_workers, original_lp_, Arow, var_types_, settings_);
 
   if (num_diving_workers > 0) {
@@ -1838,51 +1837,52 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
     }
 
     if (!diving_types.empty()) {
-      bsp_diving_workers_ =
-        std::make_unique<bsp_diving_worker_pool_t<i_t, f_t>>(num_diving_workers,
-                                                             diving_types,
-                                                             original_lp_,
-                                                             Arow,
-                                                             var_types_,
-                                                             settings_,
-                                                             &root_relax_soln_.x);
+      determinism_diving_workers_ =
+        std::make_unique<determinism_diving_worker_pool_t<i_t, f_t>>(num_diving_workers,
+                                                                     diving_types,
+                                                                     original_lp_,
+                                                                     Arow,
+                                                                     var_types_,
+                                                                     settings_,
+                                                                     &root_relax_soln_.x);
     }
   }
 
-  bsp_scheduler_ = std::make_unique<work_unit_scheduler_t>(bsp_horizon_step_);
+  determinism_scheduler_ = std::make_unique<work_unit_scheduler_t>(determinism_horizon_step_);
 
-  scoped_context_registrations_t context_registrations(*bsp_scheduler_);
-  for (auto& worker : *bsp_workers_) {
+  scoped_context_registrations_t context_registrations(*determinism_scheduler_);
+  for (auto& worker : *determinism_workers_) {
     context_registrations.add(worker.work_context);
   }
-  if (bsp_diving_workers_) {
-    for (auto& worker : *bsp_diving_workers_) {
+  if (determinism_diving_workers_) {
+    for (auto& worker : *determinism_diving_workers_) {
       context_registrations.add(worker.work_context);
     }
   }
 
-  int actual_diving_workers = bsp_diving_workers_ ? (int)bsp_diving_workers_->size() : 0;
+  int actual_diving_workers =
+    determinism_diving_workers_ ? (int)determinism_diving_workers_->size() : 0;
   settings_.log.printf(
-    "BSP Mode: %d BFS workers + %d diving workers, horizon step = %.2f work "
+    "Deterministic Mode: %d BFS workers + %d diving workers, horizon step = %.2f work "
     "units\n",
     num_bfs_workers,
     actual_diving_workers,
-    bsp_horizon_step_);
+    determinism_horizon_step_);
 
   search_tree_.root.get_down_child()->origin_worker_id = -1;
   search_tree_.root.get_down_child()->creation_seq     = 0;
   search_tree_.root.get_up_child()->origin_worker_id   = -1;
   search_tree_.root.get_up_child()->creation_seq       = 1;
 
-  (*bsp_workers_)[0].enqueue_node(search_tree_.root.get_down_child());
-  (*bsp_workers_)[1 % num_bfs_workers].enqueue_node(search_tree_.root.get_up_child());
+  (*determinism_workers_)[0].enqueue_node(search_tree_.root.get_down_child());
+  (*determinism_workers_)[1 % num_bfs_workers].enqueue_node(search_tree_.root.get_up_child());
 
-  bsp_scheduler_->set_sync_callback([this](double) { bsp_sync_callback(0); });
+  determinism_scheduler_->set_sync_callback([this](double) { determinism_sync_callback(0); });
 
   std::vector<f_t> incumbent_snapshot;
   if (incumbent_.has_incumbent) { incumbent_snapshot = incumbent_.x; }
 
-  for (auto& worker : *bsp_workers_) {
+  for (auto& worker : *determinism_workers_) {
     worker.set_snapshots(upper_bound_.load(),
                          (const f_t*)pc_.pseudo_cost_sum_up.data(),
                          (const f_t*)pc_.pseudo_cost_sum_down.data(),
@@ -1891,11 +1891,11 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
                          incumbent_snapshot,
                          exploration_stats_.total_lp_iters.load(),
                          0.0,
-                         bsp_horizon_step_);
+                         determinism_horizon_step_);
   }
 
-  if (bsp_diving_workers_) {
-    for (auto& worker : *bsp_diving_workers_) {
+  if (determinism_diving_workers_) {
+    for (auto& worker : *determinism_diving_workers_) {
       worker.set_snapshots(upper_bound_.load(),
                            (const f_t*)pc_.pseudo_cost_sum_up.data(),
                            (const f_t*)pc_.pseudo_cost_sum_down.data(),
@@ -1904,7 +1904,7 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
                            incumbent_snapshot,
                            exploration_stats_.total_lp_iters.load(),
                            0.0,
-                           bsp_horizon_step_);
+                           determinism_horizon_step_);
     }
   }
 
@@ -1914,21 +1914,21 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   {
     int thread_id = omp_get_thread_num();
     if (thread_id < num_bfs_workers) {
-      auto& worker          = (*bsp_workers_)[thread_id];
+      auto& worker          = (*determinism_workers_)[thread_id];
       f_t worker_start_time = tic();
-      run_worker_loop(worker, search_tree_);
+      run_deterministic_bfs_loop(worker, search_tree_);
       worker.total_runtime += toc(worker_start_time);
     } else {
       int diving_id         = thread_id - num_bfs_workers;
-      auto& worker          = (*bsp_diving_workers_)[diving_id];
+      auto& worker          = (*determinism_diving_workers_)[diving_id];
       f_t worker_start_time = tic();
-      run_diving_worker_loop(worker);
+      run_deterministic_diving_loop(worker);
       worker.total_runtime += toc(worker_start_time);
     }
   }
 
   settings_.log.printf("\n");
-  settings_.log.printf("BSP BFS Worker Statistics:\n");
+  settings_.log.printf("BFS Worker Statistics:\n");
   settings_.log.printf(
     "  Worker |  Nodes  | Branched | Pruned | Infeas. | IntSol | Assigned |  Clock   | "
     "Sync%% | NoWork\n");
@@ -1936,7 +1936,7 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
     "  "
     "-------+---------+----------+--------+---------+--------+----------+----------+-------+-------"
     "\n");
-  for (const auto& worker : *bsp_workers_) {
+  for (const auto& worker : *determinism_workers_) {
     double sync_time    = worker.work_context.total_sync_time;
     double total_time   = worker.total_runtime;  // Already includes sync time
     double sync_percent = (total_time > 0) ? (100.0 * sync_time / total_time) : 0.0;
@@ -1954,12 +1954,12 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
   }
 
   // Print diving worker statistics
-  if (bsp_diving_workers_ && bsp_diving_workers_->size() > 0) {
+  if (determinism_diving_workers_ && determinism_diving_workers_->size() > 0) {
     settings_.log.printf("\n");
-    settings_.log.printf("BSP Diving Worker Statistics:\n");
+    settings_.log.printf("Diving Worker Statistics:\n");
     settings_.log.printf("  Worker |  Type  |  Dives  | Nodes  | IntSol |  Clock   | NoWork\n");
     settings_.log.printf("  -------+--------+---------+--------+--------+----------+-------\n");
-    for (const auto& worker : *bsp_diving_workers_) {
+    for (const auto& worker : *determinism_diving_workers_) {
       const char* type_str = "???";
       switch (worker.diving_type) {
         case bnb_worker_type_t::PSEUDOCOST_DIVING: type_str = "PC"; break;
@@ -1993,12 +1993,12 @@ void branch_and_bound_t<i_t, f_t>::run_bsp_coordinator(const csr_matrix_t<i_t, f
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::run_worker_loop(bsp_bfs_worker_t<i_t, f_t>& worker,
-                                                   search_tree_t<i_t, f_t>& search_tree)
+void branch_and_bound_t<i_t, f_t>::run_deterministic_bfs_loop(
+  determinism_bfs_worker_t<i_t, f_t>& worker, search_tree_t<i_t, f_t>& search_tree)
 {
   raft::common::nvtx::range scope("BB::worker_loop");
 
-  while (bsp_global_termination_status_ == mip_status_t::UNSET) {
+  while (determinism_global_termination_status_ == mip_status_t::UNSET) {
     if (worker.has_work()) {
       mip_node_t<i_t, f_t>* node = worker.dequeue_node();
       if (node == nullptr) { continue; }
@@ -2018,8 +2018,9 @@ void branch_and_bound_t<i_t, f_t>::run_worker_loop(bsp_bfs_worker_t<i_t, f_t>& w
       bool is_child                     = (node->parent == worker.last_solved_node);
       worker.recompute_bounds_and_basis = !is_child;
 
-      node_solve_info_t status = solve_node_bsp(worker, node, search_tree, worker.horizon_end);
-      worker.last_solved_node  = node;
+      node_solve_info_t status =
+        solve_node_deterministic(worker, node, search_tree, worker.horizon_end);
+      worker.last_solved_node = node;
 
       if (status == node_solve_info_t::TIME_LIMIT || status == node_solve_info_t::WORK_LIMIT) {
         continue;
@@ -2030,19 +2031,19 @@ void branch_and_bound_t<i_t, f_t>::run_worker_loop(bsp_bfs_worker_t<i_t, f_t>& w
 
     // No work - advance to sync point to participate in barrier
     f_t nowork_start = tic();
-    bsp_scheduler_->wait_for_next_sync(worker.work_context);
+    determinism_scheduler_->wait_for_next_sync(worker.work_context);
     worker.total_nowork_time += toc(nowork_start);
   }
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
+void branch_and_bound_t<i_t, f_t>::determinism_sync_callback(int worker_id)
 {
-  raft::common::nvtx::range scope("BB::bsp_sync_callback");
+  raft::common::nvtx::range scope("BB::determinism_sync_callback");
 
-  ++bsp_horizon_number_;
-  double horizon_start = bsp_current_horizon_ - bsp_horizon_step_;
-  double horizon_end   = bsp_current_horizon_;
+  ++determinism_horizon_number_;
+  double horizon_start = determinism_current_horizon_ - determinism_horizon_step_;
+  double horizon_end   = determinism_current_horizon_;
 
   double wait_start = tic();
   producer_sync_.wait_for_producers(horizon_end);
@@ -2053,7 +2054,7 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 
   work_unit_context_.global_work_units_elapsed = horizon_end;
 
-  bb_event_batch_t<i_t, f_t> all_events = bsp_workers_->collect_and_sort_events();
+  bb_event_batch_t<i_t, f_t> all_events = determinism_workers_->collect_and_sort_events();
 
   sort_replay_events(all_events);
 
@@ -2061,12 +2062,12 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 
   collect_diving_solutions();
 
-  for (auto& worker : *bsp_workers_) {
+  for (auto& worker : *determinism_workers_) {
     worker.integer_solutions.clear();
     worker.pseudo_cost_updates.clear();
   }
-  if (bsp_diving_workers_) {
-    for (auto& worker : *bsp_diving_workers_) {
+  if (determinism_diving_workers_) {
+    for (auto& worker : *determinism_diving_workers_) {
       worker.integer_solutions.clear();
       worker.pseudo_cost_updates.clear();
     }
@@ -2084,11 +2085,11 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
     state_data.push_back(static_cast<uint64_t>(exploration_stats_.nodes_explored));
     state_data.push_back(static_cast<uint64_t>(exploration_stats_.nodes_unexplored));
     f_t ub = upper_bound_.load();
-    f_t lb = compute_bsp_lower_bound();
+    f_t lb = compute_lower_bound_deterministic();
     state_data.push_back(std::bit_cast<uint64_t>(ub));
     state_data.push_back(std::bit_cast<uint64_t>(lb));
 
-    for (auto& worker : *bsp_workers_) {
+    for (auto& worker : *determinism_workers_) {
       if (worker.current_node != nullptr) {
         state_data.push_back(worker.current_node->get_id_packed());
       }
@@ -2104,12 +2105,12 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
     state_hash ^= pc_.compute_state_hash();
   }
 
-  bsp_current_horizon_ += bsp_horizon_step_;
+  determinism_current_horizon_ += determinism_horizon_step_;
 
   std::vector<f_t> incumbent_snapshot;
   if (incumbent_.has_incumbent) { incumbent_snapshot = incumbent_.x; }
 
-  for (auto& worker : *bsp_workers_) {
+  for (auto& worker : *determinism_workers_) {
     worker.set_snapshots(upper_bound_.load(),
                          (const f_t*)pc_.pseudo_cost_sum_up.data(),
                          (const f_t*)pc_.pseudo_cost_sum_down.data(),
@@ -2118,11 +2119,11 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
                          incumbent_snapshot,
                          exploration_stats_.total_lp_iters.load(),
                          horizon_end,
-                         bsp_current_horizon_);
+                         determinism_current_horizon_);
   }
 
-  if (bsp_diving_workers_) {
-    for (auto& worker : *bsp_diving_workers_) {
+  if (determinism_diving_workers_) {
+    for (auto& worker : *determinism_diving_workers_) {
       worker.set_snapshots(upper_bound_.load(),
                            (const f_t*)pc_.pseudo_cost_sum_up.data(),
                            (const f_t*)pc_.pseudo_cost_sum_down.data(),
@@ -2131,35 +2132,35 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
                            incumbent_snapshot,
                            exploration_stats_.total_lp_iters.load(),
                            horizon_end,
-                           bsp_current_horizon_);
+                           determinism_current_horizon_);
     }
   }
 
-  f_t lower_bound = compute_bsp_lower_bound();
+  f_t lower_bound = compute_lower_bound_deterministic();
   f_t upper_bound = upper_bound_.load();
   f_t abs_gap     = upper_bound - lower_bound;
   f_t rel_gap     = user_relative_gap(original_lp_, upper_bound, lower_bound);
 
   if (abs_gap <= settings_.absolute_mip_gap_tol || rel_gap <= settings_.relative_mip_gap_tol) {
-    bsp_global_termination_status_ = mip_status_t::OPTIMAL;
+    determinism_global_termination_status_ = mip_status_t::OPTIMAL;
   }
 
-  if (!bsp_workers_->any_has_work()) {
+  if (!determinism_workers_->any_has_work()) {
     // Tree exhausted - check if we found a solution
     if (upper_bound == std::numeric_limits<f_t>::infinity()) {
-      bsp_global_termination_status_ = mip_status_t::INFEASIBLE;
+      determinism_global_termination_status_ = mip_status_t::INFEASIBLE;
     } else {
-      bsp_global_termination_status_ = mip_status_t::OPTIMAL;
+      determinism_global_termination_status_ = mip_status_t::OPTIMAL;
     }
   }
 
   if (toc(exploration_stats_.start_time) > settings_.time_limit) {
-    bsp_global_termination_status_ = mip_status_t::TIME_LIMIT;
+    determinism_global_termination_status_ = mip_status_t::TIME_LIMIT;
   }
 
   // Stop early if next horizon exceeds work limit
-  if (bsp_current_horizon_ > settings_.work_limit) {
-    bsp_global_termination_status_ = mip_status_t::WORK_LIMIT;
+  if (determinism_current_horizon_ > settings_.work_limit) {
+    determinism_global_termination_status_ = mip_status_t::WORK_LIMIT;
   }
 
   f_t obj              = compute_user_objective(original_lp_, upper_bound);
@@ -2168,7 +2169,7 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 
   std::string idle_workers;
   i_t idle_count = 0;
-  for (const auto& w : *bsp_workers_) {
+  for (const auto& w : *determinism_workers_) {
     if (!w.has_work() && w.current_node == nullptr) {
       ++idle_count;
       // if (!idle_workers.empty()) idle_workers += ",";
@@ -2178,7 +2179,7 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
   idle_workers = idle_count > 0 ? std::to_string(idle_count) + " idle" : "";
 
   settings_.log.printf("W%-5g %8d   %8lu    %+13.6e    %+10.6e    %s %8.2f  [%08x]%s%s\n",
-                       bsp_horizon_number_ * bsp_horizon_step_,
+                       determinism_current_horizon_,
                        exploration_stats_.nodes_explored,
                        exploration_stats_.nodes_unexplored,
                        obj,
@@ -2191,12 +2192,13 @@ void branch_and_bound_t<i_t, f_t>::bsp_sync_callback(int worker_id)
 }
 
 template <typename i_t, typename f_t>
-node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bsp_bfs_worker_t<i_t, f_t>& worker,
-                                                               mip_node_t<i_t, f_t>* node_ptr,
-                                                               search_tree_t<i_t, f_t>& search_tree,
-                                                               double current_horizon)
+node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_deterministic(
+  determinism_bfs_worker_t<i_t, f_t>& worker,
+  mip_node_t<i_t, f_t>* node_ptr,
+  search_tree_t<i_t, f_t>& search_tree,
+  double current_horizon)
 {
-  raft::common::nvtx::range scope("BB::solve_node_bsp");
+  raft::common::nvtx::range scope("BB::solve_node_deterministic");
 
   double work_units_at_start = worker.work_context.global_work_units_elapsed;
   double clock_at_start      = worker.clock;
@@ -2225,7 +2227,7 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bsp_bfs_worker_t<
   lp_settings.scale_columns = false;
 
   bool feasible = true;
-#ifndef BSP_DISABLE_BOUNDS_STRENGTHENING
+#ifndef DETERMINISM_DISABLE_BOUNDS_STRENGTHENING
   raft::common::nvtx::range scope_bs("BB::bound_strengthening");
   f_t bs_start_time = tic();
   feasible          = worker.node_presolver.bounds_strengthening(
@@ -2292,7 +2294,7 @@ node_solve_info_t branch_and_bound_t<i_t, f_t>::solve_node_bsp(bsp_bfs_worker_t<
   ++exploration_stats_.nodes_explored;
   --exploration_stats_.nodes_unexplored;
 
-  bsp_tree_update_policy_t<i_t, f_t> policy{*this, worker};
+  determinism_tree_update_policy_t<i_t, f_t> policy{*this, worker};
   auto [status, round_dir] = update_tree_impl(node_ptr,
                                               search_tree,
                                               worker.leaf_problem,
@@ -2333,13 +2335,13 @@ void branch_and_bound_t<i_t, f_t>::process_worker_solutions(PoolT& pool,
             [](const queued_integer_solution_t<i_t, f_t>* a,
                const queued_integer_solution_t<i_t, f_t>* b) { return *a < *b; });
 
-  f_t bsp_lower     = compute_bsp_lower_bound();
-  f_t current_upper = upper_bound_.load();
+  f_t determinism_lower = compute_lower_bound_deterministic();
+  f_t current_upper     = upper_bound_.load();
 
   for (const auto* sol : all_solutions) {
     if (sol->objective < current_upper) {
       f_t user_obj         = compute_user_objective(original_lp_, sol->objective);
-      f_t user_lower       = compute_user_objective(original_lp_, bsp_lower);
+      f_t user_lower       = compute_user_objective(original_lp_, determinism_lower);
       i_t nodes_explored   = exploration_stats_.nodes_explored.load();
       i_t nodes_unexplored = exploration_stats_.nodes_unexplored.load();
 
@@ -2413,7 +2415,7 @@ void branch_and_bound_t<i_t, f_t>::sort_replay_events(const bb_event_batch_t<i_t
   // Infeasible solutions from GPU heuristics are queued for repair; process them now
   {
     std::vector<std::vector<f_t>> to_repair;
-    // TODO: support repair queue in BSP mode
+    // TODO: support repair queue in deterministic mode
     // mutex_repair_.lock();
     // if (repair_queue_.size() > 0) {
     //   to_repair = repair_queue_;
@@ -2426,7 +2428,7 @@ void branch_and_bound_t<i_t, f_t>::sort_replay_events(const bb_event_batch_t<i_t
               [](const std::vector<f_t>& a, const std::vector<f_t>& b) { return a < b; });
 
     if (to_repair.size() > 0) {
-      settings_.log.debug("BSP sync: Attempting to repair %ld injected solutions\n",
+      settings_.log.debug("Deterministic sync: Attempting to repair %ld injected solutions\n",
                           to_repair.size());
       for (const std::vector<f_t>& potential_solution : to_repair) {
         std::vector<f_t> repaired_solution;
@@ -2437,7 +2439,7 @@ void branch_and_bound_t<i_t, f_t>::sort_replay_events(const bb_event_batch_t<i_t
           // Queue repaired solution with work unit timestamp (...workstamp?)
           mutex_heuristic_queue_.lock();
           heuristic_solution_queue_.push_back(
-            {std::move(repaired_solution), repaired_obj, bsp_current_horizon_});
+            {std::move(repaired_solution), repaired_obj, determinism_current_horizon_});
           mutex_heuristic_queue_.unlock();
         }
       }
@@ -2445,13 +2447,13 @@ void branch_and_bound_t<i_t, f_t>::sort_replay_events(const bb_event_batch_t<i_t
   }
 
   // Extract heuristic solutions, keeping future solutions for next horizon
-  // Use bsp_current_horizon_ as the upper bound (horizon_end)
+  // Use determinism_current_horizon_ as the upper bound (horizon_end)
   std::vector<queued_heuristic_solution_t> heuristic_solutions;
   mutex_heuristic_queue_.lock();
   {
     std::vector<queued_heuristic_solution_t> future_solutions;
     for (auto& sol : heuristic_solution_queue_) {
-      if (sol.wut < bsp_current_horizon_) {
+      if (sol.wut < determinism_current_horizon_) {
         heuristic_solutions.push_back(std::move(sol));
       } else {
         future_solutions.push_back(std::move(sol));
@@ -2506,10 +2508,11 @@ void branch_and_bound_t<i_t, f_t>::sort_replay_events(const bb_event_batch_t<i_t
       const auto& hsol = heuristic_solutions[heuristic_idx++];
 
       CUOPT_LOG_TRACE(
-        "BSP sync: Heuristic solution received at WUT %f with objective %g, current horizon %f",
+        "Deterministic sync: Heuristic solution received at WUT %f with objective %g, current "
+        "horizon %f",
         hsol.wut,
         hsol.objective,
-        bsp_current_horizon_);
+        determinism_current_horizon_);
 
       // Process heuristic solution at its correct work unit timestamp position
       f_t new_upper = std::numeric_limits<f_t>::infinity();
@@ -2542,14 +2545,15 @@ void branch_and_bound_t<i_t, f_t>::sort_replay_events(const bb_event_batch_t<i_t
   }
 
   // Merge integer solutions from BFS workers and update global incumbent
-  process_worker_solutions(*bsp_workers_, [](const bsp_bfs_worker_pool_t<i_t, f_t>&, int) {
-    return bnb_worker_type_t::BEST_FIRST;
-  });
+  process_worker_solutions(*determinism_workers_,
+                           [](const determinism_bfs_worker_pool_t<i_t, f_t>&, int) {
+                             return bnb_worker_type_t::BEST_FIRST;
+                           });
 
   // Merge and apply pseudo-cost updates from BFS workers
-  merge_pseudo_cost_updates(*bsp_workers_);
+  merge_pseudo_cost_updates(*determinism_workers_);
 
-  for (const auto& worker : *bsp_workers_) {
+  for (const auto& worker : *determinism_workers_) {
     fetch_min(lower_bound_ceiling_, worker.local_lower_bound_ceiling);
   }
 }
@@ -2559,7 +2563,7 @@ void branch_and_bound_t<i_t, f_t>::prune_worker_nodes_vs_incumbent()
 {
   f_t upper_bound = upper_bound_.load();
 
-  for (auto& worker : *bsp_workers_) {
+  for (auto& worker : *determinism_workers_) {
     // Check nodes in plunge stack - filter in place
     {
       std::deque<mip_node_t<i_t, f_t>*> surviving;
@@ -2596,7 +2600,7 @@ void branch_and_bound_t<i_t, f_t>::prune_worker_nodes_vs_incumbent()
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
 {
-  const size_t num_workers = bsp_workers_->size();
+  const size_t num_workers = determinism_workers_->size();
   if (num_workers <= 1) return;
 
   constexpr bool force_rebalance_every_sync = false;
@@ -2608,7 +2612,7 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
   size_t min_work   = std::numeric_limits<size_t>::max();
 
   for (size_t w = 0; w < num_workers; ++w) {
-    auto& worker   = (*bsp_workers_)[w];
+    auto& worker   = (*determinism_workers_)[w];
     work_counts[w] = worker.queue_size();
     total_work += work_counts[w];
     max_work = std::max(max_work, work_counts[w]);
@@ -2627,7 +2631,7 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
   if (!needs_balance) return;
 
   std::vector<mip_node_t<i_t, f_t>*> all_nodes;
-  for (auto& worker : *bsp_workers_) {
+  for (auto& worker : *determinism_workers_) {
     for (auto* node : worker.backlog.data()) {
       all_nodes.push_back(node);
     }
@@ -2636,8 +2640,6 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
 
   if (all_nodes.empty()) return;
 
-  // Sort by BSP identity for deterministic distribution
-  // Uses lexicographic order of (origin_worker_id, creation_seq)
   auto deterministic_less = [](const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) {
     if (a->origin_worker_id != b->origin_worker_id) {
       return a->origin_worker_id < b->origin_worker_id;
@@ -2655,12 +2657,12 @@ void branch_and_bound_t<i_t, f_t>::balance_worker_loads()
   // Distribute nodes
   for (size_t i = 0; i < all_nodes.size(); ++i) {
     size_t worker_idx = worker_order[i % num_workers];
-    (*bsp_workers_)[worker_idx].enqueue_node(all_nodes[i]);
+    (*determinism_workers_)[worker_idx].enqueue_node(all_nodes[i]);
   }
 }
 
 template <typename i_t, typename f_t>
-f_t branch_and_bound_t<i_t, f_t>::compute_bsp_lower_bound()
+f_t branch_and_bound_t<i_t, f_t>::compute_lower_bound_deterministic()
 {
   // Compute lower bound from BFS worker local structures only
   const f_t inf   = std::numeric_limits<f_t>::infinity();
@@ -2668,7 +2670,7 @@ f_t branch_and_bound_t<i_t, f_t>::compute_bsp_lower_bound()
   if (!std::isfinite(lower_bound)) lower_bound = inf;
 
   // Check all BFS worker queues
-  for (const auto& worker : *bsp_workers_) {
+  for (const auto& worker : *determinism_workers_) {
     // Check paused node (current_node)
     if (worker.current_node != nullptr) {
       lower_bound = std::min(worker.current_node->lower_bound, lower_bound);
@@ -2688,19 +2690,15 @@ f_t branch_and_bound_t<i_t, f_t>::compute_bsp_lower_bound()
   return lower_bound;
 }
 
-// ============================================================================
-// BSP Diving
-// ============================================================================
-
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::populate_diving_heap()
 {
   // Clear diving heap from previous horizon
   diving_heap_.clear();
 
-  if (!bsp_diving_workers_ || bsp_diving_workers_->size() == 0) return;
+  if (!determinism_diving_workers_ || determinism_diving_workers_->size() == 0) return;
 
-  const int num_diving                  = bsp_diving_workers_->size();
+  const int num_diving                  = determinism_diving_workers_->size();
   constexpr int target_nodes_per_worker = 10;
   const int target_total                = num_diving * target_nodes_per_worker;
   f_t upper_bound                       = upper_bound_.load();
@@ -2708,7 +2706,7 @@ void branch_and_bound_t<i_t, f_t>::populate_diving_heap()
   // Collect candidate nodes from BFS worker backlog heaps
   std::vector<std::pair<mip_node_t<i_t, f_t>*, f_t>> candidates;
 
-  for (auto& worker : *bsp_workers_) {
+  for (auto& worker : *determinism_workers_) {
     for (auto* node : worker.backlog.data()) {
       if (node->lower_bound < upper_bound) {
         f_t score = node->objective_estimate;
@@ -2720,7 +2718,6 @@ void branch_and_bound_t<i_t, f_t>::populate_diving_heap()
 
   if (candidates.empty()) return;
 
-  // Sort candidates by score with deterministic tie-breaking by BSP identity
   // Technically not necessary as it stands since the worker assignments and ordering are
   // deterministic
   std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
@@ -2741,7 +2738,7 @@ void branch_and_bound_t<i_t, f_t>::populate_diving_heap()
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::assign_diving_nodes()
 {
-  if (!bsp_diving_workers_ || bsp_diving_workers_->size() == 0) {
+  if (!determinism_diving_workers_ || determinism_diving_workers_->size() == 0) {
     diving_heap_.clear();
     return;
   }
@@ -2750,17 +2747,17 @@ void branch_and_bound_t<i_t, f_t>::assign_diving_nodes()
 
   // Round-robin assignment to balance load across workers
   int worker_idx        = 0;
-  const int num_workers = bsp_diving_workers_->size();
+  const int num_workers = determinism_diving_workers_->size();
 
   while (!diving_heap_.empty()) {
-    auto& worker = (*bsp_diving_workers_)[worker_idx];
+    auto& worker = (*determinism_diving_workers_)[worker_idx];
 
     // Skip workers that already have enough nodes
     if ((int)worker.dive_queue_size() >= target_nodes_per_worker) {
       worker_idx = (worker_idx + 1) % num_workers;
       // Check if all workers are full
       bool all_full = true;
-      for (auto& w : *bsp_diving_workers_) {
+      for (auto& w : *determinism_diving_workers_) {
         if ((int)w.dive_queue_size() < target_nodes_per_worker) {
           all_full = false;
           break;
@@ -2782,44 +2779,44 @@ void branch_and_bound_t<i_t, f_t>::assign_diving_nodes()
 template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::collect_diving_solutions()
 {
-  if (!bsp_diving_workers_) return;
+  if (!determinism_diving_workers_) return;
 
   // Collect integer solutions from diving workers and update global incumbent
-  process_worker_solutions(*bsp_diving_workers_,
-                           [](const bsp_diving_worker_pool_t<i_t, f_t>& pool, int worker_id) {
-                             return pool[worker_id].diving_type;
-                           });
+  process_worker_solutions(*determinism_diving_workers_,
+                           [](const determinism_diving_worker_pool_t<i_t, f_t>& pool,
+                              int worker_id) { return pool[worker_id].diving_type; });
 
   // Merge pseudo-cost updates from diving workers
-  merge_pseudo_cost_updates(*bsp_diving_workers_);
+  merge_pseudo_cost_updates(*determinism_diving_workers_);
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::run_diving_worker_loop(bsp_diving_worker_t<i_t, f_t>& worker)
+void branch_and_bound_t<i_t, f_t>::run_deterministic_diving_loop(
+  determinism_diving_worker_t<i_t, f_t>& worker)
 {
   raft::common::nvtx::range scope("BB::diving_worker_loop");
 
-  while (bsp_global_termination_status_ == mip_status_t::UNSET) {
+  while (determinism_global_termination_status_ == mip_status_t::UNSET) {
     // Process dives from queue until empty or horizon exhausted
     auto node_opt = worker.dequeue_dive_node();
     if (node_opt.has_value()) {
-      dive_from_bsp(worker, std::move(node_opt.value()));
+      deterministic_dive(worker, std::move(node_opt.value()));
       continue;
     }
 
     // Queue empty - wait for next sync point where we'll be assigned new nodes
     f_t nowork_start = tic();
-    bsp_scheduler_->wait_for_next_sync(worker.work_context);
+    determinism_scheduler_->wait_for_next_sync(worker.work_context);
     worker.total_nowork_time += toc(nowork_start);
     // Termination status is checked in loop condition
   }
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_t<i_t, f_t>& worker,
-                                                 mip_node_t<i_t, f_t> starting_node)
+void branch_and_bound_t<i_t, f_t>::deterministic_dive(determinism_diving_worker_t<i_t, f_t>& worker,
+                                                      mip_node_t<i_t, f_t> starting_node)
 {
-  raft::common::nvtx::range scope("BB::dive_from_bsp");
+  raft::common::nvtx::range scope("BB::deterministic_dive");
 
   // Create local search tree for the dive
   search_tree_t<i_t, f_t> dive_tree(std::move(starting_node));
@@ -2838,12 +2835,12 @@ void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_t<i_t, f_t>& 
   worker.lp_iters_this_dive         = 0;
   worker.recompute_bounds_and_basis = true;
 
-  while (!stack.empty() && bsp_global_termination_status_ == mip_status_t::UNSET &&
+  while (!stack.empty() && determinism_global_termination_status_ == mip_status_t::UNSET &&
          nodes_this_dive < max_nodes_per_dive) {
     // Check horizon budget - sync if exhausted
     if (worker.work_context.global_work_units_elapsed >= worker.horizon_end) {
-      bsp_scheduler_->wait_for_next_sync(worker.work_context);
-      if (bsp_global_termination_status_ != mip_status_t::UNSET) break;
+      determinism_scheduler_->wait_for_next_sync(worker.work_context);
+      if (determinism_global_termination_status_ != mip_status_t::UNSET) break;
     }
 
     mip_node_t<i_t, f_t>* node_ptr = stack.front();
@@ -2881,7 +2878,7 @@ void branch_and_bound_t<i_t, f_t>::dive_from_bsp(bsp_diving_worker_t<i_t, f_t>& 
     lp_settings.time_limit    = remaining_time;
     lp_settings.scale_columns = false;
 
-#ifndef BSP_DISABLE_BOUNDS_STRENGTHENING
+#ifndef DETERMINISM_DISABLE_BOUNDS_STRENGTHENING
     bool feasible = worker.node_presolver.bounds_strengthening(
       worker.leaf_problem.lower, worker.leaf_problem.upper, worker.bounds_changed, lp_settings);
 

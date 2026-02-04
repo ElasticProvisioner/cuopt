@@ -238,7 +238,7 @@ class mip_node_t {
     copy.fractional_val     = fractional_val;
     copy.objective_estimate = objective_estimate;
     copy.node_id            = node_id;
-    // Copy BSP fields
+
     copy.accumulated_wut  = accumulated_wut;
     copy.origin_worker_id = origin_worker_id;
     copy.creation_seq     = creation_seq;
@@ -261,12 +261,11 @@ class mip_node_t {
 
   std::vector<variable_status_t> vstatus;
 
-  // BSP fields for deterministic parallel B&B
-  f_t accumulated_wut{0.0};  // Work units accumulated on this node so far
+  f_t accumulated_wut{0.0};  // Work units spent on this node so far
 
-  // Worker-local identification for deterministic BSP ordering:
+  // Worker-local identification for deterministic ordering:
   // - origin_worker_id: which worker created this node
-  // - creation_seq: sequence number within that worker (cumulative across horizons)
+  // - creation_seq: sequence number within that worker (cumulative across horizons, serial)
   // The tuple (origin_worker_id, creation_seq) is unique and stable
   int32_t origin_worker_id{-1};
   int32_t creation_seq{-1};
@@ -301,7 +300,7 @@ void remove_fathomed_nodes(std::vector<mip_node_t<i_t, f_t>*>& stack)
   }
 }
 
-// Comparator for global heap (used in non-BSP mode)
+// Comparator for global heap
 template <typename i_t, typename f_t>
 class node_compare_t {
  public:
@@ -321,10 +320,10 @@ class node_compare_t {
   }
 };
 
-// BSP-specific comparator for worker-local priority queues
+// Determinism-specific comparator for worker-local priority queues
 // Uses (origin_worker_id, creation_seq) tuple for deterministic ordering within a worker
 template <typename i_t, typename f_t>
-class bsp_node_compare_t {
+class determinism_node_compare_t {
  public:
   // Returns true if 'a' has lower priority than 'b' (for max-heap behavior)
   bool operator()(const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) const
@@ -332,7 +331,7 @@ class bsp_node_compare_t {
     // Primary: lower_bound (best-first search - prefer smaller bound)
     if (a->lower_bound != b->lower_bound) { return a->lower_bound > b->lower_bound; }
 
-    // Tie-breaker: lexicographic comparison of BSP identity tuple
+    // Tie-breaker: lexicographic comparison of identity tuple
     // This is deterministic regardless of node creation order
     if (a->origin_worker_id != b->origin_worker_id) {
       return a->origin_worker_id > b->origin_worker_id;

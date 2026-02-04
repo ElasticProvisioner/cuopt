@@ -24,8 +24,9 @@ namespace cuopt {
 struct work_limit_context_t;
 
 // Simplified scheduler using OpenMP barriers for synchronization.
-// Termination is managed externally (e.g., by branch_and_bound_t::bsp_global_termination_status_).
-// Workers should check termination status after each sync point.
+// Termination is managed externally (e.g., by
+// branch_and_bound_t::determinism_global_termination_status_). Workers should check termination
+// status after each sync point.
 class work_unit_scheduler_t {
  public:
   explicit work_unit_scheduler_t(double sync_interval = 5.0);

@@ -76,7 +76,7 @@ void upper_bound_callback(f_t upper_bound);
 template <typename i_t, typename f_t>
 struct opportunistic_tree_update_policy_t;
 template <typename i_t, typename f_t>
-struct bsp_tree_update_policy_t;
+struct determinism_tree_update_policy_t;
 
 template <typename i_t, typename f_t>
 class branch_and_bound_t {
@@ -110,7 +110,6 @@ class branch_and_bound_t {
   // Set a solution based on the user problem during the course of the solve
   void set_new_solution(const std::vector<f_t>& solution);
 
-  // BSP-aware solution injection for deterministic mode
   // This queues the solution to be processed at the correct work unit timestamp
   void queue_external_solution_deterministic(const std::vector<f_t>& solution, double work_unit_ts);
 
@@ -259,11 +258,11 @@ class branch_and_bound_t {
                                             bnb_worker_data_t<i_t, f_t>* worker_data);
 
   // ============================================================================
-  // BSP (Bulk Synchronous Parallel) methods for deterministic parallel B&B
+  // Deterministic BSP (Bulk Synchronous Parallel) methods for deterministic parallel B&B
   // ============================================================================
 
-  // Main BSP coordinator loop - runs in deterministic mode
-  void run_bsp_coordinator(const csr_matrix_t<i_t, f_t>& Arow);
+  // Main determinism coordinator loop
+  void run_determinism_coordinator(const csr_matrix_t<i_t, f_t>& Arow);
 
   // Gather all events generated, sort by WU timestamp, apply
   void sort_replay_events(const bb_event_batch_t<i_t, f_t>& events);
@@ -274,31 +273,24 @@ class branch_and_bound_t {
   // Balance worker loads - redistribute nodes only if significant imbalance detected
   void balance_worker_loads();
 
-  // BSP-specific node solving that records events
-  node_solve_info_t solve_node_bsp(bsp_bfs_worker_t<i_t, f_t>& worker,
-                                   mip_node_t<i_t, f_t>* node_ptr,
-                                   search_tree_t<i_t, f_t>& search_tree,
-                                   double current_horizon);
+  node_solve_info_t solve_node_deterministic(determinism_bfs_worker_t<i_t, f_t>& worker,
+                                             mip_node_t<i_t, f_t>* node_ptr,
+                                             search_tree_t<i_t, f_t>& search_tree,
+                                             double current_horizon);
 
-  // Compute accurate lower bound from all BSP sources (called during sync phase)
-  f_t compute_bsp_lower_bound();
+  f_t compute_lower_bound_deterministic();
 
-  // BSP worker loop - runs continuously until scheduler signals stop
-  void run_worker_loop(bsp_bfs_worker_t<i_t, f_t>& worker, search_tree_t<i_t, f_t>& search_tree);
+  void run_deterministic_bfs_loop(determinism_bfs_worker_t<i_t, f_t>& worker,
+                                  search_tree_t<i_t, f_t>& search_tree);
 
-  // BSP sync callback - executed when all workers reach barrier
-  // Sets bsp_global_termination_status_ if termination is needed
-  void bsp_sync_callback(int worker_id);
+  // Executed when all workers reach barrier
+  // Handles termination logic serially in deterministic mode
+  void determinism_sync_callback(int worker_id);
 
-  // ============================================================================
-  // BSP Diving methods
-  // ============================================================================
+  void run_deterministic_diving_loop(determinism_diving_worker_t<i_t, f_t>& worker);
 
-  // Run diving worker loop
-  void run_diving_worker_loop(bsp_diving_worker_t<i_t, f_t>& worker);
-
-  // Perform a deterministic dive from the given starting node
-  void dive_from_bsp(bsp_diving_worker_t<i_t, f_t>& worker, mip_node_t<i_t, f_t> starting_node);
+  void deterministic_dive(determinism_diving_worker_t<i_t, f_t>& worker,
+                          mip_node_t<i_t, f_t> starting_node);
 
   // Populate diving heap from BFS worker backlogs at sync
   void populate_diving_heap();
@@ -316,18 +308,17 @@ class branch_and_bound_t {
   void merge_pseudo_cost_updates(PoolT& pool);
 
   friend struct opportunistic_tree_update_policy_t<i_t, f_t>;
-  friend struct bsp_tree_update_policy_t<i_t, f_t>;
+  friend struct determinism_tree_update_policy_t<i_t, f_t>;
 
  private:
-  // BSP state
   // unique_ptr as we only want to initialize these if we're in the determinism codepath
-  std::unique_ptr<bsp_bfs_worker_pool_t<i_t, f_t>> bsp_workers_;
-  std::unique_ptr<cuopt::work_unit_scheduler_t> bsp_scheduler_;
-  mip_status_t bsp_global_termination_status_{mip_status_t::UNSET};
-  double bsp_horizon_step_{5.0};     // Work unit step per horizon (tunable)
-  double bsp_current_horizon_{0.0};  // Current horizon target
-  bool bsp_mode_enabled_{false};     // Whether BSP mode is active
-  int bsp_horizon_number_{0};        // Current horizon number (for debugging)
+  std::unique_ptr<determinism_bfs_worker_pool_t<i_t, f_t>> determinism_workers_;
+  std::unique_ptr<cuopt::work_unit_scheduler_t> determinism_scheduler_;
+  mip_status_t determinism_global_termination_status_{mip_status_t::UNSET};
+  double determinism_horizon_step_{5.0};     // Work unit step per horizon (tunable)
+  double determinism_current_horizon_{0.0};  // Current horizon target
+  bool determinism_mode_enabled_{false};
+  int determinism_horizon_number_{0};  // Current horizon number (for debugging)
 
   // Producer synchronization for external heuristics (CPUFJ)
   // B&B waits for registered producers at each horizon sync
@@ -338,7 +329,7 @@ class branch_and_bound_t {
   double max_producer_wait_time_{0.0};
   i_t producer_wait_count_{0};
 
-  // BSP heuristic solution queue - solutions received from GPU heuristics
+  // Determinism heuristic solution queue - solutions received from GPU heuristics
   // Stored with work unit timestamp for deterministic ordering
   struct queued_heuristic_solution_t {
     std::vector<f_t> solution;
@@ -349,12 +340,12 @@ class branch_and_bound_t {
   std::vector<queued_heuristic_solution_t> heuristic_solution_queue_;
 
   // ============================================================================
-  // BSP Diving state
+  // Determinism Diving state
   // ============================================================================
 
   // Diving worker pool
   // unique_ptr as we only want to initialize these if we're in the determinism codepath
-  std::unique_ptr<bsp_diving_worker_pool_t<i_t, f_t>> bsp_diving_workers_;
+  std::unique_ptr<determinism_diving_worker_pool_t<i_t, f_t>> determinism_diving_workers_;
 
   // Diving heap - nodes available for diving, sorted by objective estimate
   struct diving_entry_t {
