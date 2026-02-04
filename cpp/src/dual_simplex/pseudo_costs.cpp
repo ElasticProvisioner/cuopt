@@ -289,10 +289,12 @@ template <typename i_t, typename f_t>
 void pseudo_costs_t<i_t, f_t>::update_pseudo_costs(mip_node_t<i_t, f_t>* node_ptr,
                                                    f_t leaf_objective)
 {
-  const f_t change_in_obj = leaf_objective - node_ptr->lower_bound;
+  constexpr f_t eps       = 1e-6;
+  const f_t change_in_obj = std::max(leaf_objective - node_ptr->lower_bound, eps);
   const f_t frac          = node_ptr->branch_dir == rounding_direction_t::DOWN
                               ? node_ptr->fractional_val - std::floor(node_ptr->fractional_val)
                               : std::ceil(node_ptr->fractional_val) - node_ptr->fractional_val;
+
   if (node_ptr->branch_dir == rounding_direction_t::DOWN) {
     pseudo_cost_sum_down[node_ptr->branch_var] += change_in_obj / frac;
     pseudo_cost_num_down[node_ptr->branch_var]++;
