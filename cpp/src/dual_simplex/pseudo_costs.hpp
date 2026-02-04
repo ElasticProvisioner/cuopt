@@ -33,16 +33,27 @@ struct pseudo_cost_averages_t {
   f_t up_avg;
 };
 
-template <typename i_t, typename f_t>
-pseudo_cost_averages_t<f_t> compute_pseudo_cost_averages(
-  const f_t* pc_sum_down, const f_t* pc_sum_up, const i_t* pc_num_down, const i_t* pc_num_up, i_t n)
-{
-  i_t num_initialized_down = 0;
-  i_t num_initialized_up   = 0;
-  f_t pseudo_cost_down_avg = 0;
-  f_t pseudo_cost_up_avg   = 0;
+// used to get T from omp_atomic_t<T> based on the fact that omp_atomic_t<T>::operator++ returns T
+template <typename T>
+using underlying_type = decltype(std::declval<T&>()++);
 
-  for (i_t j = 0; j < n; ++j) {
+// Necessary because omp_atomic_t<f_t> may be passed instead of f_t
+template <typename MaybeWrappedI, typename MaybeWrappedF>
+auto compute_pseudo_cost_averages(const MaybeWrappedF* pc_sum_down,
+                                  const MaybeWrappedF* pc_sum_up,
+                                  const MaybeWrappedI* pc_num_down,
+                                  const MaybeWrappedI* pc_num_up,
+                                  size_t n)
+{
+  using underlying_f_t = underlying_type<MaybeWrappedF>;
+  using underlying_i_t = underlying_type<MaybeWrappedI>;
+
+  underlying_i_t num_initialized_down = 0;
+  underlying_i_t num_initialized_up   = 0;
+  underlying_f_t pseudo_cost_down_avg = 0.0;
+  underlying_f_t pseudo_cost_up_avg   = 0.0;
+
+  for (size_t j = 0; j < n; ++j) {
     if (pc_num_down[j] > 0) {
       ++num_initialized_down;
       if (std::isfinite(pc_sum_down[j])) {
@@ -56,11 +67,10 @@ pseudo_cost_averages_t<f_t> compute_pseudo_cost_averages(
   }
 
   pseudo_cost_down_avg =
-    (num_initialized_down > 0) ? pseudo_cost_down_avg / num_initialized_down : f_t(1.0);
-  pseudo_cost_up_avg =
-    (num_initialized_up > 0) ? pseudo_cost_up_avg / num_initialized_up : f_t(1.0);
+    (num_initialized_down > 0) ? pseudo_cost_down_avg / num_initialized_down : 1.0;
+  pseudo_cost_up_avg = (num_initialized_up > 0) ? pseudo_cost_up_avg / num_initialized_up : 1.0;
 
-  return {pseudo_cost_down_avg, pseudo_cost_up_avg};
+  return pseudo_cost_averages_t<underlying_f_t>{pseudo_cost_down_avg, pseudo_cost_up_avg};
 }
 
 // Variable selection using pseudo-cost product scoring
@@ -97,6 +107,35 @@ i_t variable_selection_from_pseudo_costs(const f_t* pc_sum_down,
   }
 
   return branch_var;
+}
+
+// Objective estimate using pseudo-costs (lock-free implementation)
+// Returns lower_bound + estimated cost to reach integer feasibility
+template <typename i_t, typename f_t>
+f_t obj_estimate_from_arrays(const f_t* pc_sum_down,
+                             const f_t* pc_sum_up,
+                             const i_t* pc_num_down,
+                             const i_t* pc_num_up,
+                             i_t n_vars,
+                             const std::vector<i_t>& fractional,
+                             const std::vector<f_t>& solution,
+                             f_t lower_bound)
+{
+  auto [pc_down_avg, pc_up_avg] =
+    compute_pseudo_cost_averages(pc_sum_down, pc_sum_up, pc_num_down, pc_num_up, n_vars);
+
+  f_t estimate      = lower_bound;
+  constexpr f_t eps = f_t(1e-6);
+
+  for (i_t j : fractional) {
+    f_t pc_down      = pc_num_down[j] != 0 ? pc_sum_down[j] / pc_num_down[j] : pc_down_avg;
+    f_t pc_up        = pc_num_up[j] != 0 ? pc_sum_up[j] / pc_num_up[j] : pc_up_avg;
+    const f_t f_down = solution[j] - std::floor(solution[j]);
+    const f_t f_up   = std::ceil(solution[j]) - solution[j];
+    estimate += std::min(std::max(pc_down * f_down, eps), std::max(pc_up * f_up, eps));
+  }
+
+  return estimate;
 }
 
 template <typename i_t, typename f_t>

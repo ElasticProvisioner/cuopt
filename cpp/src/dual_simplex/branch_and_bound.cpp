@@ -2889,10 +2889,10 @@ void branch_and_bound_t<i_t, f_t>::deterministic_dive(determinism_diving_worker_
 #endif
 
     {
-      // f_t factor                  = settings_.diving_settings.iteration_limit_factor;
-      // i_t max_iter                = (i_t)(factor * worker.total_lp_iters_snapshot);
-      // lp_settings.iteration_limit = max_iter - worker.lp_iters_this_dive;
-      // if (lp_settings.iteration_limit <= 0) { break; }
+      f_t factor                  = settings_.diving_settings.iteration_limit_factor;
+      i_t max_iter                = (i_t)(factor * worker.total_lp_iters_snapshot);
+      lp_settings.iteration_limit = max_iter - worker.lp_iters_this_dive;
+      if (lp_settings.iteration_limit <= 0) { break; }
     }
 
     // Solve LP relaxation
@@ -3025,6 +3025,10 @@ void branch_and_bound_t<i_t, f_t>::deterministic_dive(determinism_diving_worker_
           worker.recompute_bounds_and_basis = true;
           continue;
         }
+
+        // Update objective estimate for node selection heuristics
+        node_ptr->objective_estimate =
+          worker.obj_estimate_from_snapshot(leaf_fractional, leaf_solution.x, leaf_objective);
 
         // Create children
         logger_t log;

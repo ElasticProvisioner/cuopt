@@ -410,6 +410,20 @@ class determinism_diving_worker_t
                                      solution,
                                      this->incumbent_snapshot);
   }
+
+  f_t obj_estimate_from_snapshot(const std::vector<i_t>& fractional,
+                                 const std::vector<f_t>& solution,
+                                 f_t lower_bound) const
+  {
+    return obj_estimate_from_arrays(this->pc_sum_down_snapshot.data(),
+                                    this->pc_sum_up_snapshot.data(),
+                                    this->pc_num_down_snapshot.data(),
+                                    this->pc_num_up_snapshot.data(),
+                                    (i_t)this->pc_sum_down_snapshot.size(),
+                                    fractional,
+                                    solution,
+                                    lower_bound);
+  }
 };
 
 template <typename i_t, typename f_t, typename WorkerT, typename Derived>
