@@ -12,7 +12,7 @@
 #include <dual_simplex/mip_node.hpp>
 #include <dual_simplex/phase2.hpp>
 
-#include <utilities/pcg.hpp>
+#include <utilities/pcgenerator.hpp>
 
 #include <array>
 #include <deque>
@@ -28,7 +28,7 @@ constexpr int bnb_num_worker_types = 5;
 //
 // [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
 // Berlin, 2007. doi: 10.14279/depositonce-1634.
-enum bnb_worker_type_t : int {
+enum bnb_search_strategy_t : int {
   BEST_FIRST         = 0,  // Best-First + Plunging.
   PSEUDOCOST_DIVING  = 1,  // Pseudocost diving (9.2.5)
   LINE_SEARCH_DIVING = 2,  // Line search diving (9.2.4)
@@ -51,7 +51,7 @@ template <typename i_t, typename f_t>
 class bnb_worker_data_t {
  public:
   const i_t worker_id;
-  omp_atomic_t<bnb_worker_type_t> worker_type;
+  omp_atomic_t<bnb_search_strategy_t> search_strategy;
   omp_atomic_t<bool> is_active;
   omp_atomic_t<f_t> lower_bound;
 
@@ -70,7 +70,7 @@ class bnb_worker_data_t {
   std::vector<f_t> start_upper;
   mip_node_t<i_t, f_t>* start_node;
 
-  PCG rng;
+  pcgenerator_t rng;
 
   bool recompute_basis  = true;
   bool recompute_bounds = true;
@@ -81,7 +81,7 @@ class bnb_worker_data_t {
                     const std::vector<variable_type_t>& var_type,
                     const simplex_solver_settings_t<i_t, f_t>& settings)
     : worker_id(worker_id),
-      worker_type(BEST_FIRST),
+      search_strategy(BEST_FIRST),
       is_active(false),
       lower_bound(-std::numeric_limits<f_t>::infinity()),
       leaf_problem(original_lp),
@@ -91,37 +91,37 @@ class bnb_worker_data_t {
       nonbasic_list(),
       node_presolver(leaf_problem, Arow, {}, var_type),
       bounds_changed(original_lp.num_cols, false),
-      rng(PCG::default_seed ^ worker_id, PCG::default_stream + worker_id)
+      rng(pcgenerator_t::default_seed ^ worker_id, pcgenerator_t::default_stream + worker_id)
   {
   }
 
   // Set the `start_node` for best-first search.
   void init_best_first(mip_node_t<i_t, f_t>* node, const lp_problem_t<i_t, f_t>& original_lp)
   {
-    start_node  = node;
-    start_lower = original_lp.lower;
-    start_upper = original_lp.upper;
-    worker_type = BEST_FIRST;
-    lower_bound = node->lower_bound;
-    is_active   = true;
+    start_node      = node;
+    start_lower     = original_lp.lower;
+    start_upper     = original_lp.upper;
+    search_strategy = BEST_FIRST;
+    lower_bound     = node->lower_bound;
+    is_active       = true;
   }
 
   // Initialize the worker for diving, setting the `start_node`, `start_lower` and
   // `start_upper`. Returns `true` if the starting node is feasible via
   // bounds propagation.
   bool init_diving(mip_node_t<i_t, f_t>* node,
-                   bnb_worker_type_t type,
+                   bnb_search_strategy_t type,
                    const lp_problem_t<i_t, f_t>& original_lp,
                    const simplex_solver_settings_t<i_t, f_t>& settings)
   {
     internal_node = node->detach_copy();
     start_node    = &internal_node;
 
-    start_lower = original_lp.lower;
-    start_upper = original_lp.upper;
-    worker_type = type;
-    lower_bound = node->lower_bound;
-    is_active   = true;
+    start_lower     = original_lp.lower;
+    start_upper     = original_lp.upper;
+    search_strategy = type;
+    lower_bound     = node->lower_bound;
+    is_active       = true;
 
     std::fill(bounds_changed.begin(), bounds_changed.end(), false);
     node->get_variable_bounds(start_lower, start_upper, bounds_changed);
@@ -219,7 +219,7 @@ class bnb_worker_pool_t {
 
     if (is_initialized) {
       for (i_t i = 0; i < workers_.size(); ++i) {
-        if (workers_[i]->worker_type == BEST_FIRST && workers_[i]->is_active) {
+        if (workers_[i]->search_strategy == BEST_FIRST && workers_[i]->is_active) {
           lower_bound = std::min(workers_[i]->lower_bound.load(), lower_bound);
         }
       }
@@ -241,9 +241,10 @@ class bnb_worker_pool_t {
 };
 
 template <typename f_t, typename i_t>
-std::vector<bnb_worker_type_t> bnb_get_worker_types(diving_heuristics_settings_t<i_t, f_t> settings)
+std::vector<bnb_search_strategy_t> bnb_get_search_strategies(
+  diving_heuristics_settings_t<i_t, f_t> settings)
 {
-  std::vector<bnb_worker_type_t> types;
+  std::vector<bnb_search_strategy_t> types;
   types.reserve(bnb_num_worker_types);
   types.push_back(BEST_FIRST);
   if (settings.pseudocost_diving != 0) { types.push_back(PSEUDOCOST_DIVING); }
@@ -255,7 +256,7 @@ std::vector<bnb_worker_type_t> bnb_get_worker_types(diving_heuristics_settings_t
 
 template <typename i_t>
 std::array<i_t, bnb_num_worker_types> bnb_get_max_workers(
-  i_t num_workers, std::vector<bnb_worker_type_t> worker_types)
+  i_t num_workers, std::vector<bnb_search_strategy_t> worker_types)
 {
   std::array<i_t, bnb_num_worker_types> max_num_workers;
   max_num_workers.fill(0);

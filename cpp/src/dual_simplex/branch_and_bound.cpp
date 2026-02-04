@@ -207,14 +207,14 @@ inline char feasible_solution_symbol(bnb_worker_type_t type)
   }
 }
 #else
-inline char feasible_solution_symbol(bnb_worker_type_t type)
+inline char feasible_solution_symbol(bnb_search_strategy_t type)
 {
   switch (type) {
-    case bnb_worker_type_t::BEST_FIRST: return 'B';
-    case bnb_worker_type_t::COEFFICIENT_DIVING: return 'D';
-    case bnb_worker_type_t::LINE_SEARCH_DIVING: return 'D';
-    case bnb_worker_type_t::PSEUDOCOST_DIVING: return 'D';
-    case bnb_worker_type_t::GUIDED_DIVING: return 'D';
+    case bnb_search_strategy_t::BEST_FIRST: return 'B';
+    case bnb_search_strategy_t::COEFFICIENT_DIVING: return 'D';
+    case bnb_search_strategy_t::LINE_SEARCH_DIVING: return 'D';
+    case bnb_search_strategy_t::PSEUDOCOST_DIVING: return 'D';
+    case bnb_search_strategy_t::GUIDED_DIVING: return 'D';
     default: return 'U';
   }
 }
@@ -518,7 +518,7 @@ template <typename i_t, typename f_t>
 void branch_and_bound_t<i_t, f_t>::add_feasible_solution(f_t leaf_objective,
                                                          const std::vector<f_t>& leaf_solution,
                                                          i_t leaf_depth,
-                                                         bnb_worker_type_t thread_type)
+                                                         bnb_search_strategy_t thread_type)
 {
   bool send_solution = false;
 
@@ -576,8 +576,8 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
   std::vector<f_t> current_incumbent;
   std::vector<f_t>& solution = worker_data->leaf_solution.x;
 
-  switch (worker_data->worker_type) {
-    case bnb_worker_type_t::BEST_FIRST:
+  switch (worker_data->search_strategy) {
+    case bnb_search_strategy_t::BEST_FIRST:
 
       if (settings_.reliability_branching != 0) {
         branch_var = pc_.reliable_variable_selection(node_ptr,
@@ -598,24 +598,24 @@ branch_variable_t<i_t> branch_and_bound_t<i_t, f_t>::variable_selection(
 
       return {branch_var, round_dir};
 
-    case bnb_worker_type_t::COEFFICIENT_DIVING:
+    case bnb_search_strategy_t::COEFFICIENT_DIVING:
       return coefficient_diving(
         original_lp_, fractional, solution, var_up_locks_, var_down_locks_, log);
 
-    case bnb_worker_type_t::LINE_SEARCH_DIVING:
+    case bnb_search_strategy_t::LINE_SEARCH_DIVING:
       return line_search_diving(fractional, solution, root_relax_soln_.x, log);
 
-    case bnb_worker_type_t::PSEUDOCOST_DIVING:
+    case bnb_search_strategy_t::PSEUDOCOST_DIVING:
       return pseudocost_diving(pc_, fractional, solution, root_relax_soln_.x, log);
 
-    case bnb_worker_type_t::GUIDED_DIVING:
+    case bnb_search_strategy_t::GUIDED_DIVING:
       mutex_upper_.lock();
       current_incumbent = incumbent_.x;
       mutex_upper_.unlock();
       return guided_diving(pc_, fractional, solution, current_incumbent, log);
 
     default:
-      log.debug("Unknown variable selection method: %d\n", worker_data->worker_type);
+      log.debug("Unknown variable selection method: %d\n", worker_data->search_strategy);
       return {-1, rounding_direction_t::NONE};
   }
 }
@@ -636,7 +636,7 @@ dual::status_t branch_and_bound_t<i_t, f_t>::solve_node_lp(mip_node_t<i_t, f_t>*
   lp_settings.time_limit    = settings_.time_limit - toc(exploration_stats_.start_time);
   lp_settings.scale_columns = false;
 
-  if (worker_data->worker_type != bnb_worker_type_t::BEST_FIRST) {
+  if (worker_data->search_strategy != bnb_search_strategy_t::BEST_FIRST) {
     int64_t bnb_lp_iters        = exploration_stats_.total_lp_iters;
     f_t factor                  = settings_.diving_settings.iteration_limit_factor;
     int64_t max_iter            = factor * bnb_lp_iters;
@@ -753,7 +753,7 @@ std::pair<node_status_t, rounding_direction_t> branch_and_bound_t<i_t, f_t>::upd
     pc_.update_pseudo_costs(node_ptr, leaf_objective);
     node_ptr->lower_bound = leaf_objective;
 
-    if (worker_data->worker_type == bnb_worker_type_t::BEST_FIRST) {
+    if (worker_data->search_strategy == bnb_search_strategy_t::BEST_FIRST) {
       if (settings_.node_processed_callback != nullptr) {
         std::vector<f_t> original_x;
         uncrush_primal_solution(original_problem_, original_lp_, leaf_solution.x, original_x);
@@ -764,7 +764,7 @@ std::pair<node_status_t, rounding_direction_t> branch_and_bound_t<i_t, f_t>::upd
     if (leaf_num_fractional == 0) {
       // Found a integer feasible solution
       add_feasible_solution(
-        leaf_objective, leaf_solution.x, node_ptr->depth, worker_data->worker_type);
+        leaf_objective, leaf_solution.x, node_ptr->depth, worker_data->search_strategy);
       search_tree.graphviz_node(log, node_ptr, "integer feasible", leaf_objective);
       search_tree.update(node_ptr, node_status_t::INTEGER_FEASIBLE);
       return {node_status_t::INTEGER_FEASIBLE, rounding_direction_t::NONE};
@@ -780,7 +780,7 @@ std::pair<node_status_t, rounding_direction_t> branch_and_bound_t<i_t, f_t>::upd
       // Note that the exploration thread is the only one that can insert new nodes into the heap,
       // and thus, we only need to calculate the objective estimate here (it is used for
       // sorting the nodes for diving).
-      if (worker_data->worker_type == bnb_worker_type_t::BEST_FIRST) {
+      if (worker_data->search_strategy == bnb_search_strategy_t::BEST_FIRST) {
         logger_t pc_log;
         pc_log.log = false;
         node_ptr->objective_estimate =
@@ -798,7 +798,7 @@ std::pair<node_status_t, rounding_direction_t> branch_and_bound_t<i_t, f_t>::upd
       return {node_status_t::FATHOMED, rounding_direction_t::NONE};
     }
   } else {
-    if (worker_data->worker_type == bnb_worker_type_t::BEST_FIRST) {
+    if (worker_data->search_strategy == bnb_search_strategy_t::BEST_FIRST) {
       fetch_min(lower_bound_ceiling_, node_ptr->lower_bound);
       log.printf(
         "LP returned status %d on node %d. This indicates a numerical issue. The best bound is set "
@@ -923,9 +923,9 @@ void branch_and_bound_t<i_t, f_t>::dive_with(bnb_worker_data_t<i_t, f_t>* worker
   logger_t log;
   log.log = false;
 
-  bnb_worker_type_t diving_type    = worker_data->worker_type;
-  const i_t diving_node_limit      = settings_.diving_settings.node_limit;
-  const i_t diving_backtrack_limit = settings_.diving_settings.backtrack_limit;
+  bnb_search_strategy_t search_strategy = worker_data->search_strategy;
+  const i_t diving_node_limit           = settings_.diving_settings.node_limit;
+  const i_t diving_backtrack_limit      = settings_.diving_settings.backtrack_limit;
 
   worker_data->recompute_basis  = true;
   worker_data->recompute_bounds = true;
@@ -992,7 +992,7 @@ void branch_and_bound_t<i_t, f_t>::dive_with(bnb_worker_data_t<i_t, f_t>* worker
   }
 
   worker_pool_.return_worker_to_pool(worker_data);
-  active_workers_per_type_[diving_type]--;
+  active_workers_per_type_[search_strategy]--;
 }
 
 template <typename i_t, typename f_t>
@@ -1002,19 +1002,19 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
   const i_t num_workers                                  = 2 * settings_.num_threads;
 
   if (!std::isfinite(upper_bound_)) { diving_settings.guided_diving = false; }
-  std::vector<bnb_worker_type_t> worker_types = bnb_get_worker_types(diving_settings);
+  std::vector<bnb_search_strategy_t> strategies = bnb_get_search_strategies(diving_settings);
   std::array<i_t, bnb_num_worker_types> max_num_workers_per_type =
-    bnb_get_max_workers(num_workers, worker_types);
+    bnb_get_max_workers(num_workers, strategies);
 
   worker_pool_.init(num_workers, original_lp_, Arow_, var_types_, settings_);
   active_workers_per_type_.fill(0);
 
 #ifdef CUOPT_LOG_DEBUG
-  for (auto type : worker_types) {
+  for (auto strategy : strategies) {
     settings_.log.debug("%c%d: max num of workers = %d",
-                        feasible_solution_symbol(type),
-                        type,
-                        max_num_workers_per_type[type]);
+                        feasible_solution_symbol(strategy),
+                        strategy,
+                        max_num_workers_per_type[strategy]);
   }
 #endif
 
@@ -1038,11 +1038,11 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
     if (settings_.diving_settings.guided_diving != diving_settings.guided_diving) {
       if (std::isfinite(upper_bound_)) {
         diving_settings.guided_diving = settings_.diving_settings.guided_diving;
-        worker_types                  = bnb_get_worker_types(diving_settings);
-        max_num_workers_per_type      = bnb_get_max_workers(num_workers, worker_types);
+        strategies                    = bnb_get_search_strategies(diving_settings);
+        max_num_workers_per_type      = bnb_get_max_workers(num_workers, strategies);
 
 #ifdef CUOPT_LOG_DEBUG
-        for (auto type : worker_types) {
+        for (auto type : strategies) {
           settings_.log.debug("%c%d: max num of workers = %d",
                               feasible_solution_symbol(type),
                               type,
@@ -1072,14 +1072,14 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
       break;
     }
 
-    for (auto type : worker_types) {
-      if (active_workers_per_type_[type] >= max_num_workers_per_type[type]) { continue; }
+    for (auto strategy : strategies) {
+      if (active_workers_per_type_[strategy] >= max_num_workers_per_type[strategy]) { continue; }
 
       // Get an idle worker.
       bnb_worker_data_t<i_t, f_t>* worker = worker_pool_.get_idle_worker();
       if (worker == nullptr) { break; }
 
-      if (type == BEST_FIRST) {
+      if (strategy == BEST_FIRST) {
         // If there any node left in the heap, we pop the top node and explore it.
         std::optional<mip_node_t<i_t, f_t>*> start_node = node_queue_.pop_best_first();
 
@@ -1097,7 +1097,7 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
         worker_pool_.pop_idle_worker();
         worker->init_best_first(start_node.value(), original_lp_);
         last_node_depth = start_node.value()->depth;
-        active_workers_per_type_[type]++;
+        active_workers_per_type_[strategy]++;
         launched_any_task = true;
 
 #pragma omp task affinity(worker)
@@ -1112,12 +1112,13 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
           continue;
         }
 
-        bool is_feasible = worker->init_diving(start_node.value(), type, original_lp_, settings_);
+        bool is_feasible =
+          worker->init_diving(start_node.value(), strategy, original_lp_, settings_);
         if (!is_feasible) { continue; }
 
         // Remove the worker from the idle list.
         worker_pool_.pop_idle_worker();
-        active_workers_per_type_[type]++;
+        active_workers_per_type_[strategy]++;
         launched_any_task = true;
 
 #pragma omp task affinity(worker)

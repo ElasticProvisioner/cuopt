@@ -14,7 +14,7 @@
 #include <dual_simplex/simplex_solver_settings.hpp>
 #include <dual_simplex/types.hpp>
 #include <utilities/omp_helpers.hpp>
-#include <utilities/pcg.hpp>
+#include <utilities/pcgenerator.hpp>
 
 #include <omp.h>
 
