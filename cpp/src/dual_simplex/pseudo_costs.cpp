@@ -31,6 +31,7 @@ void strong_branch_helper(i_t start,
                           const std::vector<f_t>& edge_norms,
                           pseudo_costs_t<i_t, f_t>& pc)
 {
+  constexpr f_t eps          = 1e-6;
   lp_problem_t child_problem = original_lp;
 
   constexpr bool verbose = false;
@@ -86,7 +87,7 @@ void strong_branch_helper(i_t start,
       }
 
       if (branch == 0) {
-        pc.strong_branch_down[k] = obj - root_obj;
+        pc.strong_branch_down[k] = std::max(obj - root_obj, eps);
         if (verbose) {
           settings.log.printf("Thread id %2d remaining %d variable %d branch %d obj %e time %.2f\n",
                               thread_id,
@@ -97,7 +98,7 @@ void strong_branch_helper(i_t start,
                               toc(start_time));
         }
       } else {
-        pc.strong_branch_up[k] = obj - root_obj;
+        pc.strong_branch_up[k] = std::max(obj - root_obj, eps);
         if (verbose) {
           settings.log.printf(
             "Thread id %2d remaining %d variable %d branch %d obj %e change down %e change up %e "
@@ -393,9 +394,10 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   int max_num_tasks,
   logger_t& log)
 {
-  f_t start_time = bnb_stats.start_time;
-  i_t branch_var = fractional[0];
-  f_t max_score  = -1;
+  constexpr f_t eps = 1e-6;
+  f_t start_time    = bnb_stats.start_time;
+  i_t branch_var    = fractional[0];
+  f_t max_score     = -1;
   i_t num_initialized_down;
   i_t num_initialized_up;
   f_t pseudo_cost_down_avg;
@@ -504,7 +506,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
                                 strong_branching_lp_iter);
 
       if (!std::isnan(obj)) {
-        f_t change_in_obj = obj - node_ptr->lower_bound;
+        f_t change_in_obj = std::max(obj - node_ptr->lower_bound, eps);
         f_t change_in_x   = solution[j] - std::floor(solution[j]);
         pseudo_cost_sum_down[j] += change_in_obj / change_in_x;
         pseudo_cost_num_down[j]++;
@@ -532,7 +534,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
                                 strong_branching_lp_iter);
 
       if (!std::isnan(obj)) {
-        f_t change_in_obj = obj - node_ptr->lower_bound;
+        f_t change_in_obj = std::max(obj - node_ptr->lower_bound, eps);
         f_t change_in_x   = std::ceil(solution[j]) - solution[j];
         pseudo_cost_sum_up[j] += change_in_obj / change_in_x;
         pseudo_cost_num_up[j]++;
