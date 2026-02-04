@@ -488,7 +488,8 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   // Shuffle the unreliable list so every variable has the same chance to be selected.
   if (unreliable_list.size() > max_num_candidates) { worker_data->rng.shuffle(unreliable_list); }
 
-#pragma omp taskloop if (num_tasks > 1) priority(task_priority) num_tasks(num_tasks)
+#pragma omp taskloop if (num_tasks > 1) priority(task_priority) num_tasks(num_tasks) \
+  shared(score_mutex)
   for (i_t i = 0; i < num_candidates; ++i) {
     const i_t j = unreliable_list[i];
     std::lock_guard<omp_mutex_t> lock(pseudo_cost_mutex[j]);
