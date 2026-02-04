@@ -1003,7 +1003,7 @@ void branch_and_bound_t<i_t, f_t>::run_scheduler()
 
   if (!std::isfinite(upper_bound_)) { diving_settings.guided_diving = false; }
   std::vector<bnb_search_strategy_t> strategies = bnb_get_search_strategies(diving_settings);
-  std::array<i_t, bnb_num_worker_types> max_num_workers_per_type =
+  std::array<i_t, bnb_num_search_strategies> max_num_workers_per_type =
     bnb_get_max_workers(num_workers, strategies);
 
   worker_pool_.init(num_workers, original_lp_, Arow_, var_types_, settings_);

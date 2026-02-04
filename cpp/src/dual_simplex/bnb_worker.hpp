@@ -21,7 +21,7 @@
 
 namespace cuopt::linear_programming::dual_simplex {
 
-constexpr int bnb_num_worker_types = 5;
+constexpr int bnb_num_search_strategies = 5;
 
 // Indicate the search and variable selection algorithms used by each thread
 // in B&B (See [1]).
@@ -245,7 +245,7 @@ std::vector<bnb_search_strategy_t> bnb_get_search_strategies(
   diving_heuristics_settings_t<i_t, f_t> settings)
 {
   std::vector<bnb_search_strategy_t> types;
-  types.reserve(bnb_num_worker_types);
+  types.reserve(bnb_num_search_strategies);
   types.push_back(BEST_FIRST);
   if (settings.pseudocost_diving != 0) { types.push_back(PSEUDOCOST_DIVING); }
   if (settings.line_search_diving != 0) { types.push_back(LINE_SEARCH_DIVING); }
@@ -255,10 +255,10 @@ std::vector<bnb_search_strategy_t> bnb_get_search_strategies(
 }
 
 template <typename i_t>
-std::array<i_t, bnb_num_worker_types> bnb_get_max_workers(
+std::array<i_t, bnb_num_search_strategies> bnb_get_max_workers(
   i_t num_workers, std::vector<bnb_search_strategy_t> worker_types)
 {
-  std::array<i_t, bnb_num_worker_types> max_num_workers;
+  std::array<i_t, bnb_num_search_strategies> max_num_workers;
   max_num_workers.fill(0);
 
   i_t bfs_workers = std::max(worker_types.size() == 1 ? num_workers : num_workers / 4, 1);
