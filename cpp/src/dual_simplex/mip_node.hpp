@@ -61,6 +61,7 @@ class mip_node_t {
       node_id(0),
       branch_var(-1),
       branch_dir(rounding_direction_t::NONE),
+      integer_infeasible(-1),
       objective_estimate(std::numeric_limits<f_t>::infinity()),
       vstatus(basis)
   {
@@ -74,6 +75,7 @@ class mip_node_t {
              i_t branch_variable,
              rounding_direction_t branch_direction,
              f_t branch_var_value,
+             i_t integer_inf,
              const std::vector<variable_status_t>& basis)
     : status(node_status_t::PENDING),
       lower_bound(parent_node->lower_bound),
@@ -83,9 +85,9 @@ class mip_node_t {
       branch_var(branch_variable),
       branch_dir(branch_direction),
       fractional_val(branch_var_value),
+      integer_infeasible(integer_inf),
       objective_estimate(parent_node->objective_estimate),
       vstatus(basis)
-
   {
     branch_var_lower = branch_direction == rounding_direction_t::DOWN ? problem.lower[branch_var]
                                                                       : std::ceil(branch_var_value);
@@ -226,18 +228,26 @@ class mip_node_t {
   }
 
   // This method creates a copy of the current node
-  // with its parent set to `nullptr` and `depth = 0`.
+  // with its parent set to `nullptr`
   // This detaches the node from the tree.
   mip_node_t<i_t, f_t> detach_copy() const
   {
-    mip_node_t<i_t, f_t> copy(lower_bound, vstatus);
+    mip_node_t<i_t, f_t> copy;
+    copy.lower_bound        = lower_bound;
+    copy.objective_estimate = objective_estimate;
+    copy.depth              = depth;
+    copy.node_id            = node_id;
+    copy.integer_infeasible = integer_infeasible;
+    copy.vstatus            = vstatus;
     copy.branch_var         = branch_var;
     copy.branch_dir         = branch_dir;
     copy.branch_var_lower   = branch_var_lower;
     copy.branch_var_upper   = branch_var_upper;
     copy.fractional_val     = fractional_val;
-    copy.objective_estimate = objective_estimate;
-    copy.node_id            = node_id;
+    copy.parent             = nullptr;
+    copy.children[0]        = nullptr;
+    copy.children[1]        = nullptr;
+    copy.status             = node_status_t::PENDING;
 
     copy.accumulated_wut  = accumulated_wut;
     copy.origin_worker_id = origin_worker_id;
@@ -255,6 +265,7 @@ class mip_node_t {
   f_t branch_var_lower;
   f_t branch_var_upper;
   f_t fractional_val;
+  i_t integer_infeasible;
 
   mip_node_t<i_t, f_t>* parent;
   std::unique_ptr<mip_node_t> children[2];
@@ -300,46 +311,6 @@ void remove_fathomed_nodes(std::vector<mip_node_t<i_t, f_t>*>& stack)
   }
 }
 
-// Comparator for global heap
-template <typename i_t, typename f_t>
-class node_compare_t {
- public:
-  // Comparison for priority queue: returns true if 'a' has lower priority than 'b'
-  // Primary: prefer lower bound (best-first search)
-  // Tie-breaker: prefer deeper nodes
-  bool operator()(const mip_node_t<i_t, f_t>& a, const mip_node_t<i_t, f_t>& b) const
-  {
-    if (a.lower_bound != b.lower_bound) { return a.lower_bound > b.lower_bound; }
-    return a.depth > b.depth;
-  }
-
-  bool operator()(const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) const
-  {
-    if (a->lower_bound != b->lower_bound) { return a->lower_bound > b->lower_bound; }
-    return a->depth > b->depth;
-  }
-};
-
-// Determinism-specific comparator for worker-local priority queues
-// Uses (origin_worker_id, creation_seq) tuple for deterministic ordering within a worker
-template <typename i_t, typename f_t>
-class determinism_node_compare_t {
- public:
-  // Returns true if 'a' has lower priority than 'b' (for max-heap behavior)
-  bool operator()(const mip_node_t<i_t, f_t>* a, const mip_node_t<i_t, f_t>* b) const
-  {
-    // Primary: lower_bound (best-first search - prefer smaller bound)
-    if (a->lower_bound != b->lower_bound) { return a->lower_bound > b->lower_bound; }
-
-    // Tie-breaker: lexicographic comparison of identity tuple
-    // This is deterministic regardless of node creation order
-    if (a->origin_worker_id != b->origin_worker_id) {
-      return a->origin_worker_id > b->origin_worker_id;
-    }
-    return a->creation_seq > b->creation_seq;
-  }
-};
-
 template <typename i_t, typename f_t>
 class search_tree_t {
  public:
@@ -358,6 +329,7 @@ class search_tree_t {
   void branch(mip_node_t<i_t, f_t>* parent_node,
               const i_t branch_var,
               const f_t fractional_val,
+              const i_t integer_infeasible,
               const std::vector<variable_status_t>& parent_vstatus,
               const lp_problem_t<i_t, f_t>& original_lp,
               logger_t& log)
@@ -370,8 +342,8 @@ class search_tree_t {
                                                              branch_var,
                                                              rounding_direction_t::DOWN,
                                                              fractional_val,
+                                                             integer_infeasible,
                                                              parent_vstatus);
-
     graphviz_edge(log,
                   parent_node,
                   down_child.get(),
@@ -385,6 +357,7 @@ class search_tree_t {
                                                            branch_var,
                                                            rounding_direction_t::UP,
                                                            fractional_val,
+                                                           integer_infeasible,
                                                            parent_vstatus);
 
     graphviz_edge(log,

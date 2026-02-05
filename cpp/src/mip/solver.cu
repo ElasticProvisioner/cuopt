@@ -5,8 +5,6 @@
  */
 /* clang-format on */
 
-#include "feasibility_jump/feasibility_jump.cuh"
-
 #include <mip/mip_constants.hpp>
 #include "diversity/diversity_manager.cuh"
 #include "local_search/local_search.cuh"
@@ -88,11 +86,6 @@ struct branch_and_bound_solution_helper_t {
 template <typename i_t, typename f_t>
 solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
 {
-  if (context.settings.get_mip_callbacks().size() > 0) {
-    for (auto callback : context.settings.get_mip_callbacks()) {
-      callback->template setup<f_t>(context.problem_ptr->original_problem_ptr->get_n_variables());
-    }
-  }
   //  we need to keep original problem const
   cuopt_assert(context.problem_ptr != nullptr, "invalid problem pointer");
   context.problem_ptr->tolerances = context.settings.get_tolerances();
@@ -100,20 +93,27 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
                 error_type_t::RuntimeError,
                 "preprocess_problem should be called before running the solver");
 
+  diversity_manager_t<i_t, f_t> dm(context);
   if (context.problem_ptr->empty) {
     CUOPT_LOG_INFO("Problem fully reduced in presolve");
     solution_t<i_t, f_t> sol(*context.problem_ptr);
     sol.set_problem_fully_reduced();
+    for (auto callback : context.settings.get_mip_callbacks()) {
+      if (callback->get_type() == internals::base_solution_callback_type::GET_SOLUTION) {
+        auto get_sol_callback = static_cast<internals::get_solution_callback_t*>(callback);
+        dm.population.invoke_get_solution_callback(sol, get_sol_callback);
+      }
+    }
     context.problem_ptr->post_process_solution(sol);
     return sol;
   }
 
-  diversity_manager_t<i_t, f_t> dm(context);
-  dm.timer              = timer_;
-  f_t time_limit        = context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC
-                            ? timer_.get_time_limit()
-                            : timer_.remaining_time();
-  bool presolve_success = dm.run_presolve(time_limit);
+  dm.timer                = timer_;
+  const bool run_presolve = context.settings.presolve;
+  f_t time_limit          = context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC
+                              ? timer_.get_time_limit()
+                              : timer_.remaining_time();
+  bool presolve_success   = run_presolve ? dm.run_presolve(time_limit) : true;
   if (!presolve_success) {
     CUOPT_LOG_INFO("Problem proven infeasible in presolve");
     solution_t<i_t, f_t> sol(*context.problem_ptr);
@@ -121,16 +121,22 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     context.problem_ptr->post_process_solution(sol);
     return sol;
   }
-  if (context.problem_ptr->empty) {
+  if (run_presolve && context.problem_ptr->empty) {
     CUOPT_LOG_INFO("Problem full reduced in presolve");
     solution_t<i_t, f_t> sol(*context.problem_ptr);
     sol.set_problem_fully_reduced();
+    for (auto callback : context.settings.get_mip_callbacks()) {
+      if (callback->get_type() == internals::base_solution_callback_type::GET_SOLUTION) {
+        auto get_sol_callback = static_cast<internals::get_solution_callback_t*>(callback);
+        dm.population.invoke_get_solution_callback(sol, get_sol_callback);
+      }
+    }
     context.problem_ptr->post_process_solution(sol);
     return sol;
   }
 
   // if the problem was reduced to a LP: run concurrent LP
-  if (context.problem_ptr->n_integer_vars == 0) {
+  if (run_presolve && context.problem_ptr->n_integer_vars == 0) {
     CUOPT_LOG_INFO("Problem reduced to a LP, running concurrent LP");
     pdlp_solver_settings_t<i_t, f_t> settings{};
     settings.time_limit = timer_.remaining_time();
@@ -146,6 +152,14 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
         opt_sol.get_termination_status() == pdlp_termination_status_t::PrimalInfeasible ||
         opt_sol.get_termination_status() == pdlp_termination_status_t::DualInfeasible) {
       sol.set_problem_fully_reduced();
+    }
+    if (opt_sol.get_termination_status() == pdlp_termination_status_t::Optimal) {
+      for (auto callback : context.settings.get_mip_callbacks()) {
+        if (callback->get_type() == internals::base_solution_callback_type::GET_SOLUTION) {
+          auto get_sol_callback = static_cast<internals::get_solution_callback_t*>(callback);
+          dm.population.invoke_get_solution_callback(sol, get_sol_callback);
+        }
+      }
     }
     context.problem_ptr->post_process_solution(sol);
     return sol;
@@ -170,12 +184,12 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     // Fill in the settings for branch and bound
     // Time limit applies in both modes
     branch_and_bound_settings.time_limit           = timer_.remaining_time();
+    branch_and_bound_settings.node_limit           = context.settings.node_limit;
     branch_and_bound_settings.print_presolve_stats = false;
     branch_and_bound_settings.absolute_mip_gap_tol = context.settings.tolerances.absolute_mip_gap;
     branch_and_bound_settings.relative_mip_gap_tol = context.settings.tolerances.relative_mip_gap;
     branch_and_bound_settings.integer_tol = context.settings.tolerances.integrality_tolerance;
-    branch_and_bound_settings.reliability_branching_settings.enable =
-      solver_settings_.reliability_branching;
+    branch_and_bound_settings.reliability_branching = solver_settings_.reliability_branching;
     branch_and_bound_settings.deterministic =
       context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC;
 
@@ -185,16 +199,24 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
       branch_and_bound_settings.work_limit = std::numeric_limits<f_t>::infinity();
     }
 
+    branch_and_bound_settings.max_cut_passes = context.settings.max_cut_passes;
+    branch_and_bound_settings.mir_cuts       = context.settings.mir_cuts;
+    branch_and_bound_settings.mixed_integer_gomory_cuts =
+      context.settings.mixed_integer_gomory_cuts;
+    branch_and_bound_settings.knapsack_cuts = context.settings.knapsack_cuts;
+    branch_and_bound_settings.strong_chvatal_gomory_cuts =
+      context.settings.strong_chvatal_gomory_cuts;
+    branch_and_bound_settings.reduced_cost_strengthening =
+      context.settings.reduced_cost_strengthening;
+    branch_and_bound_settings.cut_change_threshold  = context.settings.cut_change_threshold;
+    branch_and_bound_settings.cut_min_orthogonality = context.settings.cut_min_orthogonality;
+
     if (context.settings.num_cpu_threads < 0) {
       branch_and_bound_settings.num_threads = std::max(1, omp_get_max_threads() - 1);
     } else {
       branch_and_bound_settings.num_threads = std::max(1, context.settings.num_cpu_threads);
     }
 
-    dual_simplex::mip_solve_mode_t solve_mode =
-      branch_and_bound_settings.num_threads > 1
-        ? dual_simplex::mip_solve_mode_t::BNB_PARALLEL
-        : dual_simplex::mip_solve_mode_t::BNB_SINGLE_THREADED;
     branch_and_bound_settings.mip_batch_pdlp_strong_branching =
       context.settings.mip_batch_pdlp_strong_branching;
 
@@ -225,8 +247,11 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
 
     // Create the branch and bound object
     branch_and_bound = std::make_unique<dual_simplex::branch_and_bound_t<i_t, f_t>>(
-      branch_and_bound_problem, branch_and_bound_settings);
+      branch_and_bound_problem, branch_and_bound_settings, timer_.get_tic_start());
     context.branch_and_bound_ptr = branch_and_bound.get();
+    auto* stats_ptr              = &context.stats;
+    branch_and_bound->set_user_bound_callback(
+      [stats_ptr](f_t user_bound) { stats_ptr->set_solution_bound(user_bound); });
 
     // Set the primal heuristics -> branch and bound callback
     if (context.settings.determinism_mode == CUOPT_MODE_OPPORTUNISTIC) {
@@ -265,18 +290,18 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     branch_and_bound_status_future = std::async(std::launch::async,
                                                 &dual_simplex::branch_and_bound_t<i_t, f_t>::solve,
                                                 branch_and_bound.get(),
-                                                std::ref(branch_and_bound_solution),
-                                                solve_mode);
+                                                std::ref(branch_and_bound_solution));
   }
 
   // Start the primal heuristics
-  auto sol = dm.run_solver();
+  context.diversity_manager_ptr = &dm;
+  auto sol                      = dm.run_solver();
   if (run_bb) {
     // Wait for the branch and bound to finish
     auto bb_status = branch_and_bound_status_future.get();
     if (branch_and_bound_solution.lower_bound > -std::numeric_limits<f_t>::infinity()) {
-      context.stats.solution_bound =
-        context.problem_ptr->get_user_obj_from_solver_obj(branch_and_bound_solution.lower_bound);
+      context.stats.set_solution_bound(
+        context.problem_ptr->get_user_obj_from_solver_obj(branch_and_bound_solution.lower_bound));
     }
     if (bb_status == dual_simplex::mip_status_t::INFEASIBLE) { sol.set_problem_fully_reduced(); }
     context.stats.num_nodes              = branch_and_bound_solution.nodes_explored;

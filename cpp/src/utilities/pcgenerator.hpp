@@ -8,13 +8,14 @@
 #pragma once
 
 #include <stdint.h>
+#include <utility>
 #include <vector>
 
 // Copied from raft/PCGenerator (rng_device.cuh). We cannot use raft implementation
 // on the CPU (.cpp file) since the raft header includes CUDA code.
 // The original code is from https://www.pcg-random.org/.
 namespace cuopt {
-class PCG {
+class pcgenerator_t {
  public:
   static constexpr uint64_t default_seed   = 0x853c49e6748fea9bULL;
   static constexpr uint64_t default_stream = 0xda3e39cb94b95bdbULL;
@@ -27,9 +28,9 @@ class PCG {
    * unique set of random numbers. This can be achieved by initializing the generator with same
    * rng_state for all the threads and diststreamt values for subsequence.
    */
-  PCG(const uint64_t seed        = default_seed,
-      const uint64_t subsequence = default_stream,
-      uint64_t offset            = 0)
+  pcgenerator_t(const uint64_t seed        = default_seed,
+                const uint64_t subsequence = default_stream,
+                uint64_t offset            = 0)
   {
     set_seed(seed, subsequence, offset);
   }

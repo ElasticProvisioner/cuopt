@@ -37,8 +37,8 @@ constexpr int8_t kInactive = 0;
 
 template <typename i_t>
 void find_vertices_to_refine(const std::unordered_set<i_t>& refining_color_vertices,
-                             const cuopt::ins_vector<i_t>& offset,
-                             const cuopt::ins_vector<i_t>& vertex_list,
+                             const std::vector<i_t>& offset,
+                             const std::vector<i_t>& vertex_list,
                              const std::vector<i_t>& color_map,
                              std::vector<i_t>& marked_vertices,
                              std::vector<i_t>& vertices_to_refine,
@@ -75,9 +75,9 @@ template <typename i_t, typename f_t>
 void compute_sums_of_refined_vertices(i_t refining_color,
                                       const std::unordered_set<i_t>& refining_color_vertices,
                                       const std::vector<i_t>& vertices_to_refine,
-                                      const cuopt::ins_vector<i_t>& offsets,
-                                      const cuopt::ins_vector<i_t>& vertex_list,
-                                      const cuopt::ins_vector<f_t>& weight_list,
+                                      const std::vector<i_t>& offsets,
+                                      const std::vector<i_t>& vertex_list,
+                                      const std::vector<f_t>& weight_list,
                                       const std::vector<i_t>& color_map,
                                       std::vector<f_t>& vertex_to_sum,
                                       std::vector<f_t>& max_sum_by_color)
@@ -126,8 +126,8 @@ void compute_sums(const csc_matrix_t<i_t, f_t>& A,
     // Find all vertices (columns) that have a neighbor in the refining color
     colors_to_update.reserve(num_col_colors);
     find_vertices_to_refine(refining_color.vertices,
-                            Arow.row_start,
-                            Arow.j,
+                            Arow.row_start.underlying(),
+                            Arow.j.underlying(),
                             col_color_map,
                             marked_vertices,
                             vertices_to_refine,
@@ -386,16 +386,18 @@ void color_lower_bounds(const csc_matrix_t<i_t, f_t>& A,
   col_lower_bound = static_cast<i_t>(unique_col_sums.size());
 }
 
+enum coloring_status_t : int8_t { COLORING_SUCCESS = 0, COLORING_FAILED = -1 };
+
 template <typename i_t, typename f_t>
-i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
-                const simplex_solver_settings_t<i_t, f_t>& settings,
-                std::vector<color_t<i_t>>& colors,
-                i_t row_threshold,
-                i_t col_threshold,
-                i_t& num_row_colors,
-                i_t& num_col_colors,
-                i_t& num_colors,
-                i_t& total_colors_seen)
+coloring_status_t color_graph(const csc_matrix_t<i_t, f_t>& A,
+                              const simplex_solver_settings_t<i_t, f_t>& settings,
+                              std::vector<color_t<i_t>>& colors,
+                              i_t row_threshold,
+                              i_t col_threshold,
+                              i_t& num_row_colors,
+                              i_t& num_col_colors,
+                              i_t& num_colors,
+                              i_t& total_colors_seen)
 {
   f_t start_time    = tic();
   f_t last_log_time = start_time;
@@ -421,7 +423,7 @@ i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
       row_threshold,
       col_lower_bound,
       col_threshold);
-    return -1;
+    return coloring_status_t::COLORING_FAILED;
   }
 
   std::vector<i_t> all_rows_vertices(m);
@@ -577,7 +579,7 @@ i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
     for (i_t k = 0; k < max_vertices; k++) {
       if (vertex_to_sum[k] != 0.0) {
         settings.log.printf("Folding: Vertex %d has sum %e\n", k, vertex_to_sum[k]);
-        return -2;
+        return coloring_status_t::COLORING_FAILED;
       }
     }
 #endif
@@ -594,7 +596,7 @@ i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
         settings.log.printf("Folding: Color %d has %ld vertices to refine. Not cleared\n",
                             k,
                             vertices_to_refine_by_color[k].size());
-        return -2;
+        return coloring_status_t::COLORING_FAILED;
       }
     }
 #endif
@@ -604,7 +606,7 @@ i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
       if (row_color_map[i] >= total_colors_seen) {
         settings.log.printf("Folding: Row color %d is not in the colors vector\n",
                             row_color_map[i]);
-        return -2;
+        return coloring_status_t::COLORING_FAILED;
       }
     }
     for (i_t j = 0; j < n; j++) {
@@ -612,7 +614,7 @@ i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
         settings.log.printf("Folding: Column color %d is not in the colors vector. %d\n",
                             col_color_map[j],
                             num_colors);
-        return -2;
+        return coloring_status_t::COLORING_FAILED;
       }
     }
 #endif
@@ -634,7 +636,7 @@ i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
                 row_color_map[v],
                 color.color,
                 v);
-              return -2;
+              return coloring_status_t::COLORING_FAILED;
             }
           }
         } else {
@@ -646,7 +648,7 @@ i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
                 col_color_map[v],
                 color.color,
                 v);
-              return -2;
+              return coloring_status_t::COLORING_FAILED;
             }
           }
         }
@@ -655,19 +657,19 @@ i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
     // printf("Number of active colors: %d\n", num_active_colors);
     if (num_active_colors != num_colors) {
       settings.log.printf("Folding: Number of active colors does not match number of colors\n");
-      return -2;
+      return coloring_status_t::COLORING_FAILED;
     }
     // printf("Number of active row colors: %d\n", num_active_row_colors);
     if (num_active_row_colors != num_row_colors) {
       settings.log.printf(
         "Folding: Number of active row colors does not match number of row colors\n");
-      return -2;
+      return coloring_status_t::COLORING_FAILED;
     }
     // printf("Number of active column colors: %d\n", num_active_col_colors);
     if (num_active_col_colors != num_col_colors) {
       settings.log.printf(
         "Folding: Number of active column colors does not match number of column colors\n");
-      return -2;
+      return coloring_status_t::COLORING_FAILED;
     }
 #endif
 
@@ -694,23 +696,23 @@ i_t color_graph(const csc_matrix_t<i_t, f_t>& A,
     }
     if (num_row_colors >= max_vertices) {
       settings.log.printf("Folding: Too many row colors %d max %d\n", num_row_colors, max_vertices);
-      return -2;
+      return coloring_status_t::COLORING_FAILED;
     }
     if (num_col_colors >= max_vertices) {
       settings.log.printf(
         "Folding: Too many column colors %d max %d\n", num_col_colors, max_vertices);
-      return -2;
+      return coloring_status_t::COLORING_FAILED;
     }
 
     if (num_row_colors > row_threshold || num_col_colors > col_threshold) {
       settings.log.printf("Folding: Number of colors exceeds threshold");
-      return -1;
+      return coloring_status_t::COLORING_FAILED;
     }
   }
   settings.log.printf(
     "Folding: Colors %d. Refinements: %d\n", num_row_colors + num_col_colors, num_refinements);
 
-  return 0;
+  return coloring_status_t::COLORING_SUCCESS;
 }
 
 template <typename i_t, typename f_t>
@@ -870,16 +872,17 @@ void folding(lp_problem_t<i_t, f_t>& problem,
   f_t fold_threshold   = settings.folding == -1 ? 0.50 : 1.0;
   i_t row_threshold    = static_cast<i_t>(fold_threshold * static_cast<f_t>(m));
   i_t col_threshold    = static_cast<i_t>(fold_threshold * static_cast<f_t>(n));
-  i_t status           = color_graph(augmented,
-                           settings,
-                           colors,
-                           row_threshold,
-                           col_threshold,
-                           num_row_colors,
-                           num_col_colors,
-                           num_colors,
-                           total_colors_seen);
-  if (status != 0) {
+
+  coloring_status_t status = color_graph(augmented,
+                                         settings,
+                                         colors,
+                                         row_threshold,
+                                         col_threshold,
+                                         num_row_colors,
+                                         num_col_colors,
+                                         num_colors,
+                                         total_colors_seen);
+  if (status != coloring_status_t::COLORING_SUCCESS) {
     settings.log.printf("Folding: Coloring aborted in %.2f seconds\n", toc(color_start_time));
     return;
   }

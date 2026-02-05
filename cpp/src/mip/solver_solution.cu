@@ -105,7 +105,7 @@ f_t mip_solution_t<i_t, f_t>::get_mip_gap() const
 template <typename i_t, typename f_t>
 f_t mip_solution_t<i_t, f_t>::get_solution_bound() const
 {
-  return stats_.solution_bound;
+  return stats_.get_solution_bound();
 }
 
 template <typename i_t, typename f_t>

@@ -20,12 +20,6 @@ struct branch_variable_t {
   rounding_direction_t direction;
 };
 
-// =============================================================================
-// Lock-free diving implementations that work on raw pseudo-cost arrays
-// These can be called directly with snapshot data or through the wrapper functions
-// =============================================================================
-
-// Pseudocost diving variable selection (lock-free implementation)
 template <typename i_t, typename f_t>
 branch_variable_t<i_t> pseudocost_diving_from_arrays(const f_t* pc_sum_down,
                                                      const f_t* pc_sum_up,
@@ -135,10 +129,6 @@ branch_variable_t<i_t> guided_diving_from_arrays(const f_t* pc_sum_down,
 
   return {branch_var, round_dir};
 }
-
-// =============================================================================
-// Wrapper functions that acquire locks and call the impl versions
-// =============================================================================
 
 template <typename i_t, typename f_t>
 branch_variable_t<i_t> line_search_diving(const std::vector<i_t>& fractional,

@@ -1121,7 +1121,7 @@ i_t right_looking_lu_row_permutation_only(const csc_matrix_t<i_t, f_t>& A,
 
     if (settings.concurrent_halt != nullptr && *settings.concurrent_halt == 1) {
       settings.log.printf("Concurrent halt\n");
-      return -2;
+      return CONCURRENT_HALT_RETURN;
     }
   }
 
