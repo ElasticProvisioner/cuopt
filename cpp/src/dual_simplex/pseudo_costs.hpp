@@ -61,7 +61,8 @@ class pseudo_costs_t {
       pseudo_cost_sum_up(num_variables),
       pseudo_cost_num_down(num_variables),
       pseudo_cost_num_up(num_variables),
-      pseudo_cost_mutex(num_variables)
+      pseudo_cost_mutex_up(num_variables),
+      pseudo_cost_mutex_down(num_variables)
   {
   }
 
@@ -73,7 +74,8 @@ class pseudo_costs_t {
     pseudo_cost_sum_up.assign(num_variables, 0);
     pseudo_cost_num_down.assign(num_variables, 0);
     pseudo_cost_num_up.assign(num_variables, 0);
-    pseudo_cost_mutex.resize(num_variables);
+    pseudo_cost_mutex_up.resize(num_variables);
+    pseudo_cost_mutex_down.resize(num_variables);
   }
 
   void initialized(i_t& num_initialized_down,
@@ -117,7 +119,8 @@ class pseudo_costs_t {
   std::vector<omp_atomic_t<i_t>> pseudo_cost_num_down;
   std::vector<f_t> strong_branch_down;
   std::vector<f_t> strong_branch_up;
-  std::vector<omp_mutex_t> pseudo_cost_mutex;
+  std::vector<omp_mutex_t> pseudo_cost_mutex_up;
+  std::vector<omp_mutex_t> pseudo_cost_mutex_down;
   omp_atomic_t<i_t> num_strong_branches_completed = 0;
   omp_atomic_t<int64_t> strong_branching_lp_iter  = 0;
 };

@@ -643,9 +643,10 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   shared(score_mutex)
   for (i_t i = 0; i < num_candidates; ++i) {
     const i_t j = unreliable_list[i];
-    std::lock_guard<omp_mutex_t> lock(pseudo_cost_mutex[j]);
 
     if (toc(start_time) > settings.time_limit) { continue; }
+
+    pseudo_cost_mutex_down[j].lock();
     if (pseudo_cost_num_down[j] < reliable_threshold) {
       // Do trial branching on the down branch
       f_t obj = trial_branching(worker->leaf_problem,
@@ -673,8 +674,11 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
         pseudo_cost_num_down[j]++;
       }
     }
+    pseudo_cost_mutex_down[j].unlock();
 
     if (toc(start_time) > settings.time_limit) { continue; }
+
+    pseudo_cost_mutex_up[j].lock();
     if (pseudo_cost_num_up[j] < reliable_threshold) {
       f_t obj = trial_branching(worker->leaf_problem,
                                 settings,
@@ -701,6 +705,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
         pseudo_cost_num_up[j]++;
       }
     }
+    pseudo_cost_mutex_up[j].unlock();
 
     if (toc(start_time) > settings.time_limit) { continue; }
 
