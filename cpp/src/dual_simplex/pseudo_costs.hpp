@@ -8,7 +8,7 @@
 #pragma once
 
 #include <dual_simplex/basis_updates.hpp>
-#include <dual_simplex/bnb_worker.hpp>
+#include <dual_simplex/branch_and_bound_worker.hpp>
 #include <dual_simplex/logger.hpp>
 #include <dual_simplex/mip_node.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
@@ -95,8 +95,8 @@ class pseudo_costs_t {
                                   const std::vector<f_t>& solution,
                                   const simplex_solver_settings_t<i_t, f_t>& settings,
                                   const std::vector<variable_type_t>& var_types,
-                                  bnb_worker_data_t<i_t, f_t>* worker_data,
-                                  const bnb_stats_t<i_t, f_t>& bnb_stats,
+                                  branch_and_bound_worker_t<i_t, f_t>* worker,
+                                  const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
                                   f_t upper_bound,
                                   int max_num_tasks,
                                   logger_t& log);
