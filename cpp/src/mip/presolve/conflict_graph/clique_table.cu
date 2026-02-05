@@ -340,24 +340,25 @@ bool clique_table_t<i_t, f_t>::check_adjacency(i_t var_idx1, i_t var_idx2)
 template <typename i_t, typename f_t>
 void insert_clique_into_problem(const std::vector<i_t>& clique,
                                 dual_simplex::user_problem_t<i_t, f_t>& problem,
-                                dual_simplex::csr_matrix_t<i_t, f_t>& A)
+                                dual_simplex::csr_matrix_t<i_t, f_t>& A,
+                                f_t coeff_scale)
 {
   // convert vertices into original vars
   f_t rhs_offset = 0.;
   std::vector<i_t> new_vars;
   std::vector<f_t> new_coeffs;
   for (size_t i = 0; i < clique.size(); i++) {
-    f_t coeff   = 1.;
+    f_t coeff   = coeff_scale;
     i_t var_idx = clique[i];
     if (var_idx >= problem.num_cols) {
-      coeff   = -1.;
+      coeff   = -coeff_scale;
       var_idx = var_idx - problem.num_cols;
-      rhs_offset--;
+      rhs_offset += coeff_scale;
     }
     new_vars.push_back(var_idx);
     new_coeffs.push_back(coeff);
   }
-  f_t rhs = 1 + rhs_offset;
+  f_t rhs = coeff_scale + rhs_offset;
   // insert the new clique into the problem as a new constraint
   A.insert_row(new_vars, new_coeffs);
   problem.row_sense.push_back('L');
@@ -368,7 +369,8 @@ template <typename i_t, typename f_t>
 bool extend_clique(const std::vector<i_t>& clique,
                    clique_table_t<i_t, f_t>& clique_table,
                    dual_simplex::user_problem_t<i_t, f_t>& problem,
-                   dual_simplex::csr_matrix_t<i_t, f_t>& A)
+                   dual_simplex::csr_matrix_t<i_t, f_t>& A,
+                   f_t coeff_scale)
 {
   i_t smallest_degree     = std::numeric_limits<i_t>::max();
   i_t smallest_degree_var = -1;
@@ -441,7 +443,7 @@ bool extend_clique(const std::vector<i_t>& clique,
       clique_table.first.push_back(new_clique);
       CUOPT_LOG_DEBUG("Extended clique: %lu from %lu", new_clique.size(), clique.size());
       // insert the new clique into the problem as a new constraint
-      insert_clique_into_problem(new_clique, problem, A);
+      insert_clique_into_problem(new_clique, problem, A, coeff_scale);
     }
   }
   return new_clique.size() > clique.size();
@@ -465,7 +467,8 @@ i_t extend_cliques(const std::vector<knapsack_constraint_t<i_t, f_t>>& knapsack_
       for (const auto& entry : knapsack_constraint.entries) {
         clique.push_back(entry.col);
       }
-      bool extended_clique = extend_clique(clique, clique_table, problem, A);
+      f_t coeff_scale      = knapsack_constraint.entries[0].val;
+      bool extended_clique = extend_clique(clique, clique_table, problem, A, coeff_scale);
       if (extended_clique) { n_extended_cliques++; }
     }
   }
@@ -808,13 +811,5 @@ INSTANTIATE(float)
 INSTANTIATE(double)
 #endif
 #undef INSTANTIATE
-
-// #if MIP_INSTANTIATE_FLOAT
-// template class bound_presolve_t<int, float>;
-// #endif
-
-// #if MIP_INSTANTIATE_DOUBLE
-// template class bound_presolve_t<int, double>;
-// #endif
 
 }  // namespace cuopt::linear_programming::detail
