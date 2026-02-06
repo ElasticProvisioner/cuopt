@@ -156,8 +156,8 @@ struct simplex_solver_settings_t {
   bool print_presolve_stats;  // true to print presolve stats
   bool barrier_presolve;      // true to use barrier presolve
   bool cudss_deterministic;   // true to use cuDSS deterministic mode, false for non-deterministic
+  bool barrier;               // true to use barrier method, false to use dual simplex method
   bool deterministic;  // true to use B&B   deterministic mode, false to use non-deterministic mode
-  bool barrier;        // true to use barrier method, false to use dual simplex method
   bool eliminate_dense_columns;  // true to eliminate dense columns from A*D*A^T
   int num_gpus;   // Number of GPUs to use (maximum of 2 gpus are supported at the moment)
   i_t folding;    // -1 automatic, 0 don't fold, 1 fold
@@ -173,10 +173,8 @@ struct simplex_solver_settings_t {
   i_t first_iteration_log;         // number of iterations to log at beginning of solve
   i_t num_threads;                 // number of threads to use
   i_t random_seed;                 // random seed
-  i_t mip_batch_pdlp_strong_branching{0};  // 0 if not using batch PDLP for strong branching, 1 if
-                                           // using batch PDLP for strong branching
-  i_t max_cut_passes;                      // number of cut passes to make
-  i_t mir_cuts;                            // -1 automatic, 0 to disable, >0 to enable MIR cuts
+  i_t max_cut_passes;              // number of cut passes to make
+  i_t mir_cuts;                    // -1 automatic, 0 to disable, >0 to enable MIR cuts
   i_t mixed_integer_gomory_cuts;   // -1 automatic, 0 to disable, >0 to enable mixed integer Gomory
                                    // cuts
   i_t knapsack_cuts;               // -1 automatic, 0 to disable, >0 to enable knapsack cuts
@@ -186,6 +184,8 @@ struct simplex_solver_settings_t {
                                    // strengthening
   f_t cut_change_threshold;        // threshold for cut change
   f_t cut_min_orthogonality;       // minimum orthogonality for cuts
+  i_t mip_batch_pdlp_strong_branching{0};  // 0 if not using batch PDLP for strong branching, 1 if
+                                           // using batch PDLP for strong branching
 
   diving_heuristics_settings_t<i_t, f_t> diving_settings;  // Settings for the diving heuristics
 

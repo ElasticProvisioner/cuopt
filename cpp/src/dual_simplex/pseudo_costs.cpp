@@ -523,8 +523,8 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
   const std::vector<f_t>& solution,
   const simplex_solver_settings_t<i_t, f_t>& settings,
   const std::vector<variable_type_t>& var_types,
-  bnb_worker_data_t<i_t, f_t>* worker_data,
-  const bnb_stats_t<i_t, f_t>& bnb_stats,
+  branch_and_bound_worker_t<i_t, f_t>* worker,
+  const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
   f_t upper_bound,
   int max_num_tasks,
   logger_t& log)
@@ -553,18 +553,19 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
 
   i_t reliable_threshold = settings.reliability_branching;
   if (reliable_threshold < 0) {
-    const i_t max_threshold = reliability_branching_settings.max_reliable_threshold;
-    const i_t min_threshold = reliability_branching_settings.min_reliable_threshold;
-    const f_t iter_factor   = reliability_branching_settings.bnb_lp_factor;
-    const i_t iter_offset   = reliability_branching_settings.bnb_lp_offset;
-    const int64_t alpha     = iter_factor * branch_and_bound_lp_iters;
-    const int64_t max_iter  = alpha + reliability_branching_settings.bnb_lp_offset;
+    const i_t max_threshold            = reliability_branching_settings.max_reliable_threshold;
+    const i_t min_threshold            = reliability_branching_settings.min_reliable_threshold;
+    const f_t iter_factor              = reliability_branching_settings.bnb_lp_factor;
+    const i_t iter_offset              = reliability_branching_settings.bnb_lp_offset;
+    const int64_t alpha                = iter_factor * branch_and_bound_lp_iters;
+    const int64_t max_reliability_iter = alpha + reliability_branching_settings.bnb_lp_offset;
 
-    f_t gamma = (max_iter - strong_branching_lp_iter) / (strong_branching_lp_iter + 1.0);
-    gamma     = std::min(1.0, gamma);
+    f_t gamma =
+      (max_reliability_iter - strong_branching_lp_iter) / (strong_branching_lp_iter + 1.0);
+    gamma = std::min(1.0, gamma);
     gamma = std::max((alpha - strong_branching_lp_iter) / (strong_branching_lp_iter + 1.0), gamma);
     reliable_threshold = (1 - gamma) * min_threshold + gamma * max_threshold;
-    reliable_threshold = strong_branching_lp_iter < max_iter ? reliable_threshold : 0;
+    reliable_threshold = strong_branching_lp_iter < max_reliability_iter ? reliable_threshold : 0;
   }
 
   std::vector<i_t> unreliable_list;
@@ -611,26 +612,33 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
     reliable_threshold);
 
   // Shuffle the unreliable list so every variable has the same chance to be selected.
-  if (unreliable_list.size() > max_num_candidates) { worker_data->rng.shuffle(unreliable_list); }
+  if (unreliable_list.size() > max_num_candidates) { worker->rng.shuffle(unreliable_list); }
+
+  if (toc(start_time) > settings.time_limit) {
+    log.printf("Time limit reached");
+    return branch_var;
+  }
 
 #pragma omp taskloop if (num_tasks > 1) priority(task_priority) num_tasks(num_tasks) \
   shared(score_mutex)
   for (i_t i = 0; i < num_candidates; ++i) {
     const i_t j = unreliable_list[i];
-    std::lock_guard<omp_mutex_t> lock(pseudo_cost_mutex[j]);
 
     if (toc(start_time) > settings.time_limit) { continue; }
+
+    pseudo_cost_mutex_down[j].lock();
     if (pseudo_cost_num_down[j] < reliable_threshold) {
-      f_t obj = trial_branching(worker_data->leaf_problem,
+      // Do trial branching on the down branch
+      f_t obj = trial_branching(worker->leaf_problem,
                                 settings,
                                 var_types,
                                 node_ptr->vstatus,
-                                worker_data->leaf_edge_norms,
-                                worker_data->basis_factors,
-                                worker_data->basic_list,
-                                worker_data->nonbasic_list,
+                                worker->leaf_edge_norms,
+                                worker->basis_factors,
+                                worker->basic_list,
+                                worker->nonbasic_list,
                                 j,
-                                worker_data->leaf_problem.lower[j],
+                                worker->leaf_problem.lower[j],
                                 std::floor(solution[j]),
                                 upper_bound,
                                 branch_and_bound_lp_iter_per_node,
@@ -646,20 +654,23 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
         pseudo_cost_num_down[j]++;
       }
     }
+    pseudo_cost_mutex_down[j].unlock();
 
     if (toc(start_time) > settings.time_limit) { continue; }
+
+    pseudo_cost_mutex_up[j].lock();
     if (pseudo_cost_num_up[j] < reliable_threshold) {
-      f_t obj = trial_branching(worker_data->leaf_problem,
+      f_t obj = trial_branching(worker->leaf_problem,
                                 settings,
                                 var_types,
                                 node_ptr->vstatus,
-                                worker_data->leaf_edge_norms,
-                                worker_data->basis_factors,
-                                worker_data->basic_list,
-                                worker_data->nonbasic_list,
+                                worker->leaf_edge_norms,
+                                worker->basis_factors,
+                                worker->basic_list,
+                                worker->nonbasic_list,
                                 j,
                                 std::ceil(solution[j]),
-                                worker_data->leaf_problem.upper[j],
+                                worker->leaf_problem.upper[j],
                                 upper_bound,
                                 branch_and_bound_lp_iter_per_node,
                                 start_time,
@@ -674,6 +685,7 @@ i_t pseudo_costs_t<i_t, f_t>::reliable_variable_selection(
         pseudo_cost_num_up[j]++;
       }
     }
+    pseudo_cost_mutex_up[j].unlock();
 
     if (toc(start_time) > settings.time_limit) { continue; }
 

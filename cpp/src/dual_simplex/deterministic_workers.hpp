@@ -8,7 +8,7 @@
 #pragma once
 
 #include <dual_simplex/bb_event.hpp>
-#include <dual_simplex/bnb_worker.hpp>
+#include <dual_simplex/branch_and_bound_worker.hpp>
 #include <dual_simplex/diving_heuristics.hpp>
 #include <dual_simplex/node_queue.hpp>
 #include <utilities/work_limit_timer.hpp>
@@ -70,8 +70,8 @@ struct queued_integer_solution_t {
 };
 
 template <typename i_t, typename f_t, typename Derived>
-class determinism_worker_base_t : public bnb_worker_data_t<i_t, f_t> {
-  using base_t = bnb_worker_data_t<i_t, f_t>;
+class determinism_worker_base_t : public branch_and_bound_worker_t<i_t, f_t> {
+  using base_t = branch_and_bound_worker_t<i_t, f_t>;
 
  public:
   double clock{0.0};
@@ -320,7 +320,7 @@ class determinism_diving_worker_t
   using base_t = determinism_worker_base_t<i_t, f_t, determinism_diving_worker_t<i_t, f_t>>;
 
  public:
-  bnb_search_strategy_t diving_type{bnb_search_strategy_t::PSEUDOCOST_DIVING};
+  search_strategy_t diving_type{search_strategy_t::PSEUDOCOST_DIVING};
 
   // Diving-specific node management
   std::deque<mip_node_t<i_t, f_t>> dive_queue;
@@ -339,7 +339,7 @@ class determinism_diving_worker_t
   i_t lp_iters_this_dive{0};
 
   explicit determinism_diving_worker_t(int id,
-                                       bnb_search_strategy_t type,
+                                       search_strategy_t type,
                                        const lp_problem_t<i_t, f_t>& original_lp,
                                        const csr_matrix_t<i_t, f_t>& Arow,
                                        const std::vector<variable_type_t>& var_types,
@@ -384,7 +384,7 @@ class determinism_diving_worker_t
   branch_variable_t<i_t> variable_selection_from_snapshot(const std::vector<i_t>& fractional,
                                                           const std::vector<f_t>& solution) const
   {
-    const std::vector<f_t>& root_sol = (root_solution != nullptr) ? *root_solution : solution;
+    assert(root_solution != nullptr);
     return pseudocost_diving_from_arrays(this->pc_sum_down_snapshot.data(),
                                          this->pc_sum_up_snapshot.data(),
                                          this->pc_num_down_snapshot.data(),
@@ -392,7 +392,7 @@ class determinism_diving_worker_t
                                          (i_t)this->pc_sum_down_snapshot.size(),
                                          fractional,
                                          solution,
-                                         root_sol);
+                                         *root_solution);
   }
 
   branch_variable_t<i_t> guided_variable_selection(const std::vector<i_t>& fractional,
@@ -516,7 +516,7 @@ class determinism_diving_worker_pool_t
 
  public:
   determinism_diving_worker_pool_t(int num_workers,
-                                   const std::vector<bnb_search_strategy_t>& diving_types,
+                                   const std::vector<search_strategy_t>& diving_types,
                                    const lp_problem_t<i_t, f_t>& original_lp,
                                    const csr_matrix_t<i_t, f_t>& Arow,
                                    const std::vector<variable_type_t>& var_types,
@@ -525,7 +525,7 @@ class determinism_diving_worker_pool_t
   {
     this->workers_.reserve(num_workers);
     for (int i = 0; i < num_workers; ++i) {
-      bnb_search_strategy_t type = diving_types[i % diving_types.size()];
+      search_strategy_t type = diving_types[i % diving_types.size()];
       this->workers_.emplace_back(i, type, original_lp, Arow, var_types, settings, root_solution);
     }
   }

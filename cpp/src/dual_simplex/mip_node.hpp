@@ -249,7 +249,6 @@ class mip_node_t {
     copy.children[1]        = nullptr;
     copy.status             = node_status_t::PENDING;
 
-    copy.accumulated_wut  = accumulated_wut;
     copy.origin_worker_id = origin_worker_id;
     copy.creation_seq     = creation_seq;
     return copy;
@@ -271,8 +270,6 @@ class mip_node_t {
   std::unique_ptr<mip_node_t> children[2];
 
   std::vector<variable_status_t> vstatus;
-
-  f_t accumulated_wut{0.0};  // Work units spent on this node so far
 
   // Worker-local identification for deterministic ordering:
   // - origin_worker_id: which worker created this node

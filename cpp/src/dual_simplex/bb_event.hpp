@@ -137,7 +137,6 @@ struct bb_event_batch_t {
 
   void add(bb_event_t<i_t, f_t> event) { events.push_back(std::move(event)); }
 
-  // Sort events for deterministic replay
   void sort_for_replay() { std::sort(events.begin(), events.end()); }
 
   size_t size() const { return events.size(); }

@@ -8,7 +8,7 @@
 #pragma once
 
 #include <dual_simplex/basis_updates.hpp>
-#include <dual_simplex/bnb_worker.hpp>
+#include <dual_simplex/branch_and_bound_worker.hpp>
 #include <dual_simplex/logger.hpp>
 #include <dual_simplex/mip_node.hpp>
 #include <dual_simplex/simplex_solver_settings.hpp>
@@ -21,11 +21,6 @@
 #include <cstdint>
 
 namespace cuopt::linear_programming::dual_simplex {
-
-// =============================================================================
-// Pseudo-cost utility functions (lock-free implementations)
-// These can be called directly with snapshot data or through pseudo_costs_t methods
-// =============================================================================
 
 template <typename f_t>
 struct pseudo_cost_averages_t {
@@ -179,7 +174,8 @@ class pseudo_costs_t {
       pseudo_cost_sum_up(num_variables),
       pseudo_cost_num_down(num_variables),
       pseudo_cost_num_up(num_variables),
-      pseudo_cost_mutex(num_variables)
+      pseudo_cost_mutex_up(num_variables),
+      pseudo_cost_mutex_down(num_variables)
   {
   }
 
@@ -191,7 +187,8 @@ class pseudo_costs_t {
     pseudo_cost_sum_up.assign(num_variables, 0);
     pseudo_cost_num_down.assign(num_variables, 0);
     pseudo_cost_num_up.assign(num_variables, 0);
-    pseudo_cost_mutex.resize(num_variables);
+    pseudo_cost_mutex_up.resize(num_variables);
+    pseudo_cost_mutex_down.resize(num_variables);
   }
 
   void initialized(i_t& num_initialized_down,
@@ -213,8 +210,8 @@ class pseudo_costs_t {
                                   const std::vector<f_t>& solution,
                                   const simplex_solver_settings_t<i_t, f_t>& settings,
                                   const std::vector<variable_type_t>& var_types,
-                                  bnb_worker_data_t<i_t, f_t>* worker_data,
-                                  const bnb_stats_t<i_t, f_t>& bnb_stats,
+                                  branch_and_bound_worker_t<i_t, f_t>* worker,
+                                  const branch_and_bound_stats_t<i_t, f_t>& bnb_stats,
                                   f_t upper_bound,
                                   int max_num_tasks,
                                   logger_t& log);
@@ -246,7 +243,8 @@ class pseudo_costs_t {
   std::vector<omp_atomic_t<i_t>> pseudo_cost_num_down;
   std::vector<f_t> strong_branch_down;
   std::vector<f_t> strong_branch_up;
-  std::vector<omp_mutex_t> pseudo_cost_mutex;
+  std::vector<omp_mutex_t> pseudo_cost_mutex_up;
+  std::vector<omp_mutex_t> pseudo_cost_mutex_down;
   omp_atomic_t<i_t> num_strong_branches_completed = 0;
   omp_atomic_t<int64_t> strong_branching_lp_iter  = 0;
 };

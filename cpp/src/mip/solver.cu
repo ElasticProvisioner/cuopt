@@ -182,14 +182,15 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     branch_and_bound_solution.resize(branch_and_bound_problem.num_cols);
 
     // Fill in the settings for branch and bound
-    // Time limit applies in both modes
-    branch_and_bound_settings.time_limit           = timer_.remaining_time();
+    branch_and_bound_settings.time_limit           = timer_.get_time_limit();
     branch_and_bound_settings.node_limit           = context.settings.node_limit;
     branch_and_bound_settings.print_presolve_stats = false;
     branch_and_bound_settings.absolute_mip_gap_tol = context.settings.tolerances.absolute_mip_gap;
     branch_and_bound_settings.relative_mip_gap_tol = context.settings.tolerances.relative_mip_gap;
     branch_and_bound_settings.integer_tol = context.settings.tolerances.integrality_tolerance;
     branch_and_bound_settings.reliability_branching = solver_settings_.reliability_branching;
+    branch_and_bound_settings.max_cut_passes        = context.settings.max_cut_passes;
+    branch_and_bound_settings.mir_cuts              = context.settings.mir_cuts;
     branch_and_bound_settings.deterministic =
       context.settings.determinism_mode == CUOPT_MODE_DETERMINISTIC;
 
@@ -198,9 +199,6 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
     } else {
       branch_and_bound_settings.work_limit = std::numeric_limits<f_t>::infinity();
     }
-
-    branch_and_bound_settings.max_cut_passes = context.settings.max_cut_passes;
-    branch_and_bound_settings.mir_cuts       = context.settings.mir_cuts;
     branch_and_bound_settings.mixed_integer_gomory_cuts =
       context.settings.mixed_integer_gomory_cuts;
     branch_and_bound_settings.knapsack_cuts = context.settings.knapsack_cuts;
@@ -210,6 +208,8 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
       context.settings.reduced_cost_strengthening;
     branch_and_bound_settings.cut_change_threshold  = context.settings.cut_change_threshold;
     branch_and_bound_settings.cut_min_orthogonality = context.settings.cut_min_orthogonality;
+    branch_and_bound_settings.mip_batch_pdlp_strong_branching =
+      context.settings.mip_batch_pdlp_strong_branching;
 
     if (context.settings.num_cpu_threads < 0) {
       branch_and_bound_settings.num_threads = std::max(1, omp_get_max_threads() - 1);
@@ -217,19 +217,15 @@ solution_t<i_t, f_t> mip_solver_t<i_t, f_t>::run_solver()
       branch_and_bound_settings.num_threads = std::max(1, context.settings.num_cpu_threads);
     }
 
-    branch_and_bound_settings.mip_batch_pdlp_strong_branching =
-      context.settings.mip_batch_pdlp_strong_branching;
-
     // Set the branch and bound -> primal heuristics callback
-    // heuristic_preemption_callback is needed in both modes to properly stop the heuristic thread
-    branch_and_bound_settings.heuristic_preemption_callback = std::bind(
-      &branch_and_bound_solution_helper_t<i_t, f_t>::preempt_heuristic_solver, &solution_helper);
-
     branch_and_bound_settings.solution_callback =
       std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::solution_callback,
                 &solution_helper,
                 std::placeholders::_1,
                 std::placeholders::_2);
+    // heuristic_preemption_callback is needed in both modes to properly stop the heuristic thread
+    branch_and_bound_settings.heuristic_preemption_callback = std::bind(
+      &branch_and_bound_solution_helper_t<i_t, f_t>::preempt_heuristic_solver, &solution_helper);
     if (context.settings.determinism_mode == CUOPT_MODE_OPPORTUNISTIC) {
       branch_and_bound_settings.set_simplex_solution_callback =
         std::bind(&branch_and_bound_solution_helper_t<i_t, f_t>::set_simplex_solution,

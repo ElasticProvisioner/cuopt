@@ -129,7 +129,7 @@ class local_search_t {
   std::array<cpu_fj_thread_t<i_t, f_t>, 8> ls_cpu_fj;
   std::array<cpu_fj_thread_t<i_t, f_t>, 1> scratch_cpu_fj;
   cpu_fj_thread_t<i_t, f_t> scratch_cpu_fj_on_lp_opt;
-  cpu_fj_thread_t<i_t, f_t> deterministic_cpu_fj;  // CPUFJ for deterministic mode
+  cpu_fj_thread_t<i_t, f_t> deterministic_cpu_fj;
   problem_t<i_t, f_t> problem_with_objective_cut;
   bool cutting_plane_added_for_active_run{false};
 };

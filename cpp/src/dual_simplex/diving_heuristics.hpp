@@ -81,6 +81,18 @@ branch_variable_t<i_t> pseudocost_diving_from_arrays(const f_t* pc_sum_down,
     }
   }
 
+  // If we cannot choose the variable, then arbitrarily pick the first
+  // fractional variable and round it down. This only happens when
+  // there is only one fractional variable and its the pseudocost is
+  // infinite for both direction.
+  if (round_dir == rounding_direction_t::NONE) {
+    branch_var = fractional[0];
+    round_dir  = rounding_direction_t::DOWN;
+  }
+
+  assert(round_dir != rounding_direction_t::NONE);
+  assert(branch_var >= 0);
+
   return {branch_var, round_dir};
 }
 

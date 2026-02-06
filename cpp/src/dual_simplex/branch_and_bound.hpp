@@ -8,7 +8,7 @@
 #pragma once
 
 #include <dual_simplex/bb_event.hpp>
-#include <dual_simplex/bnb_worker.hpp>
+#include <dual_simplex/branch_and_bound_worker.hpp>
 #include <dual_simplex/cuts.hpp>
 #include <dual_simplex/deterministic_workers.hpp>
 #include <dual_simplex/diving_heuristics.hpp>
@@ -191,7 +191,7 @@ class branch_and_bound_t {
   mip_solution_t<i_t, f_t> incumbent_;
 
   // Structure with the general info of the solver.
-  bnb_stats_t<i_t, f_t> exploration_stats_;
+  branch_and_bound_stats_t<i_t, f_t> exploration_stats_;
 
   // Mutex for repair
   omp_mutex_t mutex_repair_;
@@ -220,10 +220,10 @@ class branch_and_bound_t {
 
   // Count the number of workers per type that either are being executed or
   // are waiting to be executed.
-  std::array<omp_atomic_t<i_t>, bnb_num_search_strategies> active_workers_per_strategy_;
+  std::array<omp_atomic_t<i_t>, num_search_strategies> active_workers_per_strategy_;
 
   // Worker pool
-  bnb_worker_pool_t<i_t, f_t> worker_pool_;
+  branch_and_bound_worker_pool_t<i_t, f_t> worker_pool_;
 
   // Global status of the solver.
   omp_atomic_t<mip_status_t> solver_status_;
@@ -255,7 +255,7 @@ class branch_and_bound_t {
   void add_feasible_solution(f_t leaf_objective,
                              const std::vector<f_t>& leaf_solution,
                              i_t leaf_depth,
-                             bnb_search_strategy_t thread_type);
+                             search_strategy_t thread_type);
 
   // Repairs low-quality solutions from the heuristics, if it is applicable.
   void repair_heuristic_solutions();
@@ -263,11 +263,11 @@ class branch_and_bound_t {
   // We use best-first to pick the `start_node` and then perform a depth-first search
   // from this node (i.e., a plunge). It can only backtrack to a sibling node.
   // Unexplored nodes in the subtree are inserted back into the global heap.
-  void plunge_with(bnb_worker_data_t<i_t, f_t>* worker_data);
+  void plunge_with(branch_and_bound_worker_t<i_t, f_t>* worker);
 
   // Perform a deep dive in the subtree determined by the `start_node` in order
   // to find integer feasible solutions.
-  void dive_with(bnb_worker_data_t<i_t, f_t>* worker_data);
+  void dive_with(branch_and_bound_worker_t<i_t, f_t>* worker);
 
   // Run the scheduler (aka the master) whose will schedule and manage
   // all the other workers.
@@ -279,14 +279,31 @@ class branch_and_bound_t {
 
   // Solve the LP relaxation of a leaf node
   dual::status_t solve_node_lp(mip_node_t<i_t, f_t>* node_ptr,
-                               bnb_worker_data_t<i_t, f_t>* worker_data,
-                               bnb_stats_t<i_t, f_t>& stats,
+                               branch_and_bound_worker_t<i_t, f_t>* worker,
+                               branch_and_bound_stats_t<i_t, f_t>& stats,
                                logger_t& log);
 
   // Selects the variable to branch on.
   branch_variable_t<i_t> variable_selection(mip_node_t<i_t, f_t>* node_ptr,
                                             const std::vector<i_t>& fractional,
-                                            bnb_worker_data_t<i_t, f_t>* worker_data);
+                                            branch_and_bound_worker_t<i_t, f_t>* worker);
+
+  // Policy-based tree update shared between opportunistic and deterministic codepaths.
+  template <typename WorkerT, typename Policy>
+  std::pair<node_status_t, rounding_direction_t> update_tree_impl(
+    mip_node_t<i_t, f_t>* node_ptr,
+    search_tree_t<i_t, f_t>& search_tree,
+    WorkerT* worker,
+    dual::status_t lp_status,
+    Policy& policy);
+
+  // Opportunistic tree update wrapper.
+  std::pair<node_status_t, rounding_direction_t> update_tree(
+    mip_node_t<i_t, f_t>* node_ptr,
+    search_tree_t<i_t, f_t>& search_tree,
+    branch_and_bound_worker_t<i_t, f_t>* worker,
+    dual::status_t lp_status,
+    logger_t& log);
 
   // ============================================================================
   // Deterministic BSP (Bulk Synchronous Parallel) methods for deterministic parallel B&B

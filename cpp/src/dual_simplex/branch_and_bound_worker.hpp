@@ -21,14 +21,14 @@
 
 namespace cuopt::linear_programming::dual_simplex {
 
-constexpr int bnb_num_search_strategies = 5;
+constexpr int num_search_strategies = 5;
 
 // Indicate the search and variable selection algorithms used by each thread
 // in B&B (See [1]).
 //
 // [1] T. Achterberg, “Constraint Integer Programming,” PhD, Technischen Universität Berlin,
 // Berlin, 2007. doi: 10.14279/depositonce-1634.
-enum bnb_search_strategy_t : int {
+enum search_strategy_t : int {
   BEST_FIRST         = 0,  // Best-First + Plunging.
   PSEUDOCOST_DIVING  = 1,  // Pseudocost diving (9.2.5)
   LINE_SEARCH_DIVING = 2,  // Line search diving (9.2.4)
@@ -37,7 +37,7 @@ enum bnb_search_strategy_t : int {
 };
 
 template <typename i_t, typename f_t>
-struct bnb_stats_t {
+struct branch_and_bound_stats_t {
   f_t start_time                         = 0.0;
   omp_atomic_t<f_t> total_lp_solve_time  = 0.0;
   omp_atomic_t<int64_t> nodes_explored   = 0;
@@ -48,10 +48,10 @@ struct bnb_stats_t {
 };
 
 template <typename i_t, typename f_t>
-class bnb_worker_data_t {
+class branch_and_bound_worker_t {
  public:
   const i_t worker_id;
-  omp_atomic_t<bnb_search_strategy_t> search_strategy;
+  omp_atomic_t<search_strategy_t> search_strategy;
   omp_atomic_t<bool> is_active;
   omp_atomic_t<f_t> lower_bound;
 
@@ -75,11 +75,11 @@ class bnb_worker_data_t {
   bool recompute_basis  = true;
   bool recompute_bounds = true;
 
-  bnb_worker_data_t(i_t worker_id,
-                    const lp_problem_t<i_t, f_t>& original_lp,
-                    const csr_matrix_t<i_t, f_t>& Arow,
-                    const std::vector<variable_type_t>& var_type,
-                    const simplex_solver_settings_t<i_t, f_t>& settings)
+  branch_and_bound_worker_t(i_t worker_id,
+                            const lp_problem_t<i_t, f_t>& original_lp,
+                            const csr_matrix_t<i_t, f_t>& Arow,
+                            const std::vector<variable_type_t>& var_type,
+                            const simplex_solver_settings_t<i_t, f_t>& settings)
     : worker_id(worker_id),
       search_strategy(BEST_FIRST),
       is_active(false),
@@ -110,7 +110,7 @@ class bnb_worker_data_t {
   // `start_upper`. Returns `true` if the starting node is feasible via
   // bounds propagation.
   bool init_diving(mip_node_t<i_t, f_t>* node,
-                   bnb_search_strategy_t type,
+                   search_strategy_t type,
                    const lp_problem_t<i_t, f_t>& original_lp,
                    const simplex_solver_settings_t<i_t, f_t>& settings)
   {
@@ -161,7 +161,7 @@ class bnb_worker_data_t {
 };
 
 template <typename i_t, typename f_t>
-class bnb_worker_pool_t {
+class branch_and_bound_worker_pool_t {
  public:
   void init(i_t num_workers,
             const lp_problem_t<i_t, f_t>& original_lp,
@@ -172,8 +172,8 @@ class bnb_worker_pool_t {
     workers_.resize(num_workers);
     num_idle_workers_ = num_workers;
     for (i_t i = 0; i < num_workers; ++i) {
-      workers_[i] =
-        std::make_unique<bnb_worker_data_t<i_t, f_t>>(i, original_lp, Arow, var_type, settings);
+      workers_[i] = std::make_unique<branch_and_bound_worker_t<i_t, f_t>>(
+        i, original_lp, Arow, var_type, settings);
       idle_workers_.push_front(i);
     }
 
@@ -182,7 +182,7 @@ class bnb_worker_pool_t {
 
   // Here, we are assuming that the scheduler is the only
   // thread that can retrieve/pop an idle worker.
-  bnb_worker_data_t<i_t, f_t>* get_idle_worker()
+  branch_and_bound_worker_t<i_t, f_t>* get_idle_worker()
   {
     std::lock_guard<omp_mutex_t> lock(mutex_);
     if (idle_workers_.empty()) {
@@ -204,7 +204,7 @@ class bnb_worker_pool_t {
     }
   }
 
-  void return_worker_to_pool(bnb_worker_data_t<i_t, f_t>* worker)
+  void return_worker_to_pool(branch_and_bound_worker_t<i_t, f_t>* worker)
   {
     worker->is_active = false;
     std::lock_guard<omp_mutex_t> lock(mutex_);
@@ -231,7 +231,7 @@ class bnb_worker_pool_t {
 
  private:
   // Worker pool
-  std::vector<std::unique_ptr<bnb_worker_data_t<i_t, f_t>>> workers_;
+  std::vector<std::unique_ptr<branch_and_bound_worker_t<i_t, f_t>>> workers_;
   bool is_initialized = false;
 
   omp_mutex_t mutex_;
@@ -240,11 +240,11 @@ class bnb_worker_pool_t {
 };
 
 template <typename f_t, typename i_t>
-std::vector<bnb_search_strategy_t> bnb_get_search_strategies(
+std::vector<search_strategy_t> get_search_strategies(
   diving_heuristics_settings_t<i_t, f_t> settings)
 {
-  std::vector<bnb_search_strategy_t> types;
-  types.reserve(bnb_num_search_strategies);
+  std::vector<search_strategy_t> types;
+  types.reserve(num_search_strategies);
   types.push_back(BEST_FIRST);
   if (settings.pseudocost_diving != 0) { types.push_back(PSEUDOCOST_DIVING); }
   if (settings.line_search_diving != 0) { types.push_back(LINE_SEARCH_DIVING); }
@@ -254,22 +254,22 @@ std::vector<bnb_search_strategy_t> bnb_get_search_strategies(
 }
 
 template <typename i_t>
-std::array<i_t, bnb_num_search_strategies> bnb_get_max_workers(
-  i_t num_workers, std::vector<bnb_search_strategy_t> worker_types)
+std::array<i_t, num_search_strategies> get_max_workers(
+  i_t num_workers, const std::vector<search_strategy_t>& strategies)
 {
-  std::array<i_t, bnb_num_search_strategies> max_num_workers;
+  std::array<i_t, num_search_strategies> max_num_workers;
   max_num_workers.fill(0);
 
-  i_t bfs_workers = std::max(worker_types.size() == 1 ? num_workers : num_workers / 4, 1);
+  i_t bfs_workers             = std::max(strategies.size() == 1 ? num_workers : num_workers / 4, 1);
   max_num_workers[BEST_FIRST] = bfs_workers;
 
   i_t diving_workers = (num_workers - bfs_workers);
-  i_t m              = worker_types.size() - 1;
+  i_t m              = strategies.size() - 1;
 
-  for (size_t i = 1, k = 0; i < worker_types.size(); ++i) {
-    i_t start                        = (double)k * diving_workers / m;
-    i_t end                          = (double)(k + 1) * diving_workers / m;
-    max_num_workers[worker_types[i]] = end - start;
+  for (size_t i = 1, k = 0; i < strategies.size(); ++i) {
+    i_t start                      = (double)k * diving_workers / m;
+    i_t end                        = (double)(k + 1) * diving_workers / m;
+    max_num_workers[strategies[i]] = end - start;
     ++k;
   }
 
