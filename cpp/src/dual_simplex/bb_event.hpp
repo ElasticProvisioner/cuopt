@@ -64,8 +64,8 @@ struct bb_event_t {
 
   bool operator<(const bb_event_t& other) const
   {
-    return std::tie(wut, worker_id, event_sequence) <
-           std::tie(other.wut, other.worker_id, other.event_sequence);
+    return std::tie(wut, worker_id, node_id, event_sequence) <
+           std::tie(other.wut, other.worker_id, other.node_id, other.event_sequence);
   }
 
   static bb_event_t make_branched(double work_unit_ts,

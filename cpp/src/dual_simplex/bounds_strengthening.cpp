@@ -116,7 +116,7 @@ bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
         const i_t col_start = A.col_start[j];
         const i_t col_end   = A.col_start[j + 1];
         for (i_t p = col_start; p < col_end; ++p) {
-          const i_t i           = A.i[p];
+          const i_t i           = A_i[p];
           constraint_changed[i] = true;
         }
       }
@@ -192,7 +192,7 @@ bool bounds_strengthening_t<i_t, f_t>::bounds_strengthening(
       const i_t col_end   = A.col_start[k + 1];
       nnz_processed += (col_end - col_start);
       for (i_t p = col_start; p < col_end; ++p) {
-        const i_t i = A.i[p];
+        const i_t i = A_i[p];
 
         if (!constraint_changed[i]) { continue; }
         const f_t a_ik = A_x[p];

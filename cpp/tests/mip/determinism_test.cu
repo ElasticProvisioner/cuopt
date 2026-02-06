@@ -164,6 +164,11 @@ TEST_F(DeterministicBBTest, reproducible_solution_vector)
   settings.num_cpu_threads  = 8;
   settings.work_limit       = 2;
 
+  auto seed = std::random_device{}() & 0x7fffffff;
+
+  std::cout << "Tested with seed " << seed << "\n";
+  settings.seed = seed;
+
   auto solution1 = solve_mip(&handle_, problem, settings);
   auto solution2 = solve_mip(&handle_, problem, settings);
 

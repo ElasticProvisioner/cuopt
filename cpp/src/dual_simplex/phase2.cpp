@@ -3371,7 +3371,7 @@ dual::status_t dual_phase2_with_advanced_basis(i_t phase,
 
     // Feature logging for regression training (every FEATURE_LOG_INTERVAL iterations)
     if ((iter % FEATURE_LOG_INTERVAL) == 0 && work_unit_context) {
-      i_t iters_elapsed = iter - last_feature_log_iter;
+      [[maybe_unused]] i_t iters_elapsed = iter - last_feature_log_iter;
 
       auto [total_loads, total_stores] = aggregator.collect_and_flush();
       // features.byte_loads              = total_loads;

@@ -268,7 +268,7 @@ class determinism_bfs_worker_t
   {
     record_event(bb_event_t<i_t, f_t>::make_branched(this->clock,
                                                      this->worker_id,
-                                                     node->node_id,
+                                                     node->creation_seq,
                                                      down_child_id,
                                                      up_child_id,
                                                      node->lower_bound,
@@ -282,7 +282,7 @@ class determinism_bfs_worker_t
   void record_integer_solution(mip_node_t<i_t, f_t>* node, f_t objective)
   {
     record_event(bb_event_t<i_t, f_t>::make_integer_solution(
-      this->clock, this->worker_id, node->node_id, objective));
+      this->clock, this->worker_id, node->creation_seq, objective));
     ++nodes_processed_this_horizon;
     ++this->total_nodes_processed;
     ++this->total_integer_solutions;
@@ -291,7 +291,7 @@ class determinism_bfs_worker_t
   void record_fathomed(mip_node_t<i_t, f_t>* node, f_t lower_bound)
   {
     record_event(bb_event_t<i_t, f_t>::make_fathomed(
-      this->clock, this->worker_id, node->node_id, lower_bound));
+      this->clock, this->worker_id, node->creation_seq, lower_bound));
     ++nodes_processed_this_horizon;
     ++this->total_nodes_processed;
     ++total_nodes_pruned;
@@ -300,7 +300,7 @@ class determinism_bfs_worker_t
   void record_infeasible(mip_node_t<i_t, f_t>* node)
   {
     record_event(
-      bb_event_t<i_t, f_t>::make_infeasible(this->clock, this->worker_id, node->node_id));
+      bb_event_t<i_t, f_t>::make_infeasible(this->clock, this->worker_id, node->creation_seq));
     ++nodes_processed_this_horizon;
     ++this->total_nodes_processed;
     ++total_nodes_infeasible;
@@ -308,7 +308,8 @@ class determinism_bfs_worker_t
 
   void record_numerical(mip_node_t<i_t, f_t>* node)
   {
-    record_event(bb_event_t<i_t, f_t>::make_numerical(this->clock, this->worker_id, node->node_id));
+    record_event(
+      bb_event_t<i_t, f_t>::make_numerical(this->clock, this->worker_id, node->creation_seq));
     ++nodes_processed_this_horizon;
     ++this->total_nodes_processed;
   }

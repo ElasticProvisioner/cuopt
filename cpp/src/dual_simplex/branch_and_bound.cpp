@@ -2385,6 +2385,7 @@ mip_status_t branch_and_bound_t<i_t, f_t>::solve(mip_solution_t<i_t, f_t>& solut
     lower_bound = node_queue_.best_first_queue_size() > 0 ? node_queue_.get_lower_bound()
                                                           : search_tree_.root.lower_bound;
   }
+  solver_status_ = determinism_global_termination_status_;
   set_final_solution(solution, lower_bound);
   return solver_status_;
 }
