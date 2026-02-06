@@ -80,7 +80,7 @@ class work_limit_timer_t {
         finished                   = true;
         double actual_elapsed_time = timer.elapsed_time();
         // 10% timing error
-        if (work_limit > 0 && abs(actual_elapsed_time - work_limit) / work_limit > 0.10) {
+        if (work_limit > 0 && std::abs(actual_elapsed_time - work_limit) / work_limit > 0.10) {
           CUOPT_LOG_ERROR(
             "%s:%d: %s(): Work limit timer finished with a large discrepancy: %fs for %fwu "
             "(global: %f, start: %f)",

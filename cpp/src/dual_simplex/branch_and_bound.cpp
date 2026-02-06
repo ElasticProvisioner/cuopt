@@ -488,7 +488,6 @@ void branch_and_bound_t<i_t, f_t>::queue_external_solution_deterministic(
   crush_primal_solution<i_t, f_t>(
     original_problem_, original_lp_, solution, new_slacks_, crushed_solution);
   f_t obj = compute_objective(original_lp_, crushed_solution);
-  mutex_original_lp_.unlock();
 
   // Validate solution before queueing
   f_t primal_err;
@@ -496,6 +495,7 @@ void branch_and_bound_t<i_t, f_t>::queue_external_solution_deterministic(
   i_t num_fractional;
   bool is_feasible = check_guess(
     original_lp_, settings_, var_types_, crushed_solution, primal_err, bound_err, num_fractional);
+  mutex_original_lp_.unlock();
 
   if (!is_feasible) {
     // Queue for repair

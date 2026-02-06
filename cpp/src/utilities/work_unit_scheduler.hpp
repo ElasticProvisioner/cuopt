@@ -24,10 +24,6 @@ namespace cuopt {
 
 struct work_limit_context_t;
 
-// Simplified scheduler using OpenMP barriers for synchronization.
-// Termination is managed externally (e.g., by
-// branch_and_bound_t::determinism_global_termination_status_). Workers should check termination
-// status after each sync point.
 class work_unit_scheduler_t {
  public:
   explicit work_unit_scheduler_t(double sync_interval = 5.0);
@@ -40,18 +36,14 @@ class work_unit_scheduler_t {
   void on_work_recorded(work_limit_context_t& ctx, double total_work);
 
   // Sync callback - executed by one thread when all contexts reach sync point
-  // Callback should set external termination status if stopping is desired
   using sync_callback_t = std::function<void(double sync_target)>;
   void set_sync_callback(sync_callback_t callback);
 
   // Wait for next sync point (for idle workers with no work)
-  // After returning, caller should check external termination status
   void wait_for_next_sync(work_limit_context_t& ctx);
 
-  // Get the current sync target (for work tracking)
   double current_sync_target() const;
 
-  // Signal shutdown - prevents threads from entering barriers after termination
   void signal_shutdown() { shutdown_.store(true, std::memory_order_release); }
   bool is_shutdown() const { return shutdown_.load(std::memory_order_acquire); }
 

@@ -181,8 +181,8 @@ class csr_matrix_t {
   i_t m;                      // number of rows
   i_t n;                      // number of cols
   ins_vector<i_t> row_start;  // row pointers (size m + 1)
-  ins_vector<i_t> j;          // column inidices, size nz_max
-  ins_vector<f_t> x;          // numerical valuse, size nz_max
+  ins_vector<i_t> j;          // column indices, size nz_max
+  ins_vector<f_t> x;          // numerical values, size nz_max
 
   static_assert(std::is_signed_v<i_t>);
 };
