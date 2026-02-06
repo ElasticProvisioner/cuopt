@@ -441,7 +441,9 @@ bool extend_clique(const std::vector<i_t>& clique,
       return false;
     } else {
       clique_table.first.push_back(new_clique);
+#if DEBUG_KNAPSACK_CONSTRAINTS
       CUOPT_LOG_DEBUG("Extended clique: %lu from %lu", new_clique.size(), clique.size());
+#endif
       // insert the new clique into the problem as a new constraint
       insert_clique_into_problem(new_clique, problem, A, coeff_scale);
     }
