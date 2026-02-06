@@ -201,7 +201,7 @@ std::string user_mip_gap(f_t obj_value, f_t lower_bound)
 }
 
 #ifdef SHOW_DIVING_TYPE
-inline char feasible_solution_symbol(bnb_worker_type_t strategy)
+inline char feasible_solution_symbol(search_strategy_t strategy)
 {
   switch (strategy) {
     case search_strategy_t::BEST_FIRST: return 'B';
