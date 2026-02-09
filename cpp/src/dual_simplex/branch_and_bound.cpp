@@ -3460,9 +3460,7 @@ void branch_and_bound_t<i_t, f_t>::determinism_assign_diving_nodes()
     }
 
     auto entry = diving_heap_.pop();
-    if (entry.has_value()) {
-      worker.enqueue_dive_node(entry.value().node, original_lp_, settings_);
-    }
+    if (entry.has_value()) { worker.enqueue_dive_node(entry.value().node, original_lp_); }
   }
 
   diving_heap_.clear();

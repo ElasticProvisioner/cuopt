@@ -367,19 +367,13 @@ class determinism_diving_worker_t
 
   bool has_work_impl() const { return !dive_queue.empty(); }
 
-  void enqueue_dive_node(mip_node_t<i_t, f_t>* node,
-                         const lp_problem_t<i_t, f_t>& original_lp,
-                         const simplex_solver_settings_t<i_t, f_t>& settings)
+  void enqueue_dive_node(mip_node_t<i_t, f_t>* node, const lp_problem_t<i_t, f_t>& original_lp)
   {
     dive_queue_entry_t<i_t, f_t> entry;
     entry.resolved_lower = original_lp.lower;
     entry.resolved_upper = original_lp.upper;
     std::vector<bool> bounds_changed(original_lp.num_cols, false);
     node->get_variable_bounds(entry.resolved_lower, entry.resolved_upper, bounds_changed);
-    bool feasible = this->node_presolver.bounds_strengthening(
-      settings, bounds_changed, entry.resolved_lower, entry.resolved_upper);
-    if (!feasible) return;
-
     entry.node = node->detach_copy();
     dive_queue.push_back(std::move(entry));
   }
