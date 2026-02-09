@@ -376,8 +376,10 @@ class determinism_diving_worker_t
     entry.resolved_upper = original_lp.upper;
     std::vector<bool> bounds_changed(original_lp.num_cols, false);
     node->get_variable_bounds(entry.resolved_lower, entry.resolved_upper, bounds_changed);
-    this->node_presolver.bounds_strengthening(
+    bool feasible = this->node_presolver.bounds_strengthening(
       settings, bounds_changed, entry.resolved_lower, entry.resolved_upper);
+    if (!feasible) return;
+
     entry.node = node->detach_copy();
     dive_queue.push_back(std::move(entry));
   }

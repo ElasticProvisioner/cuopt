@@ -88,6 +88,9 @@ class third_party_presolve_t {
   Settings* pslp_stgs_{nullptr};
   Presolver* pslp_presolver_{nullptr};
 
+  // Necessary due to a nvcc bug due to papilo's constexpr functions
+  // Keep the papilo includes in the .cpp to avoid bringing them
+  // into any .cu context
   std::unique_ptr<papilo::PostsolveStorage<f_t>, papilo_postsolve_deleter<f_t>>
     papilo_post_solve_storage_;
 

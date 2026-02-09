@@ -1544,6 +1544,18 @@ cuopt_int_t test_deterministic_bb(const char* filename,
       goto DONE;
     }
 
+    if (termination_status != CUOPT_TERIMINATION_STATUS_OPTIMAL &&
+        termination_status != CUOPT_TERIMINATION_STATUS_TIME_LIMIT &&
+        termination_status != CUOPT_TERIMINATION_STATUS_FEASIBLE_FOUND) {
+      printf("Run %d: status=%s (%d), unexpected termination status\n",
+             run,
+             termination_status_to_string(termination_status),
+             termination_status);
+      status = CUOPT_VALIDATION_ERROR;
+      cuOptDestroySolution(&solution);
+      goto DONE;
+    }
+
     printf("Run %d: status=%s (%d), objective=%f\n",
            run,
            termination_status_to_string(termination_status),

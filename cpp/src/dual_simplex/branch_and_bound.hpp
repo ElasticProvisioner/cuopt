@@ -330,7 +330,7 @@ class branch_and_bound_t {
   void determinism_assign_diving_nodes();
 
   // Collect and merge diving solutions at sync
-  void determistic_collect_diving_solutions_and_update_psuedocosts();
+  void deterministic_collect_diving_solutions_and_update_pseudocosts();
 
   template <typename PoolT, typename WorkerTypeGetter>
   void determinism_process_worker_solutions(PoolT& pool, WorkerTypeGetter get_worker_type);

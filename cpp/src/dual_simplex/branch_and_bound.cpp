@@ -2767,7 +2767,7 @@ void branch_and_bound_t<i_t, f_t>::determinism_sync_callback()
 
   determinism_prune_worker_nodes_vs_incumbent();
 
-  determistic_collect_diving_solutions_and_update_psuedocosts();
+  deterministic_collect_diving_solutions_and_update_pseudocosts();
 
   for (auto& worker : *determinism_workers_) {
     worker.integer_solutions.clear();
@@ -3469,7 +3469,7 @@ void branch_and_bound_t<i_t, f_t>::determinism_assign_diving_nodes()
 }
 
 template <typename i_t, typename f_t>
-void branch_and_bound_t<i_t, f_t>::determistic_collect_diving_solutions_and_update_psuedocosts()
+void branch_and_bound_t<i_t, f_t>::deterministic_collect_diving_solutions_and_update_pseudocosts()
 {
   if (!determinism_diving_workers_) return;
 
