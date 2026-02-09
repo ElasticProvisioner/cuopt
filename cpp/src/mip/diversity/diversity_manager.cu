@@ -205,7 +205,7 @@ bool diversity_manager_t<i_t, f_t>::run_presolve(f_t time_limit)
   if (!context.settings.heuristics_only && !problem_ptr->empty) {
     dual_simplex::user_problem_t<i_t, f_t> host_problem(problem_ptr->handle_ptr);
     problem_ptr->get_host_user_problem(host_problem);
-    find_initial_cliques(host_problem, context.settings.tolerances);
+    find_initial_cliques(host_problem, context.settings.tolerances, presolve_timer);
     problem_ptr->set_constraints_from_host_user_problem(host_problem);
     trivial_presolve(*problem_ptr, remap_cache_ids);
   }
