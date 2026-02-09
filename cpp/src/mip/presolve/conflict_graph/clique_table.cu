@@ -289,6 +289,9 @@ std::unordered_set<i_t> clique_table_t<i_t, f_t>::get_adj_set_of_var(i_t var_idx
   for (const auto& adj_vertex : adj_list_small_cliques[var_idx]) {
     adj_set.insert(adj_vertex);
   }
+  // Add the complement of var_idx to the adjacency set
+  i_t complement_idx = (var_idx >= n_variables) ? (var_idx - n_variables) : (var_idx + n_variables);
+  adj_set.insert(complement_idx);
   adj_set.erase(var_idx);
   return adj_set;
 }
